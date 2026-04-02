@@ -16,6 +16,10 @@ export function AuthForm({
   const [isPending, startTransition] = useTransition();
 
   const endpoint = mode === "login" ? "/api/auth/login" : "/api/auth/register";
+  const fallbackError =
+    mode === "login"
+      ? "Не удалось выполнить вход."
+      : "Не удалось создать аккаунт.";
 
   const handleSubmit: React.FormEventHandler<HTMLFormElement> = (event) => {
     event.preventDefault();
@@ -38,7 +42,7 @@ export function AuthForm({
         const result = (await response.json().catch(() => null)) as
           | { error?: string }
           | null;
-        setNotice(result?.error ?? "Не удалось выполнить вход.");
+        setNotice(result?.error ?? fallbackError);
         return;
       }
 

@@ -23,7 +23,7 @@ export async function POST(request: Request) {
     );
   }
 
-  if (findUserByEmail(body.email)) {
+  if (await findUserByEmail(body.email)) {
     return Response.json(
       { error: "Пользователь с таким email уже существует." },
       { status: 409 },
@@ -31,7 +31,7 @@ export async function POST(request: Request) {
   }
 
   const passwordHash = await bcrypt.hash(body.password.trim(), 10);
-  const user = createUser({
+  const user = await createUser({
     email: body.email,
     name: body.name,
     passwordHash,

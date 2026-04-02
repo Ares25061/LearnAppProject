@@ -7,7 +7,7 @@ import { formatDateTime } from "@/lib/utils";
 
 export default async function Home() {
   const user = await getCurrentUser();
-  const recentApps = user ? listAppsByOwner(user.id).slice(0, 6) : [];
+  const recentApps = user ? (await listAppsByOwner(user.id)).slice(0, 6) : [];
 
   return (
     <div className="page-shell">

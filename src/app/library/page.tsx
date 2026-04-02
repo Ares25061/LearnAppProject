@@ -6,7 +6,7 @@ import { formatDateTime } from "@/lib/utils";
 
 export default async function LibraryPage() {
   const user = await requireCurrentUser();
-  const apps = listAppsByOwner(user.id);
+  const apps = await listAppsByOwner(user.id);
 
   return (
     <div className="page-shell">

@@ -4,12 +4,17 @@ import Link from "next/link";
 import { useDeferredValue, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ExercisePlayer } from "@/components/exercise-player";
+import { MatchingPairsEditor } from "@/components/matching-pairs-editor";
 import {
   createDefaultDraft,
   exerciseDefinitionMap,
   exerciseDefinitions,
 } from "@/lib/exercise-definitions";
-import type { AnyExerciseDraft, PublicUser } from "@/lib/types";
+import type {
+  AnyExerciseDraft,
+  MatchingPairsData,
+  PublicUser,
+} from "@/lib/types";
 import { safeFilename } from "@/lib/utils";
 
 export function StudioEditor({
@@ -37,16 +42,28 @@ export function StudioEditor({
   const [isPending, startTransition] = useTransition();
   const deferredDraft = useDeferredValue(draft);
   const definition = exerciseDefinitionMap[draft.type];
+  const isMatchingPairs = draft.type === "matching-pairs";
+  const matchingPairsData = isMatchingPairs
+    ? (draft.data as MatchingPairsData)
+    : null;
+
+  const setDraftData = (
+    nextData: AnyExerciseDraft["data"],
+    nextNotice: string | null = null,
+  ) => {
+    setDraft((current) => ({
+      ...current,
+      data: nextData,
+    }) as AnyExerciseDraft);
+    setDataText(JSON.stringify(nextData, null, 2));
+    setDataError(null);
+    setNotice(nextNotice);
+  };
 
   const applyDataText = () => {
     try {
       const parsed = JSON.parse(dataText) as AnyExerciseDraft["data"];
-      setDraft((current) => ({
-        ...current,
-        data: parsed,
-      }) as AnyExerciseDraft);
-      setDataError(null);
-      setNotice("Превью обновлено.");
+      setDraftData(parsed, "Превью обновлено.");
       return parsed;
     } catch (error) {
       setDataError(
@@ -250,28 +267,39 @@ export function StudioEditor({
 
         <div className="editor-block">
           <div className="editor-block__head">
-            <strong>Данные шаблона</strong>
+            <strong>{isMatchingPairs ? "Сброс примера" : "Данные шаблона"}</strong>
             <div className="inline-actions">
-              <button className="ghost-button" type="button" onClick={applyDataText}>
-                Обновить превью
-              </button>
+              {!isMatchingPairs ? (
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={applyDataText}
+                >
+                  Обновить превью
+                </button>
+              ) : null}
               <button className="ghost-button" type="button" onClick={handleReset}>
                 Сбросить пример
               </button>
             </div>
           </div>
           <p className="editor-hint">
-            Ниже редактируется структура конкретного упражнения. В примере уже
-            лежит валидный JSON для выбранного типа.
+            {isMatchingPairs
+              ? "Для этого типа доступен отдельный визуальный редактор. Сброс вернет стартовый пример для текущего шаблона."
+              : "Ниже редактируется структура конкретного упражнения. В примере уже лежит валидный JSON для выбранного типа."}
           </p>
-          <textarea
-            className="editor-code"
-            rows={22}
-            spellCheck={false}
-            value={dataText}
-            onChange={(event) => setDataText(event.target.value)}
-          />
-          {dataError ? <p className="error-text">JSON: {dataError}</p> : null}
+          {isMatchingPairs ? null : (
+            <>
+              <textarea
+                className="editor-code"
+                rows={22}
+                spellCheck={false}
+                value={dataText}
+                onChange={(event) => setDataText(event.target.value)}
+              />
+              {dataError ? <p className="error-text">JSON: {dataError}</p> : null}
+            </>
+          )}
         </div>
 
         <div className="editor-block">
@@ -302,6 +330,29 @@ export function StudioEditor({
           {notice ? <p className="editor-hint">{notice}</p> : null}
         </div>
 
+        {isMatchingPairs ? (
+          <details className="editor-block editor-details">
+            <summary className="editor-details__summary">Расширенный JSON</summary>
+            <p className="editor-hint">
+              Если нужно, можно вручную править исходные данные. Визуальный
+              редактор и JSON синхронизируются между собой.
+            </p>
+            <div className="inline-actions">
+              <button className="ghost-button" type="button" onClick={applyDataText}>
+                Обновить превью
+              </button>
+            </div>
+            <textarea
+              className="editor-code"
+              rows={18}
+              spellCheck={false}
+              value={dataText}
+              onChange={(event) => setDataText(event.target.value)}
+            />
+            {dataError ? <p className="error-text">JSON: {dataError}</p> : null}
+          </details>
+        ) : null}
+
         <div className="editor-block">
           <span className="eyebrow">Все 21 шаблон</span>
           <div className="template-list">
@@ -322,6 +373,13 @@ export function StudioEditor({
       </aside>
 
       <section className="editor-preview">
+        {matchingPairsData ? (
+          <MatchingPairsEditor
+            value={matchingPairsData}
+            onChange={(nextData) => setDraftData(nextData)}
+            onNotice={setNotice}
+          />
+        ) : null}
         <div className="editor-block">
           <div className="editor-block__head">
             <strong>Живое превью</strong>

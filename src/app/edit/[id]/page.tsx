@@ -11,7 +11,7 @@ export default async function EditPage({
 }) {
   const { id } = await params;
   const user = await requireCurrentUser();
-  const app = getOwnedApp(id, user.id);
+  const app = await getOwnedApp(id, user.id);
 
   if (!app) {
     notFound();

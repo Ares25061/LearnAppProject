@@ -1,7 +1,14 @@
 "use client";
 /* eslint-disable @next/next/no-img-element, react-hooks/set-state-in-effect, react-hooks/purity */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import {
   buildCrossword,
   buildWordSearch,
@@ -10,6 +17,15 @@ import {
   timestampToSeconds,
   type GridPoint,
 } from "@/lib/exercise-runtime";
+import {
+  MATCHING_IMAGE_HEIGHT_DEFAULT,
+  getMatchingContentAriaLabel,
+  getMatchingContentSummary,
+  MATCHING_IMAGE_HEIGHT_MAX,
+  MATCHING_IMAGE_HEIGHT_MIN,
+  normalizeMatchingPairsData,
+  normalizeMatchingSide,
+} from "@/lib/matching-pairs";
 import {
   clamp,
   moveItem,
@@ -20,7 +36,11 @@ import {
 import type {
   AnyExerciseDraft,
   ExerciseTypeId,
+  MatchingAudioContent,
+  MatchingContent,
+  MatchingImageContent,
   MatchingMatrixData,
+  MatchingVideoContent,
 } from "@/lib/types";
 
 type ReportResult = (score: number, solved: boolean, detail?: string) => void;
@@ -79,58 +99,1038 @@ function reportMatrixScore(data: MatchingMatrixData, selected: Set<string>) {
   return percentage(good, good + bad + missed);
 }
 
-const MATCHING_CARD_WIDTH = 248;
-const MATCHING_CARD_HEIGHT = 78;
-const MATCHING_CARD_GAP = 18;
+const MATCHING_CARD_WIDTH = 286;
+const MATCHING_DEFAULT_CARD_HEIGHT = 232;
+const MATCHING_VIDEO_CARD_HEIGHT = MATCHING_DEFAULT_CARD_HEIGHT + 100;
+const MATCHING_CARD_GAP = 20;
+const MATCHING_CARD_STEP = 20;
+const MATCHING_IMAGE_CARD_BASE_HEIGHT = 74;
+const MATCHING_IMAGE_CAPTION_HEIGHT = 28;
+const MATCHING_VIDEO_PREVIEW_HEIGHT = 220;
+
+type MatchingGroupStatus = "neutral" | "correct" | "incorrect";
 
 interface MatchingDragCard {
   id: string;
+  content: MatchingContent;
   label: string;
+  role: "pair" | "extra";
   side: "left" | "right";
-  pairIndex: number;
+  pairIndex: number | null;
   groupId: string;
   x: number;
   y: number;
 }
 
-function createMatchingCards(
-  pairs: Array<{ left: string; right: string }>,
-): MatchingDragCard[] {
-  const shuffledRight = shuffleArray(
-    pairs.map((pair, index) => ({
-      pairIndex: index,
-      label: pair.right,
-    })),
-  );
+type MatchingPlayableContent = MatchingAudioContent | MatchingVideoContent;
+type MatchingYouTubePlayer = {
+  destroy: () => void;
+  getCurrentTime?: () => number;
+  getDuration?: () => number;
+  getPlayerState?: () => number;
+  pauseVideo: () => void;
+  playVideo: () => void;
+  seekTo: (seconds: number, allowSeekAhead: boolean) => void;
+  setVolume?: (volume: number) => void;
+};
+type MatchingYouTubeApi = {
+  Player: new (
+    element: HTMLElement,
+    options: {
+      height?: string;
+      width?: string;
+      videoId: string;
+      playerVars?: Record<string, number | string>;
+      events?: {
+        onReady?: (event: { target: MatchingYouTubePlayer }) => void;
+        onStateChange?: (event: {
+          data: number;
+          target: MatchingYouTubePlayer;
+        }) => void;
+      };
+    },
+  ) => MatchingYouTubePlayer;
+};
 
-  return [
+declare global {
+  interface Window {
+    YT?: MatchingYouTubeApi;
+    onYouTubeIframeAPIReady?: () => void;
+  }
+}
+
+let matchingYouTubeApiPromise: Promise<MatchingYouTubeApi> | null = null;
+
+function getMatchingImageHeight(input: MatchingContent | MatchingImageContent) {
+  const content =
+    input.kind === "image" ? input : normalizeMatchingSide(input);
+
+  if (content.kind !== "image") {
+    return MATCHING_IMAGE_HEIGHT_DEFAULT;
+  }
+
+  return clamp(
+    Math.round(content.imageHeight),
+    MATCHING_IMAGE_HEIGHT_MIN,
+    MATCHING_IMAGE_HEIGHT_MAX,
+  );
+}
+
+function getMatchingVideoStartSeconds(content: MatchingVideoContent) {
+  return Math.max(0, Math.round(content.startSeconds));
+}
+
+function getMatchingCardHeight(content: MatchingContent) {
+  const normalized = normalizeMatchingSide(content);
+  if (normalized.kind === "video") {
+    return MATCHING_VIDEO_CARD_HEIGHT;
+  }
+
+  if (normalized.kind !== "image") {
+    return MATCHING_DEFAULT_CARD_HEIGHT;
+  }
+
+  return (
+    MATCHING_IMAGE_CARD_BASE_HEIGHT +
+    getMatchingImageHeight(normalized) +
+    (normalized.alt.trim() ? MATCHING_IMAGE_CAPTION_HEIGHT : 0)
+  );
+}
+
+function getMatchingCardWidth() {
+  return MATCHING_CARD_WIDTH;
+}
+
+function parseHexColor(value: string) {
+  const normalized = value.trim();
+  const shortMatch = normalized.match(/^#([\da-f]{3})$/i);
+  if (shortMatch) {
+    const [r, g, b] = shortMatch[1].split("").map((char) => char + char);
+    return {
+      red: Number.parseInt(r, 16),
+      green: Number.parseInt(g, 16),
+      blue: Number.parseInt(b, 16),
+    };
+  }
+
+  const fullMatch = normalized.match(/^#([\da-f]{6})$/i);
+  if (!fullMatch) {
+    return null;
+  }
+
+  return {
+    red: Number.parseInt(fullMatch[1].slice(0, 2), 16),
+    green: Number.parseInt(fullMatch[1].slice(2, 4), 16),
+    blue: Number.parseInt(fullMatch[1].slice(4, 6), 16),
+  };
+}
+
+function getExerciseThemeStyle(themeColor: string): CSSProperties {
+  const rgb = parseHexColor(themeColor);
+  if (!rgb) {
+    return {};
+  }
+
+  const deepen = (channel: number) => Math.max(0, Math.round(channel * 0.72));
+
+  return {
+    "--accent": `rgb(${rgb.red} ${rgb.green} ${rgb.blue})`,
+    "--accent-deep": `rgb(${deepen(rgb.red)} ${deepen(rgb.green)} ${deepen(rgb.blue)})`,
+    "--accent-soft": `rgb(${rgb.red} ${rgb.green} ${rgb.blue} / 0.12)`,
+  } as CSSProperties;
+}
+
+function collectMatchingGroups(cards: MatchingDragCard[]) {
+  const groups = new Map<string, MatchingDragCard[]>();
+
+  cards.forEach((card) => {
+    const group = groups.get(card.groupId);
+    if (group) {
+      group.push(card);
+      return;
+    }
+    groups.set(card.groupId, [card]);
+  });
+
+  return groups;
+}
+
+function getMatchingGroupStatus(cards: MatchingDragCard[]): MatchingGroupStatus {
+  if (cards.length !== 2) {
+    return "neutral";
+  }
+
+  const [first, second] = cards;
+  if (
+    first.role === "pair" &&
+    second.role === "pair" &&
+    first.pairIndex !== null &&
+    first.pairIndex === second.pairIndex
+  ) {
+    return "correct";
+  }
+
+  return "incorrect";
+}
+
+function buildMatchingGroupStatuses(cards: MatchingDragCard[]) {
+  return new Map(
+    Array.from(collectMatchingGroups(cards), ([groupId, groupCards]) => [
+      groupId,
+      getMatchingGroupStatus(groupCards),
+    ]),
+  );
+}
+
+function countVisibleCorrectPairs(cards: MatchingDragCard[]) {
+  return Array.from(buildMatchingGroupStatuses(cards).values()).filter(
+    (status) => status === "correct",
+  ).length;
+}
+
+function getEvaluatedPairGroups(cards: MatchingDragCard[]) {
+  return Array.from(collectMatchingGroups(cards).values()).filter(
+    (group) => group.length === 2,
+  ).length;
+}
+
+function stripSolvedMatchingGroups(cards: MatchingDragCard[]) {
+  const solvedPairIndexes = new Set<number>();
+  const groups = collectMatchingGroups(cards);
+  const removableGroupIds = new Set<string>();
+
+  groups.forEach((groupCards, groupId) => {
+    if (getMatchingGroupStatus(groupCards) !== "correct") {
+      return;
+    }
+
+    const pairCard = groupCards.find((card) => card.role === "pair");
+    if (pairCard && pairCard.pairIndex !== null) {
+      solvedPairIndexes.add(pairCard.pairIndex);
+      removableGroupIds.add(groupId);
+    }
+  });
+
+  return {
+    cards: cards.filter((card) => !removableGroupIds.has(card.groupId)),
+    solvedPairIndexes,
+  };
+}
+
+function hashMatchingSeed(value: string) {
+  let hash = 0;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+
+  return hash || 1;
+}
+
+function deterministicShuffle<T>(items: T[], seedSource: string) {
+  const next = [...items];
+  let seed = hashMatchingSeed(seedSource);
+
+  const random = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+
+  for (let index = next.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(random() * (index + 1));
+    [next[index], next[swapIndex]] = [next[swapIndex], next[index]];
+  }
+
+  return next;
+}
+
+function createMatchingCards(
+  data: Extract<AnyExerciseDraft, { type: "matching-pairs" }>["data"],
+): MatchingDragCard[] {
+  const normalized = normalizeMatchingPairsData(data);
+  const { extras, pairs } = normalized;
+  const leftCards = [
     ...pairs.map((pair, index) => ({
       id: `left-${index}`,
-      label: pair.left,
+      content: pair.left,
+      label: getMatchingContentSummary(pair.left),
+      role: "pair" as const,
       side: "left" as const,
       pairIndex: index,
       groupId: `group-left-${index}`,
-      x: 24,
-      y: 24 + index * 96,
     })),
-    ...shuffledRight.map((pair, index) => ({
-      id: `right-${pair.pairIndex}`,
-      label: pair.label,
-      side: "right" as const,
-      pairIndex: pair.pairIndex,
-      groupId: `group-right-${pair.pairIndex}`,
-      x: 392,
-      y: 24 + index * 96,
-    })),
+    ...extras
+      .filter((item) => item.side === "left")
+      .map((item, index) => ({
+        id: `extra-left-${index}`,
+        content: item.content,
+        label: getMatchingContentSummary(item.content),
+        role: "extra" as const,
+        side: "left" as const,
+        pairIndex: null,
+        groupId: `group-extra-left-${index}`,
+      })),
   ];
+  const rightCards = deterministicShuffle(
+    [
+    pairs.map((pair, index) => ({
+      pairIndex: index,
+      content: pair.right,
+      label: getMatchingContentSummary(pair.right),
+      role: "pair" as const,
+      side: "right" as const,
+      id: `right-${index}`,
+      groupId: `group-right-${index}`,
+    })),
+    ...extras
+      .filter((item) => item.side === "right")
+      .map((item, index) => ({
+        id: `extra-right-${index}`,
+        content: item.content,
+        label: getMatchingContentSummary(item.content),
+        role: "extra" as const,
+        side: "right" as const,
+        pairIndex: null,
+        groupId: `group-extra-right-${index}`,
+      })),
+    ].flat(),
+    JSON.stringify(normalized),
+  );
+
+  let leftY = 24;
+  const positionedLeftCards = leftCards.map((card) => {
+    const positioned = {
+      ...card,
+      x: 24,
+      y: leftY,
+    };
+    leftY += getMatchingCardHeight(card.content) + MATCHING_CARD_STEP;
+    return positioned;
+  });
+
+  let rightY = 24;
+  const positionedRightCards = rightCards.map((card) => {
+    const positioned = {
+      ...card,
+      x: 430,
+      y: rightY,
+    };
+    rightY += getMatchingCardHeight(card.content) + MATCHING_CARD_STEP;
+    return positioned;
+  });
+
+  return [
+    ...positionedLeftCards,
+    ...positionedRightCards,
+  ];
+}
+
+function speakMatchingText(text: string) {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+    return;
+  }
+
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+}
+
+function getMatchingMediaType(
+  kind: Extract<MatchingContent["kind"], "audio" | "video">,
+  url: string,
+) {
+  const normalized = url.split("?")[0]?.split("#")[0]?.toLowerCase() ?? "";
+
+  if (kind === "audio") {
+    if (normalized.endsWith(".mp3")) {
+      return "audio/mpeg";
+    }
+    if (normalized.endsWith(".mp4")) {
+      return "audio/mp4";
+    }
+    if (normalized.endsWith(".m4a")) {
+      return "audio/mp4";
+    }
+    if (normalized.endsWith(".wav")) {
+      return "audio/wav";
+    }
+    if (normalized.endsWith(".ogg")) {
+      return "audio/ogg";
+    }
+  }
+
+  if (kind === "video") {
+    if (normalized.endsWith(".mp4")) {
+      return "video/mp4";
+    }
+    if (normalized.endsWith(".webm")) {
+      return "video/webm";
+    }
+    if (normalized.endsWith(".ogg") || normalized.endsWith(".ogv")) {
+      return "video/ogg";
+    }
+  }
+
+  return undefined;
+}
+
+function parseMatchingUrl(url: string) {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const normalized = trimmed.startsWith("//") ? `https:${trimmed}` : trimmed;
+
+  try {
+    return new URL(normalized);
+  } catch {
+    return null;
+  }
+}
+
+function parseMatchingTimeValue(value: string | null) {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) {
+    return 0;
+  }
+
+  if (trimmed.includes(":")) {
+    return Math.max(0, timestampToSeconds(trimmed));
+  }
+
+  const hmsMatch = trimmed.match(
+    /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/i,
+  );
+  if (hmsMatch) {
+    const [, hoursValue, minutesValue, secondsValue] = hmsMatch;
+    const hours = Number.parseInt(hoursValue ?? "0", 10);
+    const minutes = Number.parseInt(minutesValue ?? "0", 10);
+    const seconds = Number.parseInt(secondsValue ?? "0", 10);
+
+    if ([hours, minutes, seconds].some((item) => Number.isNaN(item))) {
+      return 0;
+    }
+
+    const total = hours * 3600 + minutes * 60 + seconds;
+    if (total > 0) {
+      return total;
+    }
+  }
+
+  const numeric = Number.parseInt(trimmed, 10);
+  return Number.isNaN(numeric) ? 0 : Math.max(0, numeric);
+}
+
+function getMatchingYouTubeMeta(url: string) {
+  const parsed = parseMatchingUrl(url);
+  if (!parsed) {
+    return null;
+  }
+
+  const host = parsed.hostname.replace(/^www\./, "");
+  let videoId = "";
+
+  if (host === "youtu.be") {
+    videoId = parsed.pathname.replace(/^\/+/, "").split("/")[0] ?? "";
+  } else if (
+    host === "youtube.com" ||
+    host === "m.youtube.com" ||
+    host === "youtube-nocookie.com"
+  ) {
+    videoId = parsed.searchParams.get("v") ?? "";
+
+    if (!videoId) {
+      const [, firstSegment, secondSegment] = parsed.pathname.split("/");
+      if (
+        firstSegment === "embed" ||
+        firstSegment === "shorts" ||
+        firstSegment === "live"
+      ) {
+        videoId = secondSegment ?? "";
+      }
+    }
+  }
+
+  if (!videoId) {
+    return null;
+  }
+
+  const startSeconds =
+    parseMatchingTimeValue(parsed.searchParams.get("t")) ||
+    parseMatchingTimeValue(parsed.searchParams.get("start")) ||
+    parseMatchingTimeValue(parsed.hash.replace(/^#(?:t=)?/, ""));
+
+  return {
+    videoId,
+    startSeconds,
+    thumbnailUrl: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+  };
+}
+
+function buildMatchingYouTubeEmbedUrl(videoId: string, startSeconds = 0) {
+  const params = new URLSearchParams({
+    autoplay: "1",
+    controls: "1",
+    playsinline: "1",
+    modestbranding: "1",
+    rel: "0",
+  });
+
+  if (startSeconds > 0) {
+    params.set("start", `${startSeconds}`);
+  }
+
+  return `https://www.youtube-nocookie.com/embed/${videoId}?${params.toString()}`;
+}
+
+function getMatchingMediaSourceLabel(url: string) {
+  const parsed = parseMatchingUrl(url);
+  if (!parsed) {
+    return url.trim();
+  }
+
+  return parsed.hostname.replace(/^www\./, "");
+}
+
+function formatMatchingMediaTime(value: number) {
+  const safeValue = Math.max(0, Math.floor(value));
+  const minutes = Math.floor(safeValue / 60);
+  const seconds = `${safeValue % 60}`.padStart(2, "0");
+  return `${minutes}:${seconds}`;
+}
+
+function getMatchingAudioVolume(content: MatchingAudioContent) {
+  return clamp(Math.round(content.volume), 0, 100);
+}
+
+function loadMatchingYouTubeApi() {
+  if (typeof window === "undefined") {
+    return Promise.reject(new Error("YouTube API недоступен на сервере."));
+  }
+
+  if (window.YT?.Player) {
+    return Promise.resolve(window.YT);
+  }
+
+  if (matchingYouTubeApiPromise) {
+    return matchingYouTubeApiPromise;
+  }
+
+  matchingYouTubeApiPromise = new Promise<MatchingYouTubeApi>(
+    (resolve, reject) => {
+      const previousReadyHandler = window.onYouTubeIframeAPIReady;
+
+      window.onYouTubeIframeAPIReady = () => {
+        previousReadyHandler?.();
+        if (window.YT?.Player) {
+          resolve(window.YT);
+        } else {
+          reject(new Error("YouTube API загрузился без Player."));
+        }
+      };
+
+      const existingScript = document.getElementById("matching-youtube-api");
+      if (existingScript) {
+        return;
+      }
+
+      const script = document.createElement("script");
+      script.id = "matching-youtube-api";
+      script.src = "https://www.youtube.com/iframe_api";
+      script.async = true;
+      script.onerror = () =>
+        reject(new Error("Не удалось загрузить YouTube iframe API."));
+      document.head.append(script);
+    },
+  );
+
+  return matchingYouTubeApiPromise;
+}
+
+function isMatchingAudioPlayable(url: string) {
+  return Boolean(
+    getMatchingMediaType("audio", url) ||
+      getMatchingMediaType("video", url) ||
+      getMatchingYouTubeMeta(url),
+  );
+}
+
+function isMatchingInteractiveTarget(target: EventTarget | null) {
+  return (
+    target instanceof Element &&
+    Boolean(target.closest("[data-card-interactive='true']"))
+  );
+}
+
+function MatchingCardContent({
+  content,
+  onOpenMedia,
+}: Readonly<{
+  content: MatchingContent;
+  onOpenMedia: (next: MatchingPlayableContent) => void;
+}>) {
+  const normalized = normalizeMatchingSide(content);
+  const contentClassName = `matching-card-content matching-card-content--${normalized.kind}`;
+
+  switch (normalized.kind) {
+    case "spoken-text":
+      return (
+        <div className={contentClassName}>
+          <p className="matching-card-copy">{normalized.text || "Текст не задан"}</p>
+          <button
+            className="ghost-button matching-card-action"
+            data-card-interactive="true"
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              if (normalized.text.trim()) {
+                speakMatchingText(normalized.text);
+              }
+            }}
+          >
+            Озвучить
+          </button>
+        </div>
+      );
+    case "image": {
+      const imageHeight = getMatchingImageHeight(normalized);
+      return (
+        <div className={contentClassName}>
+          <div
+            className="matching-card-media-frame matching-card-media-frame--visual"
+            style={{
+              height: `${imageHeight}px`,
+              minHeight: `${imageHeight}px`,
+            }}
+          >
+            {normalized.url ? (
+              <img
+                alt={normalized.alt || "Изображение карточки"}
+                className="matching-card-image"
+                src={normalized.url}
+              />
+            ) : (
+              <div className="matching-card-placeholder">URL изображения не задан</div>
+            )}
+          </div>
+          {normalized.alt ? (
+            <span className="matching-card-caption">{normalized.alt}</span>
+          ) : null}
+        </div>
+      );
+    }
+    case "audio": {
+      const canPlayAudio = isMatchingAudioPlayable(normalized.url);
+      return (
+        <div className={contentClassName}>
+          <span className="tag">AUD</span>
+          <strong>{normalized.label || "Аудио"}</strong>
+          {normalized.url && canPlayAudio ? (
+            <button
+              className="ghost-button matching-media-launch"
+              data-card-interactive="true"
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenMedia(normalized);
+              }}
+            >
+              <span className="matching-media-launch__icon">▶</span>
+              <span>Проиграть звук</span>
+            </button>
+          ) : normalized.url ? (
+            <div className="matching-card-placeholder">
+              Для аудио используйте mp3/mp4 или ссылку на YouTube
+            </div>
+          ) : (
+            <div className="matching-card-placeholder">URL аудио не задан</div>
+          )}
+          {normalized.url ? (
+            <span className="matching-card-url">
+              {getMatchingMediaSourceLabel(normalized.url)}
+            </span>
+          ) : null}
+        </div>
+      );
+    }
+    case "video": {
+      const youTubeMeta = getMatchingYouTubeMeta(normalized.url);
+      const startSeconds =
+        getMatchingVideoStartSeconds(normalized) || youTubeMeta?.startSeconds || 0;
+
+      return (
+        <div className={contentClassName}>
+          <span className="tag">VID</span>
+          <strong>{normalized.label || "Видео"}</strong>
+          {normalized.url ? (
+            <button
+              className="matching-media-preview"
+              data-card-interactive="true"
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenMedia(normalized);
+              }}
+            >
+              <div
+                className="matching-media-preview__frame"
+                style={{
+                  height: `${MATCHING_VIDEO_PREVIEW_HEIGHT}px`,
+                  minHeight: `${MATCHING_VIDEO_PREVIEW_HEIGHT}px`,
+                }}
+              >
+                {youTubeMeta ? (
+                  <img
+                    alt={normalized.label || "Превью видео"}
+                    className="matching-card-thumbnail"
+                    src={youTubeMeta.thumbnailUrl}
+                  />
+                ) : (
+                  <div className="matching-card-thumbnail matching-card-thumbnail--placeholder">
+                    Видео
+                  </div>
+                )}
+              </div>
+              <span className="matching-media-preview__label">
+                Открыть видео
+              </span>
+            </button>
+          ) : (
+            <div className="matching-card-placeholder">URL видео не задан</div>
+          )}
+          {normalized.url ? (
+            <span className="matching-card-url">
+              {getMatchingMediaSourceLabel(normalized.url)}
+              {startSeconds > 0 ? ` · с ${startSeconds} с` : ""}
+            </span>
+          ) : null}
+        </div>
+      );
+    }
+    case "text":
+    default:
+      return (
+        <div className={contentClassName}>
+          <p className="matching-card-copy">{normalized.text || "Текст не задан"}</p>
+        </div>
+      );
+  }
+}
+
+function MatchingYouTubeAudioPlayer({
+  startSeconds,
+  videoId,
+  volume,
+}: Readonly<{
+  startSeconds: number;
+  videoId: string;
+  volume: number;
+}>) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const playerRef = useRef<MatchingYouTubePlayer | null>(null);
+  const intervalRef = useRef<number | null>(null);
+  const [ready, setReady] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [position, setPosition] = useState(startSeconds);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const syncPlayerState = () => {
+      const player = playerRef.current;
+      if (!player) {
+        return;
+      }
+
+      const nextDuration =
+        typeof player.getDuration === "function"
+          ? Math.max(player.getDuration() || 0, 0)
+          : 0;
+      const nextPosition =
+        typeof player.getCurrentTime === "function"
+          ? Math.max(player.getCurrentTime() || 0, 0)
+          : 0;
+      const state =
+        typeof player.getPlayerState === "function" ? player.getPlayerState() : -1;
+
+      setDuration(nextDuration);
+      setPosition(nextPosition);
+      setPlaying(state === 1 || state === 3);
+    };
+
+    void loadMatchingYouTubeApi()
+      .then((yt) => {
+        if (cancelled || !hostRef.current) {
+          return;
+        }
+
+        playerRef.current = new yt.Player(hostRef.current, {
+          height: "1",
+          width: "1",
+          videoId,
+          playerVars: {
+            autoplay: 1,
+            controls: 0,
+            playsinline: 1,
+            rel: 0,
+            start: startSeconds,
+          },
+          events: {
+            onReady: ({ target }) => {
+              if (cancelled) {
+                return;
+              }
+
+              if (startSeconds > 0) {
+                target.seekTo(startSeconds, true);
+              }
+              target.setVolume?.(volume);
+              target.playVideo();
+              setReady(true);
+              syncPlayerState();
+            },
+            onStateChange: () => {
+              if (cancelled) {
+                return;
+              }
+              syncPlayerState();
+            },
+          },
+        });
+
+        intervalRef.current = window.setInterval(syncPlayerState, 400);
+      })
+      .catch(() => {
+        setReady(false);
+      });
+
+    return () => {
+      cancelled = true;
+      if (intervalRef.current !== null) {
+        window.clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+        playerRef.current?.destroy();
+        playerRef.current = null;
+      };
+  }, [startSeconds, videoId, volume]);
+
+  const handleToggle = () => {
+    const player = playerRef.current;
+    if (!player) {
+      return;
+    }
+
+    if (playing) {
+      player.pauseVideo();
+      setPlaying(false);
+      return;
+    }
+
+    player.playVideo();
+    setPlaying(true);
+  };
+
+  return (
+    <div className="matching-youtube-audio">
+      <div className="matching-youtube-audio__host" aria-hidden="true">
+        <div ref={hostRef} />
+      </div>
+      <div className="matching-youtube-audio__controls">
+        <button
+          className="player-button"
+          disabled={!ready}
+          type="button"
+          onClick={handleToggle}
+        >
+          {ready ? (playing ? "Пауза" : "Слушать") : "Загрузка..."}
+        </button>
+        <input
+          className="matching-youtube-audio__range"
+          disabled={!ready || duration <= 0}
+          max={Math.max(duration, startSeconds, 1)}
+          min={0}
+          step={1}
+          type="range"
+          value={Math.min(position, Math.max(duration, startSeconds, 1))}
+          onChange={(event) => {
+            const next = Number.parseFloat(event.target.value);
+            setPosition(next);
+            playerRef.current?.seekTo(next, true);
+          }}
+        />
+        <span className="matching-youtube-audio__time">
+          {formatMatchingMediaTime(position)} / {formatMatchingMediaTime(duration)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function MatchingMediaDialog({
+  media,
+  onClose,
+}: Readonly<{
+  media: MatchingPlayableContent | null;
+  onClose: () => void;
+}>) {
+  useEffect(() => {
+    if (!media) {
+      return;
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [media, onClose]);
+
+  if (!media) {
+    return null;
+  }
+
+  const youTubeMeta = getMatchingYouTubeMeta(media.url);
+  const canPlayAudio = media.kind === "audio" ? isMatchingAudioPlayable(media.url) : false;
+  const audioVolume =
+    media.kind === "audio" ? getMatchingAudioVolume(media) : 100;
+  const startSeconds =
+    media.kind === "video"
+      ? getMatchingVideoStartSeconds(media) || youTubeMeta?.startSeconds || 0
+      : youTubeMeta?.startSeconds || 0;
+  const title = media.label || (media.kind === "audio" ? "Аудио" : "Видео");
+
+  return (
+    <div
+      className="matching-media-modal"
+      data-card-interactive="true"
+      role="presentation"
+      onClick={onClose}
+    >
+      <div
+        className={`matching-media-modal__dialog ${
+          media.kind === "audio" ? "matching-media-modal__dialog--audio" : ""
+        }`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="matching-media-modal__head">
+          <div className="stack">
+            <span className="tag">{media.kind === "audio" ? "AUD" : "VID"}</span>
+            <strong>{title}</strong>
+            <span className="matching-card-url">
+              {getMatchingMediaSourceLabel(media.url)}
+              {startSeconds > 0 ? ` · старт ${startSeconds} c` : ""}
+            </span>
+          </div>
+          <button
+            className="ghost-button"
+            data-card-interactive="true"
+            type="button"
+            onClick={onClose}
+          >
+            Закрыть
+          </button>
+        </div>
+
+        <div className="matching-media-modal__body">
+          {media.kind === "audio" && !canPlayAudio ? (
+            <div className="matching-card-placeholder">
+              Источник не удалось открыть как аудио.
+            </div>
+          ) : media.kind === "audio" && youTubeMeta ? (
+            <MatchingYouTubeAudioPlayer
+              startSeconds={startSeconds}
+              videoId={youTubeMeta.videoId}
+              volume={audioVolume}
+            />
+          ) : youTubeMeta ? (
+            <>
+              <div className="matching-media-modal__frame-wrap">
+                <iframe
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                  className="matching-media-modal__frame"
+                  referrerPolicy="strict-origin-when-cross-origin"
+                  src={buildMatchingYouTubeEmbedUrl(
+                    youTubeMeta.videoId,
+                    startSeconds,
+                  )}
+                  title={title}
+                />
+              </div>
+              {media.kind === "audio" ? (
+                <p className="editor-hint">
+                  Источник YouTube открыт встроенным плеером, потому что сама
+                  ссылка ведет на видео.
+                </p>
+              ) : null}
+            </>
+          ) : media.kind === "audio" ? (
+            <audio
+              autoPlay
+              className="matching-media-modal__audio"
+              controls
+              key={`${media.kind}:${media.url}`}
+              preload="auto"
+              src={media.url}
+              onLoadedMetadata={(event) => {
+                event.currentTarget.volume = audioVolume / 100;
+              }}
+            >
+              Ваш браузер не поддерживает воспроизведение аудио.
+            </audio>
+          ) : (
+            <video
+              autoPlay
+              className="matching-media-modal__video"
+              controls
+              key={`${media.kind}:${media.url}:${startSeconds}`}
+              playsInline
+              preload="auto"
+              onLoadedMetadata={(event) => {
+                const element = event.currentTarget;
+                if (startSeconds > 0) {
+                  const maxStart = Number.isFinite(element.duration)
+                    ? Math.max(element.duration - 0.1, 0)
+                    : startSeconds;
+                  element.currentTime = Math.min(startSeconds, maxStart);
+                }
+                void element.play().catch(() => {});
+              }}
+            >
+              <source
+                src={media.url}
+                type={getMatchingMediaType("video", media.url)}
+              />
+              Ваш браузер не поддерживает воспроизведение видео.
+            </video>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function MatchingPairsActivity({
   draft,
   onReport,
 }: ActivityProps<"matching-pairs">) {
-  const [cards, setCards] = useState(() => createMatchingCards(draft.data.pairs));
+  const normalized = normalizeMatchingPairsData(draft.data);
+  const totalPairs = normalized.pairs.length;
+  const [cards, setCards] = useState(() => createMatchingCards(draft.data));
+  const [solvedPairs, setSolvedPairs] = useState<Set<number>>(new Set());
+  const [hasChecked, setHasChecked] = useState(false);
   const [draggingGroupId, setDraggingGroupId] = useState<string | null>(null);
+  const [activeMedia, setActiveMedia] = useState<MatchingPlayableContent | null>(
+    null,
+  );
   const dragRef = useRef<{
     pointerId: number;
     groupId: string;
@@ -140,10 +1140,37 @@ function MatchingPairsActivity({
   } | null>(null);
 
   useEffect(() => {
-    setCards(createMatchingCards(draft.data.pairs));
+    setCards(createMatchingCards(draft.data));
+    setSolvedPairs(new Set());
+    setHasChecked(false);
     setDraggingGroupId(null);
+    setActiveMedia(null);
     dragRef.current = null;
-  }, [draft.data.pairs]);
+  }, [draft.data]);
+
+  useEffect(() => {
+    if (!normalized.autoRemoveCorrectPairs) {
+      return;
+    }
+
+    const outcome = stripSolvedMatchingGroups(cards);
+    if (outcome.solvedPairIndexes.size === 0) {
+      return;
+    }
+
+    setSolvedPairs((current) => {
+      const next = new Set(current);
+      outcome.solvedPairIndexes.forEach((pairIndex) => next.add(pairIndex));
+      return next;
+    });
+    setCards(outcome.cards);
+  }, [cards, normalized.autoRemoveCorrectPairs]);
+
+  useEffect(() => {
+    if (solvedPairs.size === totalPairs && totalPairs > 0) {
+      onReport(100, true);
+    }
+  }, [onReport, solvedPairs, totalPairs]);
 
   const snapIfMatched = (nextCards: MatchingDragCard[], movedGroupId: string) => {
     const movedCards = nextCards.filter((card) => card.groupId === movedGroupId);
@@ -161,10 +1188,14 @@ function MatchingPairsActivity({
             const combined = [...movedGroup, ...candidateGroup];
             const leftCount = combined.filter((card) => card.side === "left").length;
             const rightCount = combined.filter((card) => card.side === "right").length;
-            const movedCenterX = movedCard.x + MATCHING_CARD_WIDTH / 2;
-            const movedCenterY = movedCard.y + MATCHING_CARD_HEIGHT / 2;
-            const candidateCenterX = candidate.x + MATCHING_CARD_WIDTH / 2;
-            const candidateCenterY = candidate.y + MATCHING_CARD_HEIGHT / 2;
+            const movedWidth = getMatchingCardWidth();
+            const movedHeight = getMatchingCardHeight(movedCard.content);
+            const candidateWidth = getMatchingCardWidth();
+            const candidateHeight = getMatchingCardHeight(candidate.content);
+            const movedCenterX = movedCard.x + movedWidth / 2;
+            const movedCenterY = movedCard.y + movedHeight / 2;
+            const candidateCenterX = candidate.x + candidateWidth / 2;
+            const candidateCenterY = candidate.y + candidateHeight / 2;
             const distance = Math.hypot(
               movedCenterX - candidateCenterX,
               movedCenterY - candidateCenterY,
@@ -173,15 +1204,19 @@ function MatchingPairsActivity({
             return {
               movedCard,
               candidate,
+              movedGroup,
+              candidateGroup,
               distance,
               canMerge:
                 candidate.side !== movedCard.side &&
+                movedGroup.length === 1 &&
+                candidateGroup.length === 1 &&
                 leftCount <= 1 &&
                 rightCount <= 1,
             };
           }),
       )
-      .filter((entry) => entry.canMerge && entry.distance < 170)
+      .filter((entry) => entry.canMerge && entry.distance < 210)
       .sort((left, right) => left.distance - right.distance)[0];
 
     if (!match) {
@@ -193,19 +1228,35 @@ function MatchingPairsActivity({
     const rightCard =
       match.movedCard.side === "right" ? match.movedCard : match.candidate;
     const groupId = `paired-${leftCard.id}-${rightCard.id}`;
+    const leftWidth = getMatchingCardWidth();
+    const leftHeight = getMatchingCardHeight(leftCard.content);
+    const leftMoved = leftCard.groupId === movedGroupId;
     const leftX =
-      leftCard.groupId === movedGroupId
-        ? leftCard.x
-        : rightCard.x - MATCHING_CARD_WIDTH - MATCHING_CARD_GAP;
-    const topY = leftCard.groupId === movedGroupId ? leftCard.y : rightCard.y;
+      normalized.pairAlignment === "horizontal"
+        ? leftMoved
+          ? leftCard.x
+          : rightCard.x - leftWidth - MATCHING_CARD_GAP
+        : leftMoved
+          ? leftCard.x
+          : rightCard.x;
+    const topY =
+      normalized.pairAlignment === "horizontal"
+        ? leftMoved
+          ? leftCard.y
+          : rightCard.y
+        : leftMoved
+          ? leftCard.y
+          : rightCard.y - leftHeight - MATCHING_CARD_GAP;
+    const clampedX = Math.max(12, leftX);
+    const clampedY = Math.max(12, topY);
 
     return nextCards.map((card) => {
       if (card.id === leftCard.id) {
         return {
           ...card,
           groupId,
-          x: leftX,
-          y: topY,
+          x: clampedX,
+          y: clampedY,
         };
       }
 
@@ -213,8 +1264,14 @@ function MatchingPairsActivity({
         return {
           ...card,
           groupId,
-          x: leftX + MATCHING_CARD_WIDTH + MATCHING_CARD_GAP,
-          y: topY,
+          x:
+            normalized.pairAlignment === "horizontal"
+              ? clampedX + leftWidth + MATCHING_CARD_GAP
+              : clampedX,
+          y:
+            normalized.pairAlignment === "horizontal"
+              ? clampedY
+              : clampedY + leftHeight + MATCHING_CARD_GAP,
         };
       }
 
@@ -223,156 +1280,252 @@ function MatchingPairsActivity({
   };
 
   const ungroupCards = (groupId: string) => {
+    setHasChecked(false);
     setCards((current) =>
       current.map((card) =>
         card.groupId === groupId
           ? {
               ...card,
-              groupId: `${card.side}-${card.pairIndex}-${card.id}`,
+              groupId: `group-${card.id}`,
             }
           : card,
       ),
     );
   };
 
+  const groupStatuses = useMemo(() => buildMatchingGroupStatuses(cards), [cards]);
+  const groupConnectors = useMemo(
+    () =>
+      Array.from(collectMatchingGroups(cards).entries())
+        .filter(([, groupCards]) => groupCards.length === 2)
+        .map(([groupId, groupCards]) => {
+          const [first, second] = groupCards;
+          return {
+            groupId,
+            status: getMatchingGroupStatus(groupCards),
+            x:
+              (first.x +
+                getMatchingCardWidth() / 2 +
+                second.x +
+                getMatchingCardWidth() / 2) /
+              2,
+            y:
+              (first.y +
+                getMatchingCardHeight(first.content) / 2 +
+                second.y +
+                getMatchingCardHeight(second.content) / 2) /
+              2,
+          };
+        }),
+    [cards],
+  );
+  const showGroupFeedback = normalized.showImmediateFeedback || hasChecked;
+
+  const beginDrag = (
+    event: ReactPointerEvent<HTMLDivElement>,
+    card: MatchingDragCard,
+  ) => {
+    if (isMatchingInteractiveTarget(event.target)) {
+      return;
+    }
+
+    event.preventDefault();
+    setHasChecked(false);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const groupCards = cards.filter((groupCard) => groupCard.groupId === card.groupId);
+    dragRef.current = {
+      pointerId: event.pointerId,
+      groupId: card.groupId,
+      positions: Object.fromEntries(
+        groupCards.map((groupCard) => [
+          groupCard.id,
+          { x: groupCard.x, y: groupCard.y },
+        ]),
+      ),
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+    setDraggingGroupId(card.groupId);
+  };
+
   const handleCheck = () => {
-    const correct = draft.data.pairs.filter(
-      (_, index) => {
-        const leftCard = cards.find((card) => card.id === `left-${index}`);
-        const rightCard = cards.find((card) => card.id === `right-${index}`);
-        return leftCard?.groupId === rightCard?.groupId;
-      },
-    ).length;
-    const score = percentage(correct, draft.data.pairs.length);
-    onReport(score, correct === draft.data.pairs.length);
+    const correct = solvedPairs.size + countVisibleCorrectPairs(cards);
+    const score = percentage(correct, totalPairs);
+    setHasChecked(true);
+    onReport(score, correct === totalPairs);
   };
 
   return (
     <div className="stack">
       <p className="editor-hint">
         Перетаскивайте карточки по полю. Когда правильные элементы окажутся рядом,
-        они склеятся и будут двигаться уже вместе. Склеивать можно любые карточки
-        разных колонок, а двойной клик разъединяет пару.
+        они склеятся и будут двигаться уже вместе. Карточку можно таскать за
+        любую ее неинтерактивную область, а разъединение находится между
+        скрепленными элементами.
       </p>
       <div
         className="matching-drag-board"
         style={{
-          minHeight: `${Math.max(draft.data.pairs.length * 96 + 60, 280)}px`,
+          minHeight: `${Math.max(
+            ...cards.map((card) => card.y + getMatchingCardHeight(card.content) + 32),
+            360,
+          )}px`,
         }}
       >
-        {cards.map((card) => (
+        {cards.map((card) => {
+          const normalizedCardContent = normalizeMatchingSide(card.content);
+          const showToolbarMeta =
+            normalizedCardContent.kind === "text" ||
+            normalizedCardContent.kind === "spoken-text";
+
+          return (
+            <div
+              className={`matching-drag-card ${
+                card.side === "right" ? "matching-drag-card--right" : ""
+              } ${draggingGroupId === card.groupId ? "matching-drag-card--dragging" : ""} ${
+                normalized.colorByGroup && card.side === "left"
+                  ? "matching-drag-card--group-left"
+                  : ""
+              } ${
+                normalized.colorByGroup && card.side === "right"
+                  ? "matching-drag-card--group-right"
+                  : ""
+              } ${
+                groupStatuses.get(card.groupId) === "correct" && showGroupFeedback
+                  ? "matching-drag-card--paired"
+                  : ""
+              } ${
+                groupStatuses.get(card.groupId) === "correct" && showGroupFeedback
+                  ? "matching-drag-card--correct"
+                  : ""
+              } ${
+                groupStatuses.get(card.groupId) === "incorrect" && showGroupFeedback
+                  ? "matching-drag-card--incorrect"
+                  : ""
+              }`}
+              key={card.id}
+              role="group"
+              aria-label={getMatchingContentAriaLabel(normalizedCardContent)}
+              style={{
+                left: `${card.x}px`,
+                top: `${card.y}px`,
+                width: `${getMatchingCardWidth()}px`,
+                height: `${getMatchingCardHeight(normalizedCardContent)}px`,
+              }}
+              onPointerDown={(event) => beginDrag(event, card)}
+              onPointerMove={(event) => {
+                const currentDrag = dragRef.current;
+                if (
+                  !currentDrag ||
+                  currentDrag.pointerId !== event.pointerId ||
+                  currentDrag.groupId !== card.groupId
+                ) {
+                  return;
+                }
+
+                const deltaX = event.clientX - currentDrag.startX;
+                const deltaY = event.clientY - currentDrag.startY;
+
+                setCards((current) =>
+                  current.map((currentCard) => {
+                    const initialPosition = currentDrag.positions[currentCard.id];
+                    if (!initialPosition) {
+                      return currentCard;
+                    }
+
+                    return {
+                      ...currentCard,
+                      x: Math.max(12, initialPosition.x + deltaX),
+                      y: Math.max(12, initialPosition.y + deltaY),
+                    };
+                  }),
+                );
+              }}
+              onPointerUp={(event) => {
+                const currentDrag = dragRef.current;
+                if (
+                  !currentDrag ||
+                  currentDrag.pointerId !== event.pointerId ||
+                  currentDrag.groupId !== card.groupId
+                ) {
+                  return;
+                }
+
+                event.currentTarget.releasePointerCapture(event.pointerId);
+                setCards((current) => snapIfMatched(current, currentDrag.groupId));
+                dragRef.current = null;
+                setDraggingGroupId(null);
+              }}
+              onPointerCancel={() => {
+                dragRef.current = null;
+                setDraggingGroupId(null);
+              }}
+            >
+              <div className="matching-drag-card__toolbar">
+                <span className="matching-drag-card__side">
+                  {card.side === "left" ? "A" : "B"}
+                </span>
+                {showToolbarMeta ? (
+                  <span className="matching-drag-card__meta">{card.label}</span>
+                ) : null}
+              </div>
+              <MatchingCardContent
+                content={normalizedCardContent}
+                onOpenMedia={setActiveMedia}
+              />
+            </div>
+          );
+        })}
+        {groupConnectors.map((connector) => (
           <button
-            className={`matching-drag-card ${
-              card.side === "right" ? "matching-drag-card--right" : ""
-            } ${draggingGroupId === card.groupId ? "matching-drag-card--dragging" : ""} ${
-              card.groupId.startsWith("paired-")
-                ? "matching-drag-card--paired"
+            className={`matching-drag-connector ${
+              connector.status === "correct" && showGroupFeedback
+                ? "matching-drag-connector--correct"
+                : ""
+            } ${
+              connector.status === "incorrect" && showGroupFeedback
+                ? "matching-drag-connector--incorrect"
                 : ""
             }`}
-            key={card.id}
+            data-card-interactive="true"
+            key={connector.groupId}
             style={{
-              left: `${card.x}px`,
-              top: `${card.y}px`,
-              width: `${MATCHING_CARD_WIDTH}px`,
-              height: `${MATCHING_CARD_HEIGHT}px`,
+              left: `${connector.x}px`,
+              top: `${connector.y}px`,
             }}
             type="button"
-            onPointerDown={(event) => {
-              event.preventDefault();
-              event.currentTarget.setPointerCapture(event.pointerId);
-              const groupCards = cards.filter(
-                (groupCard) => groupCard.groupId === card.groupId,
-              );
-              dragRef.current = {
-                pointerId: event.pointerId,
-                groupId: card.groupId,
-                positions: Object.fromEntries(
-                  groupCards.map((groupCard) => [
-                    groupCard.id,
-                    { x: groupCard.x, y: groupCard.y },
-                  ]),
-                ),
-                startX: event.clientX,
-                startY: event.clientY,
-              };
-              setDraggingGroupId(card.groupId);
-            }}
-            onPointerMove={(event) => {
-              const currentDrag = dragRef.current;
-              if (
-                !currentDrag ||
-                currentDrag.pointerId !== event.pointerId ||
-                currentDrag.groupId !== card.groupId
-              ) {
-                return;
-              }
-
-              const deltaX = event.clientX - currentDrag.startX;
-              const deltaY = event.clientY - currentDrag.startY;
-
-              setCards((current) =>
-                current.map((currentCard) => {
-                  const initialPosition = currentDrag.positions[currentCard.id];
-                  if (!initialPosition) {
-                    return currentCard;
-                  }
-
-                  return {
-                    ...currentCard,
-                    x: Math.max(12, initialPosition.x + deltaX),
-                    y: Math.max(12, initialPosition.y + deltaY),
-                  };
-                }),
-              );
-            }}
-            onPointerUp={(event) => {
-              const currentDrag = dragRef.current;
-              if (
-                !currentDrag ||
-                currentDrag.pointerId !== event.pointerId ||
-                currentDrag.groupId !== card.groupId
-              ) {
-                return;
-              }
-
-              event.currentTarget.releasePointerCapture(event.pointerId);
-              setCards((current) =>
-                snapIfMatched(current, currentDrag.groupId),
-              );
-              dragRef.current = null;
-              setDraggingGroupId(null);
-            }}
-            onPointerCancel={() => {
-              dragRef.current = null;
-              setDraggingGroupId(null);
-            }}
-            onDoubleClick={() => {
-              if (card.groupId.startsWith("paired-")) {
-                ungroupCards(card.groupId);
-              }
-            }}
+            onClick={() => ungroupCards(connector.groupId)}
           >
-            <span className="matching-drag-card__side">
-              {card.side === "left" ? "A" : "B"}
-            </span>
-            <span>{card.label}</span>
+            ×
           </button>
         ))}
       </div>
+      {(normalized.showImmediateFeedback || normalized.autoRemoveCorrectPairs) &&
+      (getEvaluatedPairGroups(cards) > 0 || solvedPairs.size > 0) ? (
+        <p className="editor-hint">
+          Сейчас собрано верных пар: {solvedPairs.size + countVisibleCorrectPairs(cards)}
+          {" / "}
+          {totalPairs}
+        </p>
+      ) : null}
       <ActionRow>
         <PlayerButton onClick={handleCheck}>Проверить</PlayerButton>
         <button
           className="ghost-button"
           type="button"
           onClick={() => {
-            setCards(createMatchingCards(draft.data.pairs));
+            setCards(createMatchingCards(draft.data));
+            setSolvedPairs(new Set());
+            setHasChecked(false);
             setDraggingGroupId(null);
+            setActiveMedia(null);
             dragRef.current = null;
           }}
         >
           Сбросить карточки
         </button>
       </ActionRow>
+      <MatchingMediaDialog media={activeMedia} onClose={() => setActiveMedia(null)} />
     </div>
   );
 }
@@ -1826,6 +2979,10 @@ export function ExercisePlayer({
     detail: string;
   } | null>(null);
   const revisionKey = `${draft.type}:${JSON.stringify(draft.data)}`;
+  const themeStyle = useMemo(
+    () => getExerciseThemeStyle(draft.themeColor),
+    [draft.themeColor],
+  );
 
   useEffect(() => {
     setStatus(null);
@@ -1855,6 +3012,7 @@ export function ExercisePlayer({
       className={`exercise-player ${
         fullscreen ? "exercise-player--fullscreen" : ""
       }`}
+      style={themeStyle}
     >
       <div className="exercise-player__head">
         <span className="eyebrow">Тип: {draft.type}</span>

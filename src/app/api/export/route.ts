@@ -20,7 +20,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const app = persistForExport({
+  const app = await persistForExport({
     id: body?.id ?? null,
     ownerId: session?.userId ?? null,
     draft,

@@ -1,76 +1,111 @@
 import "server-only";
-import fs from "node:fs";
-import path from "node:path";
-import Database from "better-sqlite3";
+import { createPool, type Pool } from "mariadb";
 
-let database: Database.Database | null = null;
+let database: Pool | null = null;
+let databasePromise: Promise<Pool> | null = null;
 
-function resolveDatabasePath() {
-  const appRoot = /* turbopackIgnore: true */ process.cwd();
-  const configuredPath = process.env.DATABASE_PATH?.trim();
+function parsePoolLimit() {
+  const configured = Number.parseInt(
+    process.env.DATABASE_POOL_LIMIT?.trim() ?? "10",
+    10,
+  );
 
-  if (configuredPath) {
-    if (path.isAbsolute(configuredPath)) {
-      return configuredPath;
-    }
-
-    return path.resolve(appRoot, configuredPath);
+  if (Number.isNaN(configured) || configured < 1) {
+    return 10;
   }
 
-  const railwayVolumeMountPath = process.env.RAILWAY_VOLUME_MOUNT_PATH?.trim();
-
-  if (railwayVolumeMountPath) {
-    return path.join(railwayVolumeMountPath, "learningapps-studio.sqlite");
-  }
-
-  return path.join(appRoot, "data", "learningapps-studio.sqlite");
+  return configured;
 }
 
-function initialize(db: Database.Database) {
-  db.pragma("foreign_keys = ON");
-  db.pragma("journal_mode = WAL");
+function resolveDatabaseConfig() {
+  const databaseUrl = process.env.DATABASE_URL?.trim();
 
-  db.exec(`
+  if (!databaseUrl) {
+    throw new Error(
+      "DATABASE_URL не задан. Укажите MySQL-строку подключения в переменных окружения.",
+    );
+  }
+
+  const parsed = new URL(databaseUrl);
+
+  if (parsed.protocol !== "mysql:") {
+    throw new Error("DATABASE_URL должен начинаться с mysql://");
+  }
+
+  const databaseName = decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
+
+  if (!databaseName) {
+    throw new Error("DATABASE_URL должен содержать имя базы данных.");
+  }
+
+  return {
+    host: parsed.hostname,
+    port: parsed.port ? Number.parseInt(parsed.port, 10) : 3306,
+    user: decodeURIComponent(parsed.username),
+    password: decodeURIComponent(parsed.password),
+    database: databaseName,
+  };
+}
+
+async function initialize(pool: Pool) {
+  await pool.execute(`
     CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      email TEXT NOT NULL UNIQUE,
-      name TEXT NOT NULL,
-      password_hash TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
+      id VARCHAR(64) PRIMARY KEY,
+      email VARCHAR(191) NOT NULL UNIQUE,
+      name VARCHAR(255) NOT NULL,
+      password_hash VARCHAR(255) NOT NULL,
+      created_at VARCHAR(40) NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
 
+  await pool.execute(`
     CREATE TABLE IF NOT EXISTS apps (
-      id TEXT PRIMARY KEY,
-      slug TEXT NOT NULL UNIQUE,
-      owner_id TEXT REFERENCES users(id) ON DELETE SET NULL,
-      title TEXT NOT NULL,
-      type TEXT NOT NULL,
-      draft_json TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_apps_owner_id
-      ON apps(owner_id, updated_at DESC);
-
-    CREATE INDEX IF NOT EXISTS idx_apps_slug
-      ON apps(slug);
+      id VARCHAR(64) PRIMARY KEY,
+      slug VARCHAR(191) NOT NULL UNIQUE,
+      owner_id VARCHAR(64) NULL,
+      title VARCHAR(255) NOT NULL,
+      type VARCHAR(64) NOT NULL,
+      draft_json LONGTEXT NOT NULL,
+      created_at VARCHAR(40) NOT NULL,
+      updated_at VARCHAR(40) NOT NULL,
+      INDEX idx_apps_owner_id (owner_id, updated_at),
+      CONSTRAINT fk_apps_owner_id
+        FOREIGN KEY (owner_id) REFERENCES users(id)
+        ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
 }
 
-export function getDb() {
+export async function getDb() {
   if (database) {
     return database;
   }
 
-  const databasePath = resolveDatabasePath();
-  const dataDirectory = path.dirname(databasePath);
-
-  if (!fs.existsSync(dataDirectory)) {
-    fs.mkdirSync(dataDirectory, { recursive: true });
+  if (databasePromise) {
+    return databasePromise;
   }
 
-  database = new Database(databasePath);
-  initialize(database);
-  return database;
+  databasePromise = (async () => {
+    const config = resolveDatabaseConfig();
+    const pool = createPool({
+      ...config,
+      charset: "utf8mb4",
+      connectionLimit: parsePoolLimit(),
+      acquireTimeout: 10000,
+      keepAliveDelay: 10000,
+    });
+
+    try {
+      await pool.query("SELECT 1");
+      await initialize(pool);
+      database = pool;
+      return pool;
+    } catch (error) {
+      databasePromise = null;
+      await pool.end().catch(() => undefined);
+      throw error;
+    }
+  })();
+
+  return databasePromise;
 }

@@ -1,8 +1,9 @@
 import "server-only";
 import { nanoid } from "nanoid";
+import type { UpsertResult } from "mariadb";
 import { getDb } from "@/lib/db";
 import { parseDraft } from "@/lib/exercise-definitions";
-import type { PublicUser, StoredExercise, AnyExerciseDraft } from "@/lib/types";
+import type { AnyExerciseDraft, PublicUser, StoredExercise } from "@/lib/types";
 
 interface UserRow {
   id: string;
@@ -59,11 +60,13 @@ function rowToExercise(row: AppRow | undefined): StoredExercise | null {
   }
 }
 
-export function findUserByEmail(email: string) {
-  const db = getDb();
-  const row = db
-    .prepare("SELECT * FROM users WHERE email = ?")
-    .get(email.toLocaleLowerCase("en-US")) as UserRow | undefined;
+export async function findUserByEmail(email: string) {
+  const db = await getDb();
+  const rows = await db.query<UserRow[]>(
+    "SELECT * FROM users WHERE email = ? LIMIT 1",
+    [email.toLocaleLowerCase("en-US")],
+  );
+  const row = rows[0];
 
   if (!row) {
     return null;
@@ -75,22 +78,23 @@ export function findUserByEmail(email: string) {
   };
 }
 
-export function createUser(input: {
+export async function createUser(input: {
   email: string;
   name: string;
   passwordHash: string;
 }) {
-  const db = getDb();
+  const db = await getDb();
   const now = new Date().toISOString();
   const userId = nanoid(16);
   const email = input.email.toLocaleLowerCase("en-US");
 
-  db.prepare(
+  await db.query<UpsertResult>(
     `
       INSERT INTO users (id, email, name, password_hash, created_at)
       VALUES (?, ?, ?, ?, ?)
     `,
-  ).run(userId, email, input.name.trim(), input.passwordHash, now);
+    [userId, email, input.name.trim(), input.passwordHash, now],
+  );
 
   return {
     id: userId,
@@ -99,78 +103,85 @@ export function createUser(input: {
   } satisfies PublicUser;
 }
 
-export function listAppsByOwner(ownerId: string) {
-  const db = getDb();
-  const rows = db
-    .prepare("SELECT * FROM apps WHERE owner_id = ? ORDER BY updated_at DESC")
-    .all(ownerId) as AppRow[];
+export async function listAppsByOwner(ownerId: string) {
+  const db = await getDb();
+  const rows = await db.query<AppRow[]>(
+    "SELECT * FROM apps WHERE owner_id = ? ORDER BY updated_at DESC",
+    [ownerId],
+  );
 
   return rows
     .map((row) => rowToExercise(row))
     .filter((row): row is StoredExercise => Boolean(row));
 }
 
-export function getOwnedApp(id: string, ownerId: string) {
-  const db = getDb();
-  const row = db
-    .prepare("SELECT * FROM apps WHERE id = ? AND owner_id = ?")
-    .get(id, ownerId) as AppRow | undefined;
+export async function getOwnedApp(id: string, ownerId: string) {
+  const db = await getDb();
+  const rows = await db.query<AppRow[]>(
+    "SELECT * FROM apps WHERE id = ? AND owner_id = ? LIMIT 1",
+    [id, ownerId],
+  );
 
-  return rowToExercise(row);
+  return rowToExercise(rows[0]);
 }
 
-export function getPublicAppBySlug(slug: string) {
-  const db = getDb();
-  const row = db
-    .prepare("SELECT * FROM apps WHERE slug = ?")
-    .get(slug) as AppRow | undefined;
+export async function getPublicAppBySlug(slug: string) {
+  const db = await getDb();
+  const rows = await db.query<AppRow[]>(
+    "SELECT * FROM apps WHERE slug = ? LIMIT 1",
+    [slug],
+  );
 
-  return rowToExercise(row);
+  return rowToExercise(rows[0]);
 }
 
-function insertApp(ownerId: string | null, draft: AnyExerciseDraft) {
-  const db = getDb();
+async function insertApp(ownerId: string | null, draft: AnyExerciseDraft) {
+  const db = await getDb();
   const id = nanoid(12);
   const slug = nanoid(11).toLocaleLowerCase("en-US");
   const now = new Date().toISOString();
 
-  db.prepare(
+  await db.query<UpsertResult>(
     `
       INSERT INTO apps (id, slug, owner_id, title, type, draft_json, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `,
-  ).run(id, slug, ownerId, draft.title, draft.type, JSON.stringify(draft), now, now);
+    [id, slug, ownerId, draft.title, draft.type, JSON.stringify(draft), now, now],
+  );
 
   return getPublicAppBySlug(slug);
 }
 
-export function saveOwnedApp(input: {
+export async function saveOwnedApp(input: {
   ownerId: string;
   draft: AnyExerciseDraft;
   id?: string | null;
 }) {
-  const db = getDb();
+  const db = await getDb();
   const now = new Date().toISOString();
 
   if (input.id) {
-    const existing = db
-      .prepare("SELECT * FROM apps WHERE id = ? AND owner_id = ?")
-      .get(input.id, input.ownerId) as AppRow | undefined;
+    const existingRows = await db.query<AppRow[]>(
+      "SELECT * FROM apps WHERE id = ? AND owner_id = ? LIMIT 1",
+      [input.id, input.ownerId],
+    );
+    const existing = existingRows[0];
 
     if (existing) {
-      db.prepare(
+      await db.query<UpsertResult>(
         `
           UPDATE apps
           SET title = ?, type = ?, draft_json = ?, updated_at = ?
           WHERE id = ? AND owner_id = ?
         `,
-      ).run(
-        input.draft.title,
-        input.draft.type,
-        JSON.stringify(input.draft),
-        now,
-        input.id,
-        input.ownerId,
+        [
+          input.draft.title,
+          input.draft.type,
+          JSON.stringify(input.draft),
+          now,
+          input.id,
+          input.ownerId,
+        ],
       );
 
       return getOwnedApp(input.id, input.ownerId);
@@ -180,11 +191,11 @@ export function saveOwnedApp(input: {
   return insertApp(input.ownerId, input.draft);
 }
 
-export function publishAnonymousApp(draft: AnyExerciseDraft) {
+export async function publishAnonymousApp(draft: AnyExerciseDraft) {
   return insertApp(null, draft);
 }
 
-export function persistForExport(input: {
+export async function persistForExport(input: {
   ownerId: string | null;
   draft: AnyExerciseDraft;
   id?: string | null;

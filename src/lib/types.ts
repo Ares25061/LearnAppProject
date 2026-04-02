@@ -21,8 +21,74 @@ export type ExerciseTypeId =
   | "fill-table"
   | "quiz-text-input";
 
+export type MatchingContentKind =
+  | "text"
+  | "spoken-text"
+  | "image"
+  | "audio"
+  | "video";
+
+export interface MatchingTextContent {
+  kind: "text";
+  text: string;
+}
+
+export interface MatchingSpokenTextContent {
+  kind: "spoken-text";
+  text: string;
+}
+
+export interface MatchingImageContent {
+  kind: "image";
+  url: string;
+  alt: string;
+  imageHeight: number;
+}
+
+export interface MatchingAudioContent {
+  kind: "audio";
+  url: string;
+  label: string;
+  volume: number;
+}
+
+export interface MatchingVideoContent {
+  kind: "video";
+  url: string;
+  label: string;
+  startSeconds: number;
+}
+
+export type MatchingContent =
+  | MatchingTextContent
+  | MatchingSpokenTextContent
+  | MatchingImageContent
+  | MatchingAudioContent
+  | MatchingVideoContent;
+
+export type MatchingPairSide = string | MatchingContent;
+
+export type MatchingPairAlignment = "horizontal" | "vertical";
+
+export type MatchingExtraSide = "left" | "right";
+
+export interface MatchingPairItem {
+  left: MatchingPairSide;
+  right: MatchingPairSide;
+}
+
+export interface MatchingExtraItem {
+  content: MatchingPairSide;
+  side: MatchingExtraSide;
+}
+
 export interface MatchingPairsData {
-  pairs: Array<{ left: string; right: string }>;
+  pairs: MatchingPairItem[];
+  extras?: MatchingExtraItem[];
+  pairAlignment?: MatchingPairAlignment;
+  showImmediateFeedback?: boolean;
+  autoRemoveCorrectPairs?: boolean;
+  colorByGroup?: boolean;
 }
 
 export interface GroupAssignmentData {

@@ -23,7 +23,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const app = saveOwnedApp({
+  const app = await saveOwnedApp({
     id: body?.id ?? null,
     ownerId: session.userId,
     draft,

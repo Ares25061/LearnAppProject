@@ -9,7 +9,7 @@ export default async function PlayPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const app = getPublicAppBySlug(slug);
+  const app = await getPublicAppBySlug(slug);
 
   if (!app) {
     notFound();

@@ -9,13 +9,14 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
-    "lint": "eslint"
+    "lint": "eslint",
+    "migrate:mysql": "node scripts/migrate-mysql.mjs"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
-    "better-sqlite3": "^12.8.0",
     "jose": "^6.2.2",
     "jszip": "^3.10.1",
+    "mariadb": "^3.5.2",
     "nanoid": "^5.1.7",
     "next": "16.2.2",
     "react": "19.2.4",
@@ -24,7 +25,6 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

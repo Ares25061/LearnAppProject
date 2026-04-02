@@ -21,10 +21,24 @@ export const exerciseDefinitions: ExerciseDefinition[] = [
       themeColor: "#28536b",
       data: {
         pairs: [
-          { left: "HTML", right: "Структура страницы" },
-          { left: "CSS", right: "Оформление страницы" },
-          { left: "JavaScript", right: "Поведение страницы" },
+          {
+            left: { kind: "text", text: "HTML" },
+            right: { kind: "text", text: "Структура страницы" },
+          },
+          {
+            left: { kind: "text", text: "CSS" },
+            right: { kind: "text", text: "Оформление страницы" },
+          },
+          {
+            left: { kind: "text", text: "JavaScript" },
+            right: { kind: "text", text: "Поведение страницы" },
+          },
         ],
+        extras: [],
+        pairAlignment: "horizontal",
+        showImmediateFeedback: false,
+        autoRemoveCorrectPairs: false,
+        colorByGroup: false,
       },
     },
   },

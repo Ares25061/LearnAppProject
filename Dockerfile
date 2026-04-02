@@ -14,13 +14,14 @@ FROM node:20-bookworm-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
-COPY package*.json ./
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=builder /app/.next ./.next
+
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/scorm-template ./scorm-template
-COPY --from=builder /app/next.config.ts ./next.config.ts
-RUN mkdir -p /data
+
 EXPOSE 3000
-CMD ["npm", "run", "start"]
+
+CMD ["node", "server.js"]
