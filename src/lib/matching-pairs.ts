@@ -14,11 +14,30 @@ import type {
   MatchingVideoContent,
 } from "@/lib/types";
 
-export const MATCHING_IMAGE_HEIGHT_MIN = 120;
+export const MATCHING_IMAGE_HEIGHT_MIN = 50;
 export const MATCHING_IMAGE_HEIGHT_MAX = 500;
+export const MATCHING_TEXT_SIZE_DEFAULT = 232;
+export const MATCHING_SPOKEN_TEXT_SIZE_DEFAULT = 232;
 export const MATCHING_IMAGE_HEIGHT_DEFAULT = 204;
+export const MATCHING_AUDIO_SIZE_MIN = 50;
+export const MATCHING_AUDIO_SIZE_MAX = 500;
+export const MATCHING_AUDIO_SIZE_DEFAULT = 110;
+export const MATCHING_VIDEO_SIZE_MIN = 50;
+export const MATCHING_VIDEO_SIZE_MAX = 500;
+export const MATCHING_VIDEO_SIZE_DEFAULT = 220;
 export const MATCHING_VIDEO_START_DEFAULT = 0;
 export const MATCHING_AUDIO_VOLUME_DEFAULT = 100;
+
+export function normalizeMatchingSize(value: unknown, fallback: number) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return Math.min(
+    MATCHING_IMAGE_HEIGHT_MAX,
+    Math.max(MATCHING_IMAGE_HEIGHT_MIN, Math.round(value)),
+  );
+}
 
 export const matchingContentOptions: Array<{
   id: MatchingContentKind;
@@ -42,19 +61,19 @@ export const matchingContentOptions: Array<{
     id: "image",
     label: "Картинка",
     shortLabel: "IMG",
-    hint: "Изображение по URL и подпись.",
+    hint: "Изображение по URL или из файла, плюс подпись и размер.",
   },
   {
     id: "audio",
     label: "Аудио",
     shortLabel: "AUD",
-    hint: "Ссылка на mp3/mp4 или YouTube, подпись и громкость.",
+    hint: "Ссылка или файл mp3/mp4/YouTube, подпись, громкость и размер.",
   },
   {
     id: "video",
     label: "Видео",
     shortLabel: "VID",
-    hint: "Видеофайл или ссылка по URL и подпись.",
+    hint: "Видеофайл или ссылка по URL, подпись, старт и размер.",
   },
 ];
 
@@ -66,13 +85,14 @@ export function createMatchingContent(
       return {
         kind,
         text: "",
+        size: MATCHING_SPOKEN_TEXT_SIZE_DEFAULT,
       } satisfies MatchingSpokenTextContent;
     case "image":
       return {
         kind,
         url: "",
         alt: "",
-        imageHeight: MATCHING_IMAGE_HEIGHT_DEFAULT,
+        size: MATCHING_IMAGE_HEIGHT_DEFAULT,
       } satisfies MatchingImageContent;
     case "audio":
       return {
@@ -80,6 +100,7 @@ export function createMatchingContent(
         url: "",
         label: "",
         volume: MATCHING_AUDIO_VOLUME_DEFAULT,
+        size: MATCHING_AUDIO_SIZE_DEFAULT,
       } satisfies MatchingAudioContent;
     case "video":
       return {
@@ -87,12 +108,15 @@ export function createMatchingContent(
         url: "",
         label: "",
         startSeconds: MATCHING_VIDEO_START_DEFAULT,
+        volume: MATCHING_AUDIO_VOLUME_DEFAULT,
+        size: MATCHING_VIDEO_SIZE_DEFAULT,
       } satisfies MatchingVideoContent;
     case "text":
     default:
       return {
         kind: "text",
         text: "",
+        size: MATCHING_TEXT_SIZE_DEFAULT,
       } satisfies MatchingTextContent;
   }
 }
@@ -118,6 +142,7 @@ export function normalizeMatchingSide(input: MatchingPairSide): MatchingContent 
     return {
       kind: "text",
       text: input,
+      size: MATCHING_TEXT_SIZE_DEFAULT,
     };
   }
 
@@ -130,24 +155,31 @@ export function normalizeMatchingSide(input: MatchingPairSide): MatchingContent 
       return {
         kind: "text",
         text: typeof input.text === "string" ? input.text : "",
+        size: normalizeMatchingSize(
+          input.size,
+          MATCHING_TEXT_SIZE_DEFAULT,
+        ),
       };
     case "spoken-text":
       return {
         kind: "spoken-text",
         text: typeof input.text === "string" ? input.text : "",
+        size: normalizeMatchingSize(
+          input.size,
+          MATCHING_SPOKEN_TEXT_SIZE_DEFAULT,
+        ),
       };
     case "image":
       return {
         kind: "image",
         url: typeof input.url === "string" ? input.url : "",
         alt: typeof input.alt === "string" ? input.alt : "",
-        imageHeight:
-          typeof input.imageHeight === "number" && Number.isFinite(input.imageHeight)
-            ? Math.min(
-                MATCHING_IMAGE_HEIGHT_MAX,
-                Math.max(MATCHING_IMAGE_HEIGHT_MIN, Math.round(input.imageHeight)),
-              )
-            : MATCHING_IMAGE_HEIGHT_DEFAULT,
+        size: normalizeMatchingSize(
+          typeof input.size === "number"
+            ? input.size
+            : (input as { imageHeight?: unknown }).imageHeight,
+          MATCHING_IMAGE_HEIGHT_DEFAULT,
+        ),
       };
     case "audio":
       return {
@@ -158,6 +190,10 @@ export function normalizeMatchingSide(input: MatchingPairSide): MatchingContent 
           typeof input.volume === "number" && Number.isFinite(input.volume)
             ? Math.min(100, Math.max(0, Math.round(input.volume)))
             : MATCHING_AUDIO_VOLUME_DEFAULT,
+        size: normalizeMatchingSize(
+          input.size,
+          MATCHING_AUDIO_SIZE_DEFAULT,
+        ),
       };
     case "video":
       return {
@@ -168,6 +204,14 @@ export function normalizeMatchingSide(input: MatchingPairSide): MatchingContent 
           typeof input.startSeconds === "number" && Number.isFinite(input.startSeconds)
             ? Math.max(MATCHING_VIDEO_START_DEFAULT, Math.round(input.startSeconds))
             : MATCHING_VIDEO_START_DEFAULT,
+        volume:
+          typeof input.volume === "number" && Number.isFinite(input.volume)
+            ? Math.min(100, Math.max(0, Math.round(input.volume)))
+            : MATCHING_AUDIO_VOLUME_DEFAULT,
+        size: normalizeMatchingSize(
+          input.size,
+          MATCHING_VIDEO_SIZE_DEFAULT,
+        ),
       };
     default:
       return createMatchingContent("text");

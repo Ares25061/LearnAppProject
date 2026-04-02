@@ -1,16 +1,21 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import {
+  MATCHING_AUDIO_SIZE_DEFAULT,
   MATCHING_AUDIO_VOLUME_DEFAULT,
   MATCHING_IMAGE_HEIGHT_DEFAULT,
   MATCHING_IMAGE_HEIGHT_MAX,
   MATCHING_IMAGE_HEIGHT_MIN,
+  MATCHING_SPOKEN_TEXT_SIZE_DEFAULT,
+  MATCHING_TEXT_SIZE_DEFAULT,
+  MATCHING_VIDEO_SIZE_DEFAULT,
   createMatchingContent,
   createMatchingExtra,
   createMatchingPair,
   getMatchingContentSummary,
   matchingContentOptions,
+  normalizeMatchingSize,
   normalizeMatchingPairsData,
 } from "@/lib/matching-pairs";
 import type {
@@ -77,11 +82,11 @@ function parseBulkPairs(source: string) {
       error: null,
       pair: {
         left: {
-          kind: "text" as const,
+          ...createMatchingContent("text"),
           text: parsed.left,
         },
         right: {
-          kind: "text" as const,
+          ...createMatchingContent("text"),
           text: parsed.right,
         },
       },
@@ -104,14 +109,131 @@ function parseBulkPairs(source: string) {
   };
 }
 
+function getMediaSizeDescription() {
+  return `Минимум ${MATCHING_IMAGE_HEIGHT_MIN}px, максимум ${MATCHING_IMAGE_HEIGHT_MAX}px.`;
+}
+
+function getBaseFileLabel(fileName: string) {
+  return fileName.replace(/\.[^.]+$/, "").trim();
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+
+      reject(new Error("Не удалось прочитать файл."));
+    };
+
+    reader.onerror = () => {
+      reject(reader.error ?? new Error("Не удалось прочитать файл."));
+    };
+
+    reader.readAsDataURL(file);
+  });
+}
+
+function isAcceptedMediaFile(
+  kind: "image" | "audio" | "video",
+  file: File,
+) {
+  const mimeType = file.type.toLowerCase();
+  const fileName = file.name.toLowerCase();
+
+  if (kind === "image") {
+    return mimeType.startsWith("image/");
+  }
+
+  if (kind === "audio") {
+    return (
+      mimeType.startsWith("audio/") ||
+      mimeType === "video/mp4" ||
+      fileName.endsWith(".mp3") ||
+      fileName.endsWith(".mp4") ||
+      fileName.endsWith(".m4a") ||
+      fileName.endsWith(".wav") ||
+      fileName.endsWith(".ogg")
+    );
+  }
+
+  return (
+    mimeType.startsWith("video/") ||
+    fileName.endsWith(".mp4") ||
+    fileName.endsWith(".webm") ||
+    fileName.endsWith(".ogv") ||
+    fileName.endsWith(".ogg")
+  );
+}
+
+function MatchingSizeField({
+  hint,
+  label,
+  value,
+  defaultValue,
+  onCommit,
+}: Readonly<{
+  hint?: string;
+  label: string;
+  value: number;
+  defaultValue: number;
+  onCommit: (next: number) => void;
+}>) {
+  const [inputValue, setInputValue] = useState(`${value}`);
+
+  useEffect(() => {
+    setInputValue(`${value}`);
+  }, [value]);
+
+  const commitValue = () => {
+    const next = normalizeMatchingSize(
+      inputValue.trim() ? Number.parseInt(inputValue, 10) : Number.NaN,
+      defaultValue,
+    );
+    onCommit(next);
+    setInputValue(`${next}`);
+  };
+
+  return (
+    <label className="matching-editor-field">
+      <span className="field-label">{label}</span>
+      <input
+        className="editor-input"
+        inputMode="numeric"
+        max={MATCHING_IMAGE_HEIGHT_MAX}
+        min={MATCHING_IMAGE_HEIGHT_MIN}
+        step={10}
+        type="number"
+        value={inputValue}
+        onBlur={commitValue}
+        onChange={(event) => setInputValue(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            commitValue();
+          }
+        }}
+      />
+      <p className="editor-hint">{getMediaSizeDescription()}</p>
+      {hint ? <p className="editor-hint">{hint}</p> : null}
+    </label>
+  );
+}
+
 function MatchingSideFields({
   content,
   label,
   onChange,
+  onNotice,
 }: Readonly<{
   content: MatchingContent;
   label: string;
   onChange: (next: MatchingContent) => void;
+  onNotice?: (message: string) => void;
 }>) {
   const activeOption = useMemo(
     () => matchingContentOptions.find((option) => option.id === content.kind),
@@ -129,13 +251,70 @@ function MatchingSideFields({
   };
 
   const setNumberField = (
-    field: "imageHeight" | "startSeconds" | "volume",
+    field: "size" | "startSeconds" | "volume",
     value: number,
   ) => {
     onChange({
       ...content,
       [field]: value,
     } as MatchingContent);
+  };
+
+  const handleMediaFile = async (
+    kind: "image" | "audio" | "video",
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    if (!isAcceptedMediaFile(kind, file)) {
+      onNotice?.("Файл не подходит для выбранного типа карточки.");
+      return;
+    }
+
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      const baseLabel = getBaseFileLabel(file.name);
+
+      if (kind === "image" && content.kind === "image") {
+        onChange({
+          ...content,
+          url: dataUrl,
+          alt: content.alt.trim() ? content.alt : baseLabel,
+        });
+        onNotice?.("Изображение встроено в карточку.");
+        return;
+      }
+
+      if (kind === "audio" && content.kind === "audio") {
+        onChange({
+          ...content,
+          url: dataUrl,
+          label: content.label.trim() ? content.label : baseLabel,
+        });
+        onNotice?.("Аудиофайл встроен в карточку.");
+        return;
+      }
+
+      if (kind === "video" && content.kind === "video") {
+        onChange({
+          ...content,
+          url: dataUrl,
+          label: content.label.trim() ? content.label : baseLabel,
+        });
+        onNotice?.("Видеофайл встроен в карточку.");
+      }
+    } catch (error) {
+      onNotice?.(
+        error instanceof Error
+          ? error.message
+          : "Не удалось загрузить файл в карточку.",
+      );
+    }
   };
 
   return (
@@ -165,17 +344,38 @@ function MatchingSideFields({
       </div>
 
       {content.kind === "text" || content.kind === "spoken-text" ? (
-        <label className="matching-editor-field">
-          <span className="field-label">
-            {content.kind === "spoken-text" ? "Текст для озвучивания" : "Текст"}
-          </span>
-          <textarea
-            className="editor-textarea"
-            rows={4}
-            value={content.text}
-            onChange={(event) => setField("text", event.target.value)}
+        <>
+          <label className="matching-editor-field">
+            <span className="field-label">
+              {content.kind === "spoken-text" ? "Текст для озвучивания" : "Текст"}
+            </span>
+            <textarea
+              className="editor-textarea"
+              rows={4}
+              value={content.text}
+              onChange={(event) => setField("text", event.target.value)}
+            />
+          </label>
+          <MatchingSizeField
+            defaultValue={
+              content.kind === "spoken-text"
+                ? MATCHING_SPOKEN_TEXT_SIZE_DEFAULT
+                : MATCHING_TEXT_SIZE_DEFAULT
+            }
+            hint={
+              content.kind === "spoken-text"
+                ? "Меняется общая высота карточки с озвученным текстом."
+                : "Меняется общая высота текстовой карточки."
+            }
+            label={
+              content.kind === "spoken-text"
+                ? "Размер карточки озвученного текста, px"
+                : "Размер текстовой карточки, px"
+            }
+            value={content.size}
+            onCommit={(next) => setNumberField("size", next)}
           />
-        </label>
+        </>
       ) : null}
 
       {content.kind === "image" ? (
@@ -190,6 +390,19 @@ function MatchingSideFields({
             />
           </label>
           <label className="matching-editor-field">
+            <span className="field-label">Файл изображения</span>
+            <input
+              accept="image/*"
+              className="editor-input"
+              type="file"
+              onChange={(event) => void handleMediaFile("image", event)}
+            />
+            <p className="editor-hint">
+              Можно вставить ссылку или выбрать файл из проводника. Файл будет
+              встроен в упражнение и попадет в JSON-экспорт.
+            </p>
+          </label>
+          <label className="matching-editor-field">
             <span className="field-label">Подпись / alt</span>
             <input
               className="editor-input"
@@ -198,35 +411,13 @@ function MatchingSideFields({
               onChange={(event) => setField("alt", event.target.value)}
             />
           </label>
-          <label className="matching-editor-field">
-            <span className="field-label">Высота изображения в карточке, px</span>
-            <input
-              className="editor-input"
-              max={MATCHING_IMAGE_HEIGHT_MAX}
-              min={MATCHING_IMAGE_HEIGHT_MIN}
-              step={10}
-              type="number"
-              value={content.imageHeight}
-              onChange={(event) =>
-                setNumberField(
-                  "imageHeight",
-                  Number.isFinite(event.target.valueAsNumber)
-                    ? Math.min(
-                        MATCHING_IMAGE_HEIGHT_MAX,
-                        Math.max(
-                          MATCHING_IMAGE_HEIGHT_MIN,
-                          Math.round(event.target.valueAsNumber),
-                        ),
-                      )
-                    : MATCHING_IMAGE_HEIGHT_DEFAULT,
-                )
-              }
-            />
-            <p className="editor-hint">
-              Меняется только высота image-карточки, остальные карточки остаются
-              стандартными.
-            </p>
-          </label>
+          <MatchingSizeField
+            defaultValue={MATCHING_IMAGE_HEIGHT_DEFAULT}
+            hint="Меняется высота изображения внутри карточки."
+            label="Размер изображения в карточке, px"
+            value={content.size}
+            onCommit={(next) => setNumberField("size", next)}
+          />
         </>
       ) : null}
 
@@ -242,6 +433,27 @@ function MatchingSideFields({
               value={content.url}
               onChange={(event) => setField("url", event.target.value)}
             />
+          </label>
+          <label className="matching-editor-field">
+            <span className="field-label">
+              {content.kind === "audio" ? "Файл аудио" : "Файл видео"}
+            </span>
+            <input
+              accept={
+                content.kind === "audio"
+                  ? "audio/*,video/mp4,.mp3,.mp4,.m4a,.wav,.ogg"
+                  : "video/*,.mp4,.webm,.ogv,.ogg"
+              }
+              className="editor-input"
+              type="file"
+              onChange={(event) =>
+                void handleMediaFile(content.kind, event)
+              }
+            />
+            <p className="editor-hint">
+              Файл из проводника будет встроен в упражнение и попадет в
+              JSON-экспорт.
+            </p>
           </label>
           {content.kind === "audio" ? (
             <p className="editor-hint">
@@ -278,6 +490,50 @@ function MatchingSideFields({
                   )
                 }
               />
+            </label>
+          ) : null}
+          <MatchingSizeField
+            defaultValue={
+              content.kind === "audio"
+                ? MATCHING_AUDIO_SIZE_DEFAULT
+                : MATCHING_VIDEO_SIZE_DEFAULT
+            }
+            hint={
+              content.kind === "audio"
+                ? "Меняется высота блока проигрывания внутри аудио-карточки."
+                : "Меняется высота превью видео в карточке."
+            }
+            label={
+              content.kind === "audio"
+                ? "Размер аудио-блока, px"
+                : "Размер превью видео, px"
+            }
+            value={content.size}
+            onCommit={(next) => setNumberField("size", next)}
+          />
+          {content.kind === "video" ? (
+            <label className="matching-editor-field">
+              <span className="field-label">Громкость, %</span>
+              <input
+                className="editor-input"
+                max={100}
+                min={0}
+                step={5}
+                type="number"
+                value={content.volume}
+                onChange={(event) =>
+                  setNumberField(
+                    "volume",
+                    Number.isFinite(event.target.valueAsNumber)
+                      ? Math.min(100, Math.max(0, Math.round(event.target.valueAsNumber)))
+                      : MATCHING_AUDIO_VOLUME_DEFAULT,
+                  )
+                }
+              />
+              <p className="editor-hint">
+                Работает для видеофайлов. Для YouTube громкость остается на стороне
+                встроенного плеера.
+              </p>
             </label>
           ) : null}
           {content.kind === "video" ? (
@@ -589,6 +845,7 @@ export function MatchingPairsEditor({
                 <MatchingSideFields
                   content={pair.left}
                   label="Левая карточка"
+                  onNotice={onNotice}
                   onChange={(nextContent) =>
                     updatePairs((current) =>
                       current.map((currentPair, pairIndex) =>
@@ -605,6 +862,7 @@ export function MatchingPairsEditor({
                 <MatchingSideFields
                   content={pair.right}
                   label="Правая карточка"
+                  onNotice={onNotice}
                   onChange={(nextContent) =>
                     updatePairs((current) =>
                       current.map((currentPair, pairIndex) =>
@@ -723,6 +981,7 @@ export function MatchingPairsEditor({
                     <MatchingSideFields
                       content={item.content as MatchingContent}
                       label="Карточка без пары"
+                      onNotice={onNotice}
                       onChange={(nextContent) =>
                         updateExtras((current) =>
                           current.map((currentItem, itemIndex) =>

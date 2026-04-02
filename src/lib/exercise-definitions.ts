@@ -22,16 +22,16 @@ export const exerciseDefinitions: ExerciseDefinition[] = [
       data: {
         pairs: [
           {
-            left: { kind: "text", text: "HTML" },
-            right: { kind: "text", text: "Структура страницы" },
+            left: "HTML",
+            right: "Структура страницы",
           },
           {
-            left: { kind: "text", text: "CSS" },
-            right: { kind: "text", text: "Оформление страницы" },
+            left: "CSS",
+            right: "Оформление страницы",
           },
           {
-            left: { kind: "text", text: "JavaScript" },
-            right: { kind: "text", text: "Поведение страницы" },
+            left: "JavaScript",
+            right: "Поведение страницы",
           },
         ],
         extras: [],

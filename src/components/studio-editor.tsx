@@ -1,7 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useDeferredValue, useState, useTransition } from "react";
+import {
+  useDeferredValue,
+  useRef,
+  useState,
+  useTransition,
+  type ChangeEvent,
+} from "react";
 import { useRouter } from "next/navigation";
 import { ExercisePlayer } from "@/components/exercise-player";
 import { MatchingPairsEditor } from "@/components/matching-pairs-editor";
@@ -9,6 +15,7 @@ import {
   createDefaultDraft,
   exerciseDefinitionMap,
   exerciseDefinitions,
+  parseDraft,
 } from "@/lib/exercise-definitions";
 import type {
   AnyExerciseDraft,
@@ -31,6 +38,7 @@ export function StudioEditor({
   existingSlug?: string | null;
 }>) {
   const router = useRouter();
+  const importInputRef = useRef<HTMLInputElement | null>(null);
   const [draft, setDraft] = useState(initialDraft);
   const [currentId, setCurrentId] = useState(existingId);
   const [currentSlug, setCurrentSlug] = useState(existingSlug);
@@ -60,6 +68,18 @@ export function StudioEditor({
     setNotice(nextNotice);
   };
 
+  const resolveCurrentDraft = () => {
+    const parsed = applyDataText();
+    if (!parsed) {
+      return null;
+    }
+
+    return {
+      ...draft,
+      data: parsed,
+    } as AnyExerciseDraft;
+  };
+
   const applyDataText = () => {
     try {
       const parsed = JSON.parse(dataText) as AnyExerciseDraft["data"];
@@ -84,17 +104,14 @@ export function StudioEditor({
   };
 
   const persistDraft = (endpoint: string, action: "save" | "export") => {
-    const parsed = applyDataText();
-    if (!parsed) {
+    const resolvedDraft = resolveCurrentDraft();
+    if (!resolvedDraft) {
       return;
     }
 
     const payload = {
       id: currentId,
-      draft: {
-        ...draft,
-        data: parsed,
-      },
+      draft: resolvedDraft,
     };
 
     startTransition(async () => {
@@ -161,6 +178,71 @@ export function StudioEditor({
         );
       }
     });
+  };
+
+  const handleJsonExport = () => {
+    const resolvedDraft = resolveCurrentDraft();
+    if (!resolvedDraft) {
+      return;
+    }
+
+    const exportPayload = {
+      format: "learningapps-studio/draft",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      draft: resolvedDraft,
+    };
+
+    const blob = new Blob([JSON.stringify(exportPayload, null, 2)], {
+      type: "application/json",
+    });
+    const downloadUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = downloadUrl;
+    anchor.download = `${safeFilename(resolvedDraft.title)}.json`;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(downloadUrl);
+    setNotice("JSON-экспорт скачан.");
+  };
+
+  const handleJsonImport = async (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    try {
+      const source = JSON.parse(await file.text()) as
+        | { draft?: unknown }
+        | AnyExerciseDraft;
+      const importedDraft = parseDraft(
+        source && typeof source === "object" && "draft" in source
+          ? source.draft
+          : source,
+      );
+
+      if (!importedDraft) {
+        setNotice("Файл не похож на экспорт упражнения.");
+        return;
+      }
+
+      setDraft(importedDraft);
+      setDataText(JSON.stringify(importedDraft.data, null, 2));
+      setDataError(null);
+      setNotice("Черновик импортирован из JSON.");
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "Не удалось импортировать JSON.",
+      );
+    }
   };
 
   const handleSave = () => {
@@ -316,11 +398,34 @@ export function StudioEditor({
               className="ghost-button"
               disabled={isPending}
               type="button"
+              onClick={handleJsonExport}
+            >
+              Скачать JSON
+            </button>
+            <button
+              className="ghost-button"
+              disabled={isPending}
+              type="button"
+              onClick={() => importInputRef.current?.click()}
+            >
+              Импорт JSON
+            </button>
+            <button
+              className="ghost-button"
+              disabled={isPending}
+              type="button"
               onClick={handleSave}
             >
               Сохранить
             </button>
           </div>
+          <input
+            ref={importInputRef}
+            accept=".json,application/json"
+            hidden
+            type="file"
+            onChange={(event) => void handleJsonImport(event)}
+          />
           {currentSlug ? (
             <p className="editor-hint">
               Публичная ссылка:{" "}

@@ -562,6 +562,7 @@ video {
 .matching-drag-card {
   position: absolute;
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
   text-align: left;
   border-radius: 24px;
@@ -653,7 +654,15 @@ video {
   display: grid;
   gap: 10px;
   align-content: start;
+  height: 100%;
   min-height: 0;
+}
+
+.matching-card-content--text,
+.matching-card-content--spoken-text,
+.matching-card-content--audio,
+.matching-card-content--video {
+  align-content: stretch;
 }
 
 .matching-card-content--image {
@@ -683,8 +692,16 @@ video {
   min-height: 0;
 }
 
+.matching-card-media-frame--audio,
 .matching-card-media-frame--visual {
   width: 100%;
+}
+
+.matching-card-media-frame--audio > .matching-media-launch,
+.matching-card-media-frame--audio > .matching-card-placeholder,
+.matching-card-media-frame--visual > .matching-card-placeholder {
+  min-height: 100%;
+  height: 100%;
 }
 
 .matching-card-image {
@@ -740,6 +757,7 @@ video {
 .matching-media-launch {
   grid-template-columns: auto 1fr;
   align-items: center;
+  height: 100%;
 }
 
 .matching-media-launch__icon {
@@ -775,6 +793,7 @@ video {
   height: 100%;
   object-fit: contain;
   background: rgba(255, 255, 255, 0.96);
+  pointer-events: none;
 }
 
 .matching-card-thumbnail--placeholder {
@@ -782,7 +801,7 @@ video {
   place-items: center;
   width: 100%;
   height: 100%;
-  min-height: 96px;
+  min-height: 100%;
   border-radius: 16px;
   background:
     linear-gradient(135deg, rgba(11, 122, 117, 0.12), rgba(22, 66, 91, 0.18));

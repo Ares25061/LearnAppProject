@@ -19,6 +19,7 @@ import {
 } from "@/lib/exercise-runtime";
 import {
   MATCHING_IMAGE_HEIGHT_DEFAULT,
+  MATCHING_TEXT_SIZE_DEFAULT,
   getMatchingContentAriaLabel,
   getMatchingContentSummary,
   MATCHING_IMAGE_HEIGHT_MAX,
@@ -101,12 +102,12 @@ function reportMatrixScore(data: MatchingMatrixData, selected: Set<string>) {
 
 const MATCHING_CARD_WIDTH = 286;
 const MATCHING_DEFAULT_CARD_HEIGHT = 232;
-const MATCHING_VIDEO_CARD_HEIGHT = MATCHING_DEFAULT_CARD_HEIGHT + 100;
 const MATCHING_CARD_GAP = 20;
 const MATCHING_CARD_STEP = 20;
 const MATCHING_IMAGE_CARD_BASE_HEIGHT = 74;
 const MATCHING_IMAGE_CAPTION_HEIGHT = 28;
-const MATCHING_VIDEO_PREVIEW_HEIGHT = 220;
+const MATCHING_AUDIO_CARD_BASE_HEIGHT = 122;
+const MATCHING_VIDEO_CARD_BASE_HEIGHT = 112;
 
 type MatchingGroupStatus = "neutral" | "correct" | "incorrect";
 
@@ -170,7 +171,37 @@ function getMatchingImageHeight(input: MatchingContent | MatchingImageContent) {
   }
 
   return clamp(
-    Math.round(content.imageHeight),
+    Math.round(content.size),
+    MATCHING_IMAGE_HEIGHT_MIN,
+    MATCHING_IMAGE_HEIGHT_MAX,
+  );
+}
+
+function getMatchingTextSize(content: MatchingContent) {
+  const normalized = normalizeMatchingSide(content);
+
+  if (normalized.kind === "text" || normalized.kind === "spoken-text") {
+    return clamp(
+      Math.round(normalized.size),
+      MATCHING_IMAGE_HEIGHT_MIN,
+      MATCHING_IMAGE_HEIGHT_MAX,
+    );
+  }
+
+  return MATCHING_TEXT_SIZE_DEFAULT;
+}
+
+function getMatchingAudioSize(input: MatchingAudioContent) {
+  return clamp(
+    Math.round(input.size),
+    MATCHING_IMAGE_HEIGHT_MIN,
+    MATCHING_IMAGE_HEIGHT_MAX,
+  );
+}
+
+function getMatchingVideoSize(input: MatchingVideoContent) {
+  return clamp(
+    Math.round(input.size),
     MATCHING_IMAGE_HEIGHT_MIN,
     MATCHING_IMAGE_HEIGHT_MAX,
   );
@@ -180,10 +211,22 @@ function getMatchingVideoStartSeconds(content: MatchingVideoContent) {
   return Math.max(0, Math.round(content.startSeconds));
 }
 
+function getMatchingVideoVolume(content: MatchingVideoContent) {
+  return clamp(Math.round(content.volume), 0, 100);
+}
+
 function getMatchingCardHeight(content: MatchingContent) {
   const normalized = normalizeMatchingSide(content);
   if (normalized.kind === "video") {
-    return MATCHING_VIDEO_CARD_HEIGHT;
+    return MATCHING_VIDEO_CARD_BASE_HEIGHT + getMatchingVideoSize(normalized);
+  }
+
+  if (normalized.kind === "audio") {
+    return MATCHING_AUDIO_CARD_BASE_HEIGHT + getMatchingAudioSize(normalized);
+  }
+
+  if (normalized.kind === "text" || normalized.kind === "spoken-text") {
+    return getMatchingTextSize(normalized);
   }
 
   if (normalized.kind !== "image") {
@@ -438,6 +481,24 @@ function getMatchingMediaType(
   kind: Extract<MatchingContent["kind"], "audio" | "video">,
   url: string,
 ) {
+  const dataUrlMatch = url.trim().match(/^data:([^;,]+)[;,]/i);
+  const dataMimeType = dataUrlMatch?.[1]?.toLowerCase() ?? "";
+
+  if (dataMimeType) {
+    if (
+      kind === "audio" &&
+      (dataMimeType.startsWith("audio/") || dataMimeType === "video/mp4")
+    ) {
+      return dataMimeType;
+    }
+
+    if (kind === "video" && dataMimeType.startsWith("video/")) {
+      return dataMimeType;
+    }
+
+    return undefined;
+  }
+
   const normalized = url.split("?")[0]?.split("#")[0]?.toLowerCase() ?? "";
 
   if (kind === "audio") {
@@ -584,6 +645,11 @@ function buildMatchingYouTubeEmbedUrl(videoId: string, startSeconds = 0) {
 }
 
 function getMatchingMediaSourceLabel(url: string) {
+  const dataUrlMatch = url.trim().match(/^data:([^;,]+)[;,]/i);
+  if (dataUrlMatch?.[1]) {
+    return `встроенный файл (${dataUrlMatch[1]})`;
+  }
+
   const parsed = parseMatchingUrl(url);
   if (!parsed) {
     return url.trim();
@@ -673,9 +739,15 @@ function MatchingCardContent({
   const contentClassName = `matching-card-content matching-card-content--${normalized.kind}`;
 
   switch (normalized.kind) {
-    case "spoken-text":
+    case "spoken-text": {
+      const spokenTextSize = Math.max(getMatchingTextSize(normalized) - 82, 0);
       return (
-        <div className={contentClassName}>
+        <div
+          className={contentClassName}
+          style={{
+            minHeight: `${spokenTextSize}px`,
+          }}
+        >
           <p className="matching-card-copy">{normalized.text || "Текст не задан"}</p>
           <button
             className="ghost-button matching-card-action"
@@ -692,6 +764,7 @@ function MatchingCardContent({
           </button>
         </div>
       );
+    }
     case "image": {
       const imageHeight = getMatchingImageHeight(normalized);
       return (
@@ -721,30 +794,39 @@ function MatchingCardContent({
     }
     case "audio": {
       const canPlayAudio = isMatchingAudioPlayable(normalized.url);
+      const audioSize = getMatchingAudioSize(normalized);
       return (
         <div className={contentClassName}>
           <span className="tag">AUD</span>
           <strong>{normalized.label || "Аудио"}</strong>
-          {normalized.url && canPlayAudio ? (
-            <button
-              className="ghost-button matching-media-launch"
-              data-card-interactive="true"
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onOpenMedia(normalized);
-              }}
-            >
-              <span className="matching-media-launch__icon">▶</span>
-              <span>Проиграть звук</span>
-            </button>
-          ) : normalized.url ? (
-            <div className="matching-card-placeholder">
-              Для аудио используйте mp3/mp4 или ссылку на YouTube
-            </div>
-          ) : (
-            <div className="matching-card-placeholder">URL аудио не задан</div>
-          )}
+          <div
+            className="matching-card-media-frame matching-card-media-frame--audio"
+            style={{
+              height: `${audioSize}px`,
+              minHeight: `${audioSize}px`,
+            }}
+          >
+            {normalized.url && canPlayAudio ? (
+              <button
+                className="ghost-button matching-media-launch"
+                data-card-interactive="true"
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenMedia(normalized);
+                }}
+              >
+                <span className="matching-media-launch__icon">▶</span>
+                <span>Проиграть звук</span>
+              </button>
+            ) : normalized.url ? (
+              <div className="matching-card-placeholder">
+                Для аудио используйте mp3/mp4 или ссылку на YouTube
+              </div>
+            ) : (
+              <div className="matching-card-placeholder">URL аудио не задан</div>
+            )}
+          </div>
           {normalized.url ? (
             <span className="matching-card-url">
               {getMatchingMediaSourceLabel(normalized.url)}
@@ -757,6 +839,7 @@ function MatchingCardContent({
       const youTubeMeta = getMatchingYouTubeMeta(normalized.url);
       const startSeconds =
         getMatchingVideoStartSeconds(normalized) || youTubeMeta?.startSeconds || 0;
+      const videoSize = getMatchingVideoSize(normalized);
 
       return (
         <div className={contentClassName}>
@@ -775,8 +858,8 @@ function MatchingCardContent({
               <div
                 className="matching-media-preview__frame"
                 style={{
-                  height: `${MATCHING_VIDEO_PREVIEW_HEIGHT}px`,
-                  minHeight: `${MATCHING_VIDEO_PREVIEW_HEIGHT}px`,
+                  height: `${videoSize}px`,
+                  minHeight: `${videoSize}px`,
                 }}
               >
                 {youTubeMeta ? (
@@ -784,6 +867,16 @@ function MatchingCardContent({
                     alt={normalized.label || "Превью видео"}
                     className="matching-card-thumbnail"
                     src={youTubeMeta.thumbnailUrl}
+                  />
+                ) : getMatchingMediaType("video", normalized.url) ? (
+                  <video
+                    aria-hidden="true"
+                    className="matching-card-thumbnail"
+                    muted
+                    playsInline
+                    preload="metadata"
+                    src={normalized.url}
+                    tabIndex={-1}
                   />
                 ) : (
                   <div className="matching-card-thumbnail matching-card-thumbnail--placeholder">
@@ -808,12 +901,19 @@ function MatchingCardContent({
       );
     }
     case "text":
-    default:
+    default: {
+      const textSize = Math.max(getMatchingTextSize(normalized) - 68, 0);
       return (
-        <div className={contentClassName}>
+        <div
+          className={contentClassName}
+          style={{
+            minHeight: `${textSize}px`,
+          }}
+        >
           <p className="matching-card-copy">{normalized.text || "Текст не задан"}</p>
         </div>
       );
+    }
   }
 }
 
@@ -998,6 +1098,8 @@ function MatchingMediaDialog({
   const canPlayAudio = media.kind === "audio" ? isMatchingAudioPlayable(media.url) : false;
   const audioVolume =
     media.kind === "audio" ? getMatchingAudioVolume(media) : 100;
+  const videoVolume =
+    media.kind === "video" ? getMatchingVideoVolume(media) : 100;
   const startSeconds =
     media.kind === "video"
       ? getMatchingVideoStartSeconds(media) || youTubeMeta?.startSeconds || 0
@@ -1096,6 +1198,7 @@ function MatchingMediaDialog({
               preload="auto"
               onLoadedMetadata={(event) => {
                 const element = event.currentTarget;
+                element.volume = videoVolume / 100;
                 if (startSeconds > 0) {
                   const maxStart = Number.isFinite(element.duration)
                     ? Math.max(element.duration - 0.1, 0)

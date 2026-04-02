@@ -31,18 +31,20 @@ export type MatchingContentKind =
 export interface MatchingTextContent {
   kind: "text";
   text: string;
+  size: number;
 }
 
 export interface MatchingSpokenTextContent {
   kind: "spoken-text";
   text: string;
+  size: number;
 }
 
 export interface MatchingImageContent {
   kind: "image";
   url: string;
   alt: string;
-  imageHeight: number;
+  size: number;
 }
 
 export interface MatchingAudioContent {
@@ -50,6 +52,7 @@ export interface MatchingAudioContent {
   url: string;
   label: string;
   volume: number;
+  size: number;
 }
 
 export interface MatchingVideoContent {
@@ -57,6 +60,8 @@ export interface MatchingVideoContent {
   url: string;
   label: string;
   startSeconds: number;
+  volume: number;
+  size: number;
 }
 
 export type MatchingContent =
