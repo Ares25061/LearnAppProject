@@ -1,6 +1,7 @@
 import { getSession } from "@/lib/auth";
 import { persistForExport } from "@/lib/apps";
 import { parseDraft } from "@/lib/exercise-definitions";
+import { getPublicAppOrigin } from "@/lib/public-origin";
 import { generateScormArchive } from "@/lib/scorm";
 import { safeFilename } from "@/lib/utils";
 
@@ -33,7 +34,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const origin = process.env.NEXT_PUBLIC_APP_URL ?? new URL(request.url).origin;
+  const origin = getPublicAppOrigin(request);
   const playUrl = `${origin}/play/${app.slug}`;
   const archive = await generateScormArchive({
     title: draft.title,
