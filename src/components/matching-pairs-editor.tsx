@@ -27,6 +27,16 @@ import type {
 import { moveItem } from "@/lib/utils";
 
 const BULK_SEPARATORS = ["\t", ";", "|", "=>"];
+const MATCHING_TAG_SUMMARY_LIMIT = 65;
+
+function truncateMatchingTagText(value: string) {
+  const trimmed = value.trim();
+  if (trimmed.length <= MATCHING_TAG_SUMMARY_LIMIT) {
+    return trimmed;
+  }
+
+  return `${trimmed.slice(0, MATCHING_TAG_SUMMARY_LIMIT - 3).trimEnd()}...`;
+}
 
 function parseBulkLine(line: string) {
   const trimmed = line.trim();
@@ -324,7 +334,9 @@ function MatchingSideFields({
           <strong>{label}</strong>
           <p className="editor-hint">{activeOption?.hint}</p>
         </div>
-        <span className="tag">{getMatchingContentSummary(content)}</span>
+        <span className="tag">
+          {truncateMatchingTagText(getMatchingContentSummary(content))}
+        </span>
       </div>
 
       <div className="matching-editor-types">
@@ -657,117 +669,6 @@ export function MatchingPairsEditor({
       <div className="editor-block">
         <div className="editor-block__head">
           <div>
-            <strong>Параметры игры</strong>
-            <p className="editor-hint">
-              Здесь задается поведение соединения, мгновенная проверка и вид
-              карточек в упражнении.
-            </p>
-          </div>
-        </div>
-
-        <div className="matching-settings-grid">
-          <div className="matching-setting-card">
-            <span className="field-label">Выравнивание при скреплении</span>
-            <div className="matching-setting-options">
-              <button
-                className={`matching-setting-chip ${
-                  normalized.pairAlignment === "horizontal"
-                    ? "matching-setting-chip--active"
-                    : ""
-                }`}
-                type="button"
-                onClick={() =>
-                  updateData((current) => ({
-                    ...current,
-                    pairAlignment: "horizontal",
-                  }))
-                }
-              >
-                Бок о бок
-              </button>
-              <button
-                className={`matching-setting-chip ${
-                  normalized.pairAlignment === "vertical"
-                    ? "matching-setting-chip--active"
-                    : ""
-                }`}
-                type="button"
-                onClick={() =>
-                  updateData((current) => ({
-                    ...current,
-                    pairAlignment: "vertical",
-                  }))
-                }
-              >
-                Сверху вниз
-              </button>
-            </div>
-          </div>
-
-          <label className="matching-setting-card matching-setting-card--toggle">
-            <input
-              checked={normalized.showImmediateFeedback}
-              type="checkbox"
-              onChange={(event) =>
-                updateData((current) => ({
-                  ...current,
-                  showImmediateFeedback: event.target.checked,
-                }))
-              }
-            />
-            <div>
-              <strong>Показывать результат сразу</strong>
-              <p className="editor-hint">
-                Правильные связки будут зелеными, ошибочные красными еще до
-                нажатия на кнопку проверки.
-              </p>
-            </div>
-          </label>
-
-          <label className="matching-setting-card matching-setting-card--toggle">
-            <input
-              checked={normalized.autoRemoveCorrectPairs}
-              type="checkbox"
-              onChange={(event) =>
-                updateData((current) => ({
-                  ...current,
-                  autoRemoveCorrectPairs: event.target.checked,
-                }))
-              }
-            />
-            <div>
-              <strong>Удалять правильно составленные пары</strong>
-              <p className="editor-hint">
-                Верно составленные пары автоматически исчезают с поля сразу после
-                соединения.
-              </p>
-            </div>
-          </label>
-
-          <label className="matching-setting-card matching-setting-card--toggle">
-            <input
-              checked={normalized.colorByGroup}
-              type="checkbox"
-              onChange={(event) =>
-                updateData((current) => ({
-                  ...current,
-                  colorByGroup: event.target.checked,
-                }))
-              }
-            />
-            <div>
-              <strong>Раскраска карточек по группам</strong>
-              <p className="editor-hint">
-                Левая и правая колонка получают разные цвета: синий и оранжевый.
-              </p>
-            </div>
-          </label>
-        </div>
-      </div>
-
-      <div className="editor-block">
-        <div className="editor-block__head">
-          <div>
             <strong>Редактор пар</strong>
             <p className="editor-hint">
               Каждая строка задает одну пару. У каждой стороны можно выбрать
@@ -1003,16 +904,119 @@ export function MatchingPairsEditor({
         )}
       </div>
 
-      <div className="editor-block">
-        <div className="editor-block__head">
-          <div>
-            <strong>Быстрый импорт</strong>
-            <p className="editor-hint">
-              Вставьте пары построчно в формате `лево	tab	право`,
-              `лево ; право`, `лево | право` или `лево - право`.
-            </p>
+      <details className="editor-block editor-details">
+        <summary className="editor-details__summary">Параметры игры</summary>
+        <p className="editor-hint">
+          Здесь задается поведение соединения, мгновенная проверка и вид
+          карточек в упражнении.
+        </p>
+
+        <div className="matching-settings-grid">
+          <div className="matching-setting-card">
+            <span className="field-label">Выравнивание при скреплении</span>
+            <div className="matching-setting-options">
+              <button
+                className={`matching-setting-chip ${
+                  normalized.pairAlignment === "horizontal"
+                    ? "matching-setting-chip--active"
+                    : ""
+                }`}
+                type="button"
+                onClick={() =>
+                  updateData((current) => ({
+                    ...current,
+                    pairAlignment: "horizontal",
+                  }))
+                }
+              >
+                Бок о бок
+              </button>
+              <button
+                className={`matching-setting-chip ${
+                  normalized.pairAlignment === "vertical"
+                    ? "matching-setting-chip--active"
+                    : ""
+                }`}
+                type="button"
+                onClick={() =>
+                  updateData((current) => ({
+                    ...current,
+                    pairAlignment: "vertical",
+                  }))
+                }
+              >
+                Сверху вниз
+              </button>
+            </div>
           </div>
+
+          <label className="matching-setting-card matching-setting-card--toggle">
+            <input
+              checked={normalized.showImmediateFeedback}
+              type="checkbox"
+              onChange={(event) =>
+                updateData((current) => ({
+                  ...current,
+                  showImmediateFeedback: event.target.checked,
+                }))
+              }
+            />
+            <div>
+              <strong>Показывать результат сразу</strong>
+              <p className="editor-hint">
+                Правильные связки будут зелеными, ошибочные красными еще до
+                нажатия на кнопку проверки.
+              </p>
+            </div>
+          </label>
+
+          <label className="matching-setting-card matching-setting-card--toggle">
+            <input
+              checked={normalized.autoRemoveCorrectPairs}
+              type="checkbox"
+              onChange={(event) =>
+                updateData((current) => ({
+                  ...current,
+                  autoRemoveCorrectPairs: event.target.checked,
+                }))
+              }
+            />
+            <div>
+              <strong>Удалять правильно составленные пары</strong>
+              <p className="editor-hint">
+                Верно составленные пары автоматически исчезают с поля сразу после
+                соединения.
+              </p>
+            </div>
+          </label>
+
+          <label className="matching-setting-card matching-setting-card--toggle">
+            <input
+              checked={normalized.colorByGroup}
+              type="checkbox"
+              onChange={(event) =>
+                updateData((current) => ({
+                  ...current,
+                  colorByGroup: event.target.checked,
+                }))
+              }
+            />
+            <div>
+              <strong>Раскраска карточек по группам</strong>
+              <p className="editor-hint">
+                Левая и правая колонка получают разные цвета: синий и оранжевый.
+              </p>
+            </div>
+          </label>
         </div>
+      </details>
+
+      <details className="editor-block editor-details">
+        <summary className="editor-details__summary">Быстрый импорт</summary>
+        <p className="editor-hint">
+          Вставьте пары построчно в формате `лево	tab	право`, `лево ; право`,
+          `лево | право` или `лево - право`.
+        </p>
 
         <textarea
           className="editor-code editor-code--compact"
@@ -1039,7 +1043,7 @@ export function MatchingPairsEditor({
             Заменить пары
           </button>
         </div>
-      </div>
+      </details>
     </>
   );
 }

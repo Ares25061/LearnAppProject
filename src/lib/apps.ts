@@ -3,6 +3,11 @@ import { nanoid } from "nanoid";
 import type { UpsertResult } from "mariadb";
 import { getDb } from "@/lib/db";
 import { parseDraft } from "@/lib/exercise-definitions";
+import {
+  readFileStore,
+  updateFileStore,
+  type StoredUserRecord,
+} from "@/lib/file-store";
 import type { AnyExerciseDraft, PublicUser, StoredExercise } from "@/lib/types";
 
 interface UserRow {
@@ -60,22 +65,61 @@ function rowToExercise(row: AppRow | undefined): StoredExercise | null {
   }
 }
 
-export async function findUserByEmail(email: string) {
-  const db = await getDb();
-  const rows = await db.query<UserRow[]>(
-    "SELECT * FROM users WHERE email = ? LIMIT 1",
-    [email.toLocaleLowerCase("en-US")],
-  );
-  const row = rows[0];
-
+function fileUserToAuthUser(row: StoredUserRecord | undefined) {
   if (!row) {
     return null;
   }
 
   return {
-    ...toPublicUser(row),
-    passwordHash: row.password_hash,
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    passwordHash: row.passwordHash,
   };
+}
+
+async function withPersistence<T>(
+  dbAction: () => Promise<T>,
+  fileAction: () => Promise<T>,
+) {
+  try {
+    return await dbAction();
+  } catch (error) {
+    console.error("Primary database unavailable, using file store fallback.", error);
+    return fileAction();
+  }
+}
+
+function normalizeEmail(email: string) {
+  return email.trim().toLocaleLowerCase("en-US");
+}
+
+export async function findUserByEmail(email: string) {
+  return withPersistence(
+    async () => {
+      const db = await getDb();
+      const rows = await db.query<UserRow[]>(
+        "SELECT * FROM users WHERE email = ? LIMIT 1",
+        [normalizeEmail(email)],
+      );
+      const row = rows[0];
+
+      if (!row) {
+        return null;
+      }
+
+      return {
+        ...toPublicUser(row),
+        passwordHash: row.password_hash,
+      };
+    },
+    async () => {
+      const store = await readFileStore();
+      return fileUserToAuthUser(
+        store.users.find((item) => item.email === normalizeEmail(email)),
+      );
+    },
+  );
 }
 
 export async function createUser(input: {
@@ -83,59 +127,119 @@ export async function createUser(input: {
   name: string;
   passwordHash: string;
 }) {
-  const db = await getDb();
-  const now = new Date().toISOString();
-  const userId = nanoid(16);
-  const email = input.email.toLocaleLowerCase("en-US");
+  return withPersistence(
+    async () => {
+      const db = await getDb();
+      const now = new Date().toISOString();
+      const userId = nanoid(16);
+      const email = normalizeEmail(input.email);
 
-  await db.query<UpsertResult>(
-    `
-      INSERT INTO users (id, email, name, password_hash, created_at)
-      VALUES (?, ?, ?, ?, ?)
-    `,
-    [userId, email, input.name.trim(), input.passwordHash, now],
+      await db.query<UpsertResult>(
+        `
+          INSERT INTO users (id, email, name, password_hash, created_at)
+          VALUES (?, ?, ?, ?, ?)
+        `,
+        [userId, email, input.name.trim(), input.passwordHash, now],
+      );
+
+      return {
+        id: userId,
+        email,
+        name: input.name.trim(),
+      } satisfies PublicUser;
+    },
+    async () =>
+      updateFileStore(async (current) => {
+        const email = normalizeEmail(input.email);
+        const existing = current.users.find((item) => item.email === email);
+        if (existing) {
+          throw new Error("Пользователь с такой почтой уже существует.");
+        }
+
+        const nextUser: StoredUserRecord = {
+          id: nanoid(16),
+          email,
+          name: input.name.trim(),
+          passwordHash: input.passwordHash,
+          createdAt: new Date().toISOString(),
+        };
+
+        return {
+          data: {
+            ...current,
+            users: [...current.users, nextUser],
+          },
+          result: {
+            id: nextUser.id,
+            email: nextUser.email,
+            name: nextUser.name,
+          } satisfies PublicUser,
+        };
+      }),
   );
-
-  return {
-    id: userId,
-    email,
-    name: input.name.trim(),
-  } satisfies PublicUser;
 }
 
 export async function listAppsByOwner(ownerId: string) {
-  const db = await getDb();
-  const rows = await db.query<AppRow[]>(
-    "SELECT * FROM apps WHERE owner_id = ? ORDER BY updated_at DESC",
-    [ownerId],
-  );
+  return withPersistence(
+    async () => {
+      const db = await getDb();
+      const rows = await db.query<AppRow[]>(
+        "SELECT * FROM apps WHERE owner_id = ? ORDER BY updated_at DESC",
+        [ownerId],
+      );
 
-  return rows
-    .map((row) => rowToExercise(row))
-    .filter((row): row is StoredExercise => Boolean(row));
+      return rows
+        .map((row) => rowToExercise(row))
+        .filter((row): row is StoredExercise => Boolean(row));
+    },
+    async () => {
+      const store = await readFileStore();
+      return store.apps
+        .filter((app) => app.ownerId === ownerId)
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    },
+  );
 }
 
 export async function getOwnedApp(id: string, ownerId: string) {
-  const db = await getDb();
-  const rows = await db.query<AppRow[]>(
-    "SELECT * FROM apps WHERE id = ? AND owner_id = ? LIMIT 1",
-    [id, ownerId],
-  );
+  return withPersistence(
+    async () => {
+      const db = await getDb();
+      const rows = await db.query<AppRow[]>(
+        "SELECT * FROM apps WHERE id = ? AND owner_id = ? LIMIT 1",
+        [id, ownerId],
+      );
 
-  return rowToExercise(rows[0]);
+      return rowToExercise(rows[0]);
+    },
+    async () => {
+      const store = await readFileStore();
+      return (
+        store.apps.find((app) => app.id === id && app.ownerId === ownerId) ?? null
+      );
+    },
+  );
 }
 
 export async function getPublicAppBySlug(slug: string) {
-  const db = await getDb();
-  const rows = await db.query<AppRow[]>(
-    "SELECT * FROM apps WHERE slug = ? LIMIT 1",
-    [slug],
-  );
+  return withPersistence(
+    async () => {
+      const db = await getDb();
+      const rows = await db.query<AppRow[]>(
+        "SELECT * FROM apps WHERE slug = ? LIMIT 1",
+        [slug],
+      );
 
-  return rowToExercise(rows[0]);
+      return rowToExercise(rows[0]);
+    },
+    async () => {
+      const store = await readFileStore();
+      return store.apps.find((app) => app.slug === slug) ?? null;
+    },
+  );
 }
 
-async function insertApp(ownerId: string | null, draft: AnyExerciseDraft) {
+async function insertAppDb(ownerId: string | null, draft: AnyExerciseDraft) {
   const db = await getDb();
   const id = nanoid(12);
   const slug = nanoid(11).toLocaleLowerCase("en-US");
@@ -152,43 +256,130 @@ async function insertApp(ownerId: string | null, draft: AnyExerciseDraft) {
   return getPublicAppBySlug(slug);
 }
 
+async function insertAppFile(ownerId: string | null, draft: AnyExerciseDraft) {
+  return updateFileStore(async (current) => {
+    const now = new Date().toISOString();
+    const nextApp: StoredExercise = {
+      id: nanoid(12),
+      slug: nanoid(11).toLocaleLowerCase("en-US"),
+      ownerId,
+      title: draft.title,
+      type: draft.type,
+      draft,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    return {
+      data: {
+        ...current,
+        apps: [...current.apps, nextApp],
+      },
+      result: nextApp,
+    };
+  });
+}
+
+async function insertApp(ownerId: string | null, draft: AnyExerciseDraft) {
+  return withPersistence(
+    () => insertAppDb(ownerId, draft),
+    () => insertAppFile(ownerId, draft),
+  );
+}
+
 export async function saveOwnedApp(input: {
   ownerId: string;
   draft: AnyExerciseDraft;
   id?: string | null;
 }) {
-  const db = await getDb();
-  const now = new Date().toISOString();
+  return withPersistence(
+    async () => {
+      const db = await getDb();
+      const now = new Date().toISOString();
 
-  if (input.id) {
-    const existingRows = await db.query<AppRow[]>(
-      "SELECT * FROM apps WHERE id = ? AND owner_id = ? LIMIT 1",
-      [input.id, input.ownerId],
-    );
-    const existing = existingRows[0];
+      if (input.id) {
+        const existingRows = await db.query<AppRow[]>(
+          "SELECT * FROM apps WHERE id = ? AND owner_id = ? LIMIT 1",
+          [input.id, input.ownerId],
+        );
+        const existing = existingRows[0];
 
-    if (existing) {
-      await db.query<UpsertResult>(
-        `
-          UPDATE apps
-          SET title = ?, type = ?, draft_json = ?, updated_at = ?
-          WHERE id = ? AND owner_id = ?
-        `,
-        [
-          input.draft.title,
-          input.draft.type,
-          JSON.stringify(input.draft),
-          now,
-          input.id,
-          input.ownerId,
-        ],
-      );
+        if (existing) {
+          await db.query<UpsertResult>(
+            `
+              UPDATE apps
+              SET title = ?, type = ?, draft_json = ?, updated_at = ?
+              WHERE id = ? AND owner_id = ?
+            `,
+            [
+              input.draft.title,
+              input.draft.type,
+              JSON.stringify(input.draft),
+              now,
+              input.id,
+              input.ownerId,
+            ],
+          );
 
-      return getOwnedApp(input.id, input.ownerId);
-    }
-  }
+          return getOwnedApp(input.id, input.ownerId);
+        }
+      }
 
-  return insertApp(input.ownerId, input.draft);
+      return insertAppDb(input.ownerId, input.draft);
+    },
+    async () => {
+      if (input.id) {
+        return updateFileStore(async (current) => {
+          const existingIndex = current.apps.findIndex(
+            (app) => app.id === input.id && app.ownerId === input.ownerId,
+          );
+
+          if (existingIndex === -1) {
+            const now = new Date().toISOString();
+            const created: StoredExercise = {
+              id: nanoid(12),
+              slug: nanoid(11).toLocaleLowerCase("en-US"),
+              ownerId: input.ownerId,
+              title: input.draft.title,
+              type: input.draft.type,
+              draft: input.draft,
+              createdAt: now,
+              updatedAt: now,
+            };
+
+            return {
+              data: {
+                ...current,
+                apps: [...current.apps, created],
+              },
+              result: created,
+            };
+          }
+
+          const existing = current.apps[existingIndex];
+          const updated: StoredExercise = {
+            ...existing,
+            title: input.draft.title,
+            type: input.draft.type,
+            draft: input.draft,
+            updatedAt: new Date().toISOString(),
+          };
+          const apps = [...current.apps];
+          apps[existingIndex] = updated;
+
+          return {
+            data: {
+              ...current,
+              apps,
+            },
+            result: updated,
+          };
+        });
+      }
+
+      return insertAppFile(input.ownerId, input.draft);
+    },
+  );
 }
 
 export async function publishAnonymousApp(draft: AnyExerciseDraft) {

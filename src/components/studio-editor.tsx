@@ -14,7 +14,6 @@ import { MatchingPairsEditor } from "@/components/matching-pairs-editor";
 import {
   createDefaultDraft,
   exerciseDefinitionMap,
-  exerciseDefinitions,
   parseDraft,
 } from "@/lib/exercise-definitions";
 import type {
@@ -87,9 +86,7 @@ export function StudioEditor({
       return parsed;
     } catch (error) {
       setDataError(
-        error instanceof Error
-          ? error.message
-          : "Не удалось разобрать JSON.",
+        error instanceof Error ? error.message : "Не удалось разобрать JSON.",
       );
       return null;
     }
@@ -172,9 +169,7 @@ export function StudioEditor({
         }
       } catch (error) {
         setNotice(
-          error instanceof Error
-            ? error.message
-            : "Операция не завершилась.",
+          error instanceof Error ? error.message : "Операция не завершилась.",
         );
       }
     });
@@ -207,9 +202,7 @@ export function StudioEditor({
     setNotice("JSON-экспорт скачан.");
   };
 
-  const handleJsonImport = async (
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
+  const handleJsonImport = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
 
@@ -238,16 +231,16 @@ export function StudioEditor({
       setNotice("Черновик импортирован из JSON.");
     } catch (error) {
       setNotice(
-        error instanceof Error
-          ? error.message
-          : "Не удалось импортировать JSON.",
+        error instanceof Error ? error.message : "Не удалось импортировать JSON.",
       );
     }
   };
 
   const handleSave = () => {
     if (!user) {
-      setNotice("Для сохранения и дальнейшего редактирования войдите в аккаунт.");
+      setNotice(
+        "Для сохранения и дальнейшего редактирования войдите в аккаунт.",
+      );
       return;
     }
 
@@ -258,198 +251,191 @@ export function StudioEditor({
     persistDraft("/api/export", "export");
   };
 
+  const draftActionsBlock = (
+    <div className="editor-block">
+      <div className="editor-block__head">
+        <div>
+          <strong>Действия с черновиком</strong>
+          <p className="editor-hint">
+            Сохранение, экспорт и импорт собраны в одном месте без лишних настроек.
+          </p>
+        </div>
+      </div>
+
+      <div className="inline-actions">
+        <button
+          className="primary-button"
+          disabled={isPending}
+          type="button"
+          onClick={handleExport}
+        >
+          Скачать SCORM
+        </button>
+        <button
+          className="ghost-button"
+          disabled={isPending}
+          type="button"
+          onClick={handleSave}
+        >
+          Сохранить
+        </button>
+        <button
+          className="ghost-button"
+          disabled={isPending}
+          type="button"
+          onClick={handleJsonExport}
+        >
+          Скачать JSON
+        </button>
+        <button
+          className="ghost-button"
+          disabled={isPending}
+          type="button"
+          onClick={() => importInputRef.current?.click()}
+        >
+          Импорт JSON
+        </button>
+        <button className="ghost-button" type="button" onClick={handleReset}>
+          Сбросить пример
+        </button>
+        {!isMatchingPairs ? (
+          <button className="ghost-button" type="button" onClick={applyDataText}>
+            Обновить превью
+          </button>
+        ) : null}
+      </div>
+
+      <input
+        ref={importInputRef}
+        accept=".json,application/json"
+        hidden
+        type="file"
+        onChange={(event) => void handleJsonImport(event)}
+      />
+
+      {currentSlug ? (
+        <p className="editor-hint">
+          Публичная ссылка:{" "}
+          <Link href={`/play/${currentSlug}`}>{`/play/${currentSlug}`}</Link>
+        </p>
+      ) : null}
+      {notice ? <p className="editor-hint">{notice}</p> : null}
+    </div>
+  );
+
+  const previewBlock = (
+    <div className="editor-block">
+      <div className="editor-block__head">
+        <div>
+          <strong>Живое превью</strong>
+          <p className="editor-hint">
+            Сразу видно, как упражнение будет выглядеть для пользователя.
+          </p>
+        </div>
+        <span className="eyebrow">{isPending ? "Сохранение..." : "Готово"}</span>
+      </div>
+      <ExercisePlayer key={JSON.stringify(deferredDraft)} draft={deferredDraft} />
+    </div>
+  );
+
   return (
-    <div className="editor-shell">
+    <div className={`editor-shell ${isMatchingPairs ? "editor-shell--single" : ""}`}>
       <aside className="editor-sidebar">
-        <div className="editor-block">
-          <span className="eyebrow">Выбранный шаблон</span>
+        <div className="editor-block editor-block--hero">
+          <span className="eyebrow">Редактор упражнения</span>
           <h2>{definition.title}</h2>
           <p>{definition.shortDescription}</p>
-        </div>
-
-        <div className="editor-block">
-          <label className="field-label" htmlFor="title">
-            Название
-          </label>
-          <input
-            className="editor-input"
-            id="title"
-            value={draft.title}
-            onChange={(event) =>
-              setDraft((current) => ({
-                ...current,
-                title: event.target.value,
-              }) as AnyExerciseDraft)
-            }
-          />
-
-          <label className="field-label" htmlFor="description">
-            Описание
-          </label>
-          <textarea
-            className="editor-textarea"
-            id="description"
-            rows={3}
-            value={draft.description}
-            onChange={(event) =>
-              setDraft((current) => ({
-                ...current,
-                description: event.target.value,
-              }) as AnyExerciseDraft)
-            }
-          />
-
-          <label className="field-label" htmlFor="instructions">
-            Инструкция
-          </label>
-          <textarea
-            className="editor-textarea"
-            id="instructions"
-            rows={3}
-            value={draft.instructions}
-            onChange={(event) =>
-              setDraft((current) => ({
-                ...current,
-                instructions: event.target.value,
-              }) as AnyExerciseDraft)
-            }
-          />
-
-          <label className="field-label" htmlFor="successMessage">
-            Сообщение об успехе
-          </label>
-          <input
-            className="editor-input"
-            id="successMessage"
-            value={draft.successMessage}
-            onChange={(event) =>
-              setDraft((current) => ({
-                ...current,
-                successMessage: event.target.value,
-              }) as AnyExerciseDraft)
-            }
-          />
-
-          <label className="field-label" htmlFor="themeColor">
-            Акцентный цвет
-          </label>
-          <input
-            className="editor-color"
-            id="themeColor"
-            type="color"
-            value={draft.themeColor}
-            onChange={(event) =>
-              setDraft((current) => ({
-                ...current,
-                themeColor: event.target.value,
-              }) as AnyExerciseDraft)
-            }
-          />
-        </div>
-
-        <div className="editor-block">
-          <div className="editor-block__head">
-            <strong>{isMatchingPairs ? "Сброс примера" : "Данные шаблона"}</strong>
-            <div className="inline-actions">
-              {!isMatchingPairs ? (
-                <button
-                  className="ghost-button"
-                  type="button"
-                  onClick={applyDataText}
-                >
-                  Обновить превью
-                </button>
-              ) : null}
-              <button className="ghost-button" type="button" onClick={handleReset}>
-                Сбросить пример
-              </button>
-            </div>
+          <div className="editor-status-list">
+            <span className="tag">{mode === "create" ? "Новый черновик" : "Редактирование"}</span>
+            <span className="tag">{isMatchingPairs ? "Упрощенный поток" : "Стандартный режим"}</span>
           </div>
-          <p className="editor-hint">
-            {isMatchingPairs
-              ? "Для этого типа доступен отдельный визуальный редактор. Сброс вернет стартовый пример для текущего шаблона."
-              : "Ниже редактируется структура конкретного упражнения. В примере уже лежит валидный JSON для выбранного типа."}
-          </p>
-          {isMatchingPairs ? null : (
-            <>
-              <textarea
-                className="editor-code"
-                rows={22}
-                spellCheck={false}
-                value={dataText}
-                onChange={(event) => setDataText(event.target.value)}
-              />
-              {dataError ? <p className="error-text">JSON: {dataError}</p> : null}
-            </>
-          )}
         </div>
 
-        <div className="editor-block">
-          <div className="inline-actions">
-            <button
-              className="primary-button"
-              disabled={isPending}
-              type="button"
-              onClick={handleExport}
-            >
-              Скачать SCORM
-            </button>
-            <button
-              className="ghost-button"
-              disabled={isPending}
-              type="button"
-              onClick={handleJsonExport}
-            >
-              Скачать JSON
-            </button>
-            <button
-              className="ghost-button"
-              disabled={isPending}
-              type="button"
-              onClick={() => importInputRef.current?.click()}
-            >
-              Импорт JSON
-            </button>
-            <button
-              className="ghost-button"
-              disabled={isPending}
-              type="button"
-              onClick={handleSave}
-            >
-              Сохранить
-            </button>
-          </div>
-          <input
-            ref={importInputRef}
-            accept=".json,application/json"
-            hidden
-            type="file"
-            onChange={(event) => void handleJsonImport(event)}
+        <details className="editor-block editor-details" open>
+          <summary className="editor-details__summary">Основная информация</summary>
+
+          <label className="matching-editor-field" htmlFor="title">
+            <span className="field-label">Название</span>
+            <input
+              className="editor-input"
+              id="title"
+              value={draft.title}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  title: event.target.value,
+                }) as AnyExerciseDraft)
+              }
+            />
+          </label>
+
+          <label className="matching-editor-field" htmlFor="description">
+            <span className="field-label">Описание</span>
+            <textarea
+              className="editor-textarea"
+              id="description"
+              rows={3}
+              value={draft.description}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  description: event.target.value,
+                }) as AnyExerciseDraft)
+              }
+            />
+          </label>
+
+          <label className="matching-editor-field" htmlFor="instructions">
+            <span className="field-label">Инструкция</span>
+            <textarea
+              className="editor-textarea"
+              id="instructions"
+              rows={3}
+              value={draft.instructions}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  instructions: event.target.value,
+                }) as AnyExerciseDraft)
+              }
+            />
+          </label>
+
+          <label className="matching-editor-field" htmlFor="successMessage">
+            <span className="field-label">Сообщение об успехе</span>
+            <input
+              className="editor-input"
+              id="successMessage"
+              value={draft.successMessage}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  successMessage: event.target.value,
+                }) as AnyExerciseDraft)
+              }
+            />
+          </label>
+        </details>
+
+        {isMatchingPairs && matchingPairsData ? (
+          <MatchingPairsEditor
+            value={matchingPairsData}
+            onChange={(nextData) => setDraftData(nextData)}
+            onNotice={setNotice}
           />
-          {currentSlug ? (
-            <p className="editor-hint">
-              Публичная ссылка:{" "}
-              <Link href={`/play/${currentSlug}`}>{`/play/${currentSlug}`}</Link>
-            </p>
-          ) : null}
-          {notice ? <p className="editor-hint">{notice}</p> : null}
-        </div>
+        ) : null}
 
-        {isMatchingPairs ? (
-          <details className="editor-block editor-details">
-            <summary className="editor-details__summary">Расширенный JSON</summary>
+        {isMatchingPairs ? previewBlock : null}
+
+        {!isMatchingPairs ? (
+          <details className="editor-block editor-details" open>
+            <summary className="editor-details__summary">JSON упражнения</summary>
             <p className="editor-hint">
-              Если нужно, можно вручную править исходные данные. Визуальный
-              редактор и JSON синхронизируются между собой.
+              Используйте этот блок, если нужно вручную поправить структуру данных.
             </p>
-            <div className="inline-actions">
-              <button className="ghost-button" type="button" onClick={applyDataText}>
-                Обновить превью
-              </button>
-            </div>
             <textarea
               className="editor-code"
-              rows={18}
+              rows={22}
               spellCheck={false}
               value={dataText}
               onChange={(event) => setDataText(event.target.value)}
@@ -458,43 +444,19 @@ export function StudioEditor({
           </details>
         ) : null}
 
-        <div className="editor-block">
-          <span className="eyebrow">Все 21 шаблон</span>
-          <div className="template-list">
-            {exerciseDefinitions.map((item) => (
-              <Link
-                className={`template-link ${
-                  item.id === draft.type ? "template-link--active" : ""
-                }`}
-                href={`/create/${item.id}`}
-                key={item.id}
-              >
-                <strong>{item.title}</strong>
-                <span>{item.shortDescription}</span>
-              </Link>
-            ))}
-          </div>
-        </div>
+        {draftActionsBlock}
       </aside>
 
       <section className="editor-preview">
-        {matchingPairsData ? (
+        {!isMatchingPairs && matchingPairsData ? (
           <MatchingPairsEditor
             value={matchingPairsData}
             onChange={(nextData) => setDraftData(nextData)}
             onNotice={setNotice}
           />
         ) : null}
-        <div className="editor-block">
-          <div className="editor-block__head">
-            <strong>Живое превью</strong>
-            <span className="eyebrow">{isPending ? "Сохранение..." : "Готово"}</span>
-          </div>
-          <ExercisePlayer
-            key={JSON.stringify(deferredDraft)}
-            draft={deferredDraft}
-          />
-        </div>
+
+        {!isMatchingPairs ? previewBlock : null}
       </section>
     </div>
   );

@@ -8,31 +8,43 @@ export function SiteHeader({
 }>) {
   return (
     <header className="site-header">
-      <div>
-        <Link className="brand" href="/">
-          LearningApps Studio
+      <Link className="brand" href="/">
+        <span className="brand-mark">LA</span>
+        <span className="brand-title">LearningApps Studio</span>
+      </Link>
+
+      <nav className="site-nav" aria-label="Основная навигация">
+        <Link className="site-nav__link" href="/">
+          Шаблоны
         </Link>
-        <p className="brand-copy">
-          Конструктор интерактивных упражнений и SCORM-архивов.
-        </p>
-      </div>
-      <nav className="site-nav">
-        <Link href="/">Шаблоны</Link>
-        <Link href="/create/matching-pairs">Новый проект</Link>
-        {user ? <Link href="/library">Мои упражнения</Link> : null}
+        <Link className="site-nav__link" href="/create/matching-pairs">
+          Новый проект
+        </Link>
+
         {user ? (
           <>
-            <span className="user-badge">{user.name}</span>
-            <form action="/api/auth/logout" method="post">
-              <button className="ghost-button" type="submit">
-                Выйти
-              </button>
-            </form>
+            <Link className="site-nav__link" href="/library">
+              Библиотека
+            </Link>
+            <details className="site-nav__profile">
+              <summary className="user-badge">{user.name}</summary>
+              <div className="site-nav__profile-menu">
+                <form action="/api/auth/logout" className="site-nav__logout" method="post">
+                  <button className="site-nav__link site-nav__profile-action" type="submit">
+                    Выйти
+                  </button>
+                </form>
+              </div>
+            </details>
           </>
         ) : (
           <>
-            <Link href="/login">Войти</Link>
-            <Link href="/register">Регистрация</Link>
+            <Link className="site-nav__link" href="/login">
+              Войти
+            </Link>
+            <Link className="site-nav__link" href="/register">
+              Регистрация
+            </Link>
           </>
         )}
       </nav>

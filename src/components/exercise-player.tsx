@@ -101,13 +101,13 @@ function reportMatrixScore(data: MatchingMatrixData, selected: Set<string>) {
 }
 
 const MATCHING_CARD_WIDTH = 286;
-const MATCHING_DEFAULT_CARD_HEIGHT = 232;
+const MATCHING_DEFAULT_CARD_HEIGHT = 248;
 const MATCHING_CARD_GAP = 20;
 const MATCHING_CARD_STEP = 20;
-const MATCHING_IMAGE_CARD_BASE_HEIGHT = 74;
-const MATCHING_IMAGE_CAPTION_HEIGHT = 28;
-const MATCHING_AUDIO_CARD_BASE_HEIGHT = 122;
-const MATCHING_VIDEO_CARD_BASE_HEIGHT = 112;
+const MATCHING_IMAGE_CARD_BASE_HEIGHT = 100;
+const MATCHING_IMAGE_CAPTION_HEIGHT = 44;
+const MATCHING_AUDIO_CARD_BASE_HEIGHT = 164;
+const MATCHING_VIDEO_CARD_BASE_HEIGHT = 156;
 
 type MatchingGroupStatus = "neutral" | "correct" | "incorrect";
 
@@ -242,6 +242,26 @@ function getMatchingCardHeight(content: MatchingContent) {
 
 function getMatchingCardWidth() {
   return MATCHING_CARD_WIDTH;
+}
+
+function getMatchingBoardMetrics(cards: MatchingDragCard[]) {
+  const height = Math.max(
+    ...cards.map((card) => card.y + getMatchingCardHeight(card.content) + 40),
+    420,
+  );
+
+  return {
+    minHeight: height,
+  };
+}
+
+function truncateMatchingMeta(value: string, maxLength = 40) {
+  const trimmed = value.trim().replace(/\s+/g, " ");
+  if (trimmed.length <= maxLength) {
+    return trimmed;
+  }
+
+  return `${trimmed.slice(0, Math.max(1, maxLength - 3)).trimEnd()}...`;
 }
 
 function parseHexColor(value: string) {
@@ -1227,6 +1247,7 @@ function MatchingPairsActivity({
 }: ActivityProps<"matching-pairs">) {
   const normalized = normalizeMatchingPairsData(draft.data);
   const totalPairs = normalized.pairs.length;
+  const boardRef = useRef<HTMLDivElement | null>(null);
   const [cards, setCards] = useState(() => createMatchingCards(draft.data));
   const [solvedPairs, setSolvedPairs] = useState<Set<number>>(new Set());
   const [hasChecked, setHasChecked] = useState(false);
@@ -1350,7 +1371,19 @@ function MatchingPairsActivity({
         : leftMoved
           ? leftCard.y
           : rightCard.y - leftHeight - MATCHING_CARD_GAP;
-    const clampedX = Math.max(12, leftX);
+    const boardWidth = getBoardWidth();
+    const maxLeftX =
+      normalized.pairAlignment === "horizontal"
+        ? Math.max(
+            12,
+            boardWidth -
+              leftWidth -
+              MATCHING_CARD_GAP -
+              getMatchingCardWidth() -
+              12,
+          )
+        : Math.max(12, boardWidth - leftWidth - 12);
+    const clampedX = clamp(leftX, 12, maxLeftX);
     const clampedY = Math.max(12, topY);
 
     return nextCards.map((card) => {
@@ -1423,6 +1456,12 @@ function MatchingPairsActivity({
     [cards],
   );
   const showGroupFeedback = normalized.showImmediateFeedback || hasChecked;
+  const boardMetrics = useMemo(() => getMatchingBoardMetrics(cards), [cards]);
+
+  const getBoardWidth = () => {
+    const width = boardRef.current?.clientWidth ?? 0;
+    return width > 0 ? width : 920;
+  };
 
   const beginDrag = (
     event: ReactPointerEvent<HTMLDivElement>,
@@ -1468,11 +1507,9 @@ function MatchingPairsActivity({
       </p>
       <div
         className="matching-drag-board"
+        ref={boardRef}
         style={{
-          minHeight: `${Math.max(
-            ...cards.map((card) => card.y + getMatchingCardHeight(card.content) + 32),
-            360,
-          )}px`,
+          minHeight: `${boardMetrics.minHeight}px`,
         }}
       >
         {cards.map((card) => {
@@ -1513,7 +1550,7 @@ function MatchingPairsActivity({
                 left: `${card.x}px`,
                 top: `${card.y}px`,
                 width: `${getMatchingCardWidth()}px`,
-                height: `${getMatchingCardHeight(normalizedCardContent)}px`,
+                minHeight: `${getMatchingCardHeight(normalizedCardContent)}px`,
               }}
               onPointerDown={(event) => beginDrag(event, card)}
               onPointerMove={(event) => {
@@ -1528,6 +1565,7 @@ function MatchingPairsActivity({
 
                 const deltaX = event.clientX - currentDrag.startX;
                 const deltaY = event.clientY - currentDrag.startY;
+                const boardWidth = getBoardWidth();
 
                 setCards((current) =>
                   current.map((currentCard) => {
@@ -1538,7 +1576,11 @@ function MatchingPairsActivity({
 
                     return {
                       ...currentCard,
-                      x: Math.max(12, initialPosition.x + deltaX),
+                      x: clamp(
+                        initialPosition.x + deltaX,
+                        12,
+                        Math.max(12, boardWidth - getMatchingCardWidth() - 12),
+                      ),
                       y: Math.max(12, initialPosition.y + deltaY),
                     };
                   }),
@@ -1569,7 +1611,9 @@ function MatchingPairsActivity({
                   {card.side === "left" ? "A" : "B"}
                 </span>
                 {showToolbarMeta ? (
-                  <span className="matching-drag-card__meta">{card.label}</span>
+                  <span className="matching-drag-card__meta" title={card.label}>
+                    {truncateMatchingMeta(card.label)}
+                  </span>
                 ) : null}
               </div>
               <MatchingCardContent

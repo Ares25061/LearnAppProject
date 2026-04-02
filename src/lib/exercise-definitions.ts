@@ -608,9 +608,20 @@ export function isExerciseTypeId(value: string): value is ExerciseTypeId {
 export function createDefaultDraft<T extends ExerciseTypeId>(
   type: T,
 ): ExerciseDraft<T> {
-  return structuredClone(
+  const draft = structuredClone(
     exerciseDefinitionMap[type].defaultDraft as ExerciseDraft<T>,
   );
+
+  if (
+    type === "matching-pairs" &&
+    Array.isArray((draft as ExerciseDraft<"matching-pairs">).data.pairs)
+  ) {
+    (draft as ExerciseDraft<"matching-pairs">).data.pairs = (
+      draft as ExerciseDraft<"matching-pairs">
+    ).data.pairs.slice(0, 2);
+  }
+
+  return draft;
 }
 
 export function parseDraft(input: unknown): AnyExerciseDraft | null {
