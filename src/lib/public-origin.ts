@@ -1,7 +1,6 @@
 import "server-only";
 
-const DEFAULT_PUBLIC_APP_ORIGIN =
-  "https://learnappproject-production.up.railway.app";
+const DEFAULT_PUBLIC_APP_ORIGIN = "http://localhost:3000";
 
 function normalizeOrigin(value: string | null | undefined) {
   const trimmed = value?.trim();
@@ -21,11 +20,7 @@ function normalizeOrigin(value: string | null | undefined) {
 function isRestrictedHost(origin: string) {
   try {
     const parsed = new URL(origin);
-    return (
-      parsed.hostname === "0.0.0.0" ||
-      parsed.hostname === "127.0.0.1" ||
-      parsed.hostname === "localhost"
-    );
+    return parsed.hostname === "0.0.0.0";
   } catch {
     return true;
   }
@@ -44,7 +39,9 @@ function pickPublicOrigin(candidates: Array<string | null | undefined>) {
 }
 
 export function getPublicAppOrigin(request?: Request) {
-  const configuredOrigin = normalizeOrigin(process.env.NEXT_PUBLIC_APP_URL);
+  const configuredOrigin =
+    normalizeOrigin(process.env.PUBLIC_APP_URL) ??
+    normalizeOrigin(process.env.NEXT_PUBLIC_APP_URL);
 
   if (configuredOrigin) {
     return configuredOrigin;
