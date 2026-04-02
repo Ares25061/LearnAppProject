@@ -24,7 +24,7 @@ const EMPTY_STORE: FileStoreData = {
   apps: [],
 };
 
-let writeQueue = Promise.resolve();
+let writeQueue: Promise<void> = Promise.resolve();
 
 async function ensureStoreDirectory() {
   await mkdir(STORE_DIRECTORY, { recursive: true });
@@ -62,14 +62,19 @@ export async function writeFileStore(data: FileStoreData) {
 export async function updateFileStore<T>(
   updater: (current: FileStoreData) => Promise<{ data: FileStoreData; result: T }> | { data: FileStoreData; result: T },
 ) {
-  writeQueue = writeQueue.then(async () => {
+  const resultPromise = writeQueue.then(async () => {
     const current = await readFileStore();
     const outcome = await updater(current);
     await writeFileStore(outcome.data);
     return outcome.result;
   });
 
-  return writeQueue as Promise<T>;
+  writeQueue = resultPromise.then(
+    () => undefined,
+    () => undefined,
+  );
+
+  return resultPromise;
 }
 
 export type { StoredUserRecord };
