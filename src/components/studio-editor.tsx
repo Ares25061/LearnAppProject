@@ -376,11 +376,12 @@ export function StudioEditor({
           <Link href={`/play/${currentSlug}`}>{`/play/${currentSlug}`}</Link>
         </p>
       ) : null}
+      {notice ? <p className="editor-hint">{notice}</p> : null}
       <p className="editor-hint">
-        "Автономный SCORM" создаёт полностью автономный пакет: локальный iframe,
-        локальный player и скачанные внутрь архива медиафайлы.
+        &quot;Автономный SCORM&quot; создаёт полностью автономный пакет:
+        локальный iframe, локальный player и скачанные внутрь архива
+        медиафайлы.
       </p>
-
     </div>
   );
 

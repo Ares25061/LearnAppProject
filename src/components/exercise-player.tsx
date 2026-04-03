@@ -20,7 +20,6 @@ import {
 } from "@/lib/exercise-runtime";
 import {
   MATCHING_IMAGE_HEIGHT_DEFAULT,
-  MATCHING_TEXT_SIZE_DEFAULT,
   getMatchingContentAriaLabel,
   getMatchingContentSummary,
   MATCHING_IMAGE_HEIGHT_MAX,
@@ -157,6 +156,11 @@ interface MatchingDragCard {
   height: number;
 }
 
+type MatchingDragCardSeed = Omit<
+  MatchingDragCard,
+  "x" | "y" | "width" | "height"
+>;
+
 type MatchingPlayableContent = MatchingAudioContent | MatchingVideoContent;
 type MatchingYouTubePlayer = {
   destroy: () => void;
@@ -217,20 +221,6 @@ function getMatchingImageHeight(input: MatchingContent | MatchingImageContent) {
     MATCHING_IMAGE_HEIGHT_MIN,
     MATCHING_IMAGE_HEIGHT_MAX,
   );
-}
-
-function getMatchingTextSize(content: MatchingContent) {
-  const normalized = normalizeMatchingSide(content);
-
-  if (normalized.kind === "text" || normalized.kind === "spoken-text") {
-    return clamp(
-      Math.round(normalized.size),
-      MATCHING_IMAGE_HEIGHT_MIN,
-      MATCHING_IMAGE_HEIGHT_MAX,
-    );
-  }
-
-  return MATCHING_TEXT_SIZE_DEFAULT;
 }
 
 function getMatchingAudioSize(input: MatchingAudioContent) {
@@ -428,11 +418,11 @@ function getMatchingStackScale(
 }
 
 function positionMatchingColumn(
-  cards: MatchingDragCard[],
+  cards: MatchingDragCardSeed[],
   columnX: number,
   metrics: MatchingBoardMetrics,
   scale: number,
-) {
+): MatchingDragCard[] {
   const gap = Math.max(10, Math.round(MATCHING_CARD_STEP * scale));
   const sizedCards = cards.map((card) => ({
     ...card,
@@ -609,7 +599,7 @@ function createMatchingCards(
   const normalized = normalizeMatchingPairsData(data);
   const { extras, pairs } = normalized;
   const metrics = getMatchingBoardMetrics(boardSize);
-  const leftCards = [
+  const leftCards: MatchingDragCardSeed[] = [
     ...pairs.map((pair, index) => ({
       id: `left-${index}`,
       content: pair.left,
@@ -631,29 +621,30 @@ function createMatchingCards(
         groupId: `group-extra-left-${index}`,
       })),
   ];
-  const rightCards = deterministicShuffle(
-    [
-      pairs.map((pair, index) => ({
-        pairIndex: index,
-        content: pair.right,
-        label: getMatchingContentSummary(pair.right),
-        role: "pair" as const,
+  const rightCardsSource: MatchingDragCardSeed[] = [
+    ...pairs.map((pair, index) => ({
+      pairIndex: index,
+      content: pair.right,
+      label: getMatchingContentSummary(pair.right),
+      role: "pair" as const,
+      side: "right" as const,
+      id: `right-${index}`,
+      groupId: `group-right-${index}`,
+    })),
+    ...extras
+      .filter((item) => item.side === "right")
+      .map((item, index) => ({
+        id: `extra-right-${index}`,
+        content: item.content,
+        label: getMatchingContentSummary(item.content),
+        role: "extra" as const,
         side: "right" as const,
-        id: `right-${index}`,
-        groupId: `group-right-${index}`,
+        pairIndex: null,
+        groupId: `group-extra-right-${index}`,
       })),
-      ...extras
-        .filter((item) => item.side === "right")
-        .map((item, index) => ({
-          id: `extra-right-${index}`,
-          content: item.content,
-          label: getMatchingContentSummary(item.content),
-          role: "extra" as const,
-          side: "right" as const,
-          pairIndex: null,
-          groupId: `group-extra-right-${index}`,
-        })),
-    ].flat(),
+  ];
+  const rightCards = deterministicShuffle(
+    rightCardsSource,
     JSON.stringify(normalized),
   );
   const scale = Math.min(
@@ -1609,7 +1600,7 @@ function MatchingPairsActivity({
   } | null>(null);
   const boardMetrics = useMemo(
     () => getMatchingBoardMetrics(boardSize),
-    [boardSize.height, boardSize.width],
+    [boardSize],
   );
 
   useEffect(() => {
@@ -1650,7 +1641,7 @@ function MatchingPairsActivity({
     setDraggingGroupId(null);
     setActiveMedia(null);
     dragRef.current = null;
-  }, [boardSize.height, boardSize.width, draft.data]);
+  }, [boardSize, draft.data]);
 
   useEffect(() => {
     if (!normalized.autoRemoveCorrectPairs) {

@@ -618,6 +618,7 @@ function MatchingSideFieldsCompact({
     content.kind === "image" ||
     content.kind === "audio" ||
     content.kind === "video";
+  const isMediaDialogVisible = isMediaContent && isMediaDialogOpen;
 
   const setField = (
     field: "text" | "url" | "alt" | "label",
@@ -697,12 +698,7 @@ function MatchingSideFieldsCompact({
   };
 
   useEffect(() => {
-    if (!isMediaDialogOpen) {
-      return;
-    }
-
-    if (!isMediaContent) {
-      setIsMediaDialogOpen(false);
+    if (!isMediaDialogVisible) {
       return;
     }
 
@@ -716,7 +712,7 @@ function MatchingSideFieldsCompact({
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isMediaContent, isMediaDialogOpen]);
+  }, [isMediaDialogVisible]);
 
   const mediaButtonLabel =
     content.kind === "image"
@@ -742,7 +738,10 @@ function MatchingSideFieldsCompact({
             key={option.id}
             title={option.label}
             type="button"
-            onClick={() => onChange(createMatchingContent(option.id))}
+            onClick={() => {
+              setIsMediaDialogOpen(false);
+              onChange(createMatchingContent(option.id));
+            }}
           >
             <MatchingTypeIcon kind={option.id} />
             <span className="sr-only">{option.label}</span>
@@ -773,7 +772,7 @@ function MatchingSideFieldsCompact({
         </button>
       ) : null}
 
-      {isMediaContent && isMediaDialogOpen ? (
+      {isMediaDialogVisible ? (
         <div
           aria-label={mediaButtonLabel}
           aria-modal="true"
@@ -906,7 +905,7 @@ function MatchingSideFieldsCompact({
                         )
                       }
                     />
-                  </label>встроенно
+                  </label>
                 </>
               ) : null}
 
