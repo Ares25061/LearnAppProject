@@ -567,7 +567,6 @@ function MatchingSideFields({
               </p>
             </label>
           ) : null}
-<<<<<<< Updated upstream
           {content.kind === "video" ? (
             <label className="matching-editor-field">
               <span className="field-label">Начинать с секунды</span>
@@ -592,8 +591,6 @@ function MatchingSideFields({
               </p>
             </label>
           ) : null}
-=======
->>>>>>> Stashed changes
         </>
       ) : null}
     </div>

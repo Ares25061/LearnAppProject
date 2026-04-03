@@ -304,15 +304,13 @@ export function StudioEditor({
   };
 
   const draftActionsBlock = (
-      <div className="editor-block">
-        <div className="editor-block__head">
-          <div>
-            <strong>Действия с черновиком</strong>
-
-          </div>
+    <div className="editor-block">
+      <div className="editor-block__head">
+        <div>
+          <strong>Действия с черновиком</strong>
         </div>
+      </div>
 
-<<<<<<< Updated upstream
       <div className="inline-actions">
         <button
           className="primary-button"
@@ -360,60 +358,11 @@ export function StudioEditor({
         {!isMatchingPairs ? (
           <button className="ghost-button" type="button" onClick={applyDataText}>
             Обновить превью
-=======
-        <div className="inline-actions">
-          <button
-              className="primary-button"
-              disabled={isPending}
-              type="button"
-              onClick={() => handleExport("scorm1")}
-          >
-            Скачать SCORM
->>>>>>> Stashed changes
           </button>
-          <button
-              className="primary-button"
-              disabled={isPending}
-              type="button"
-              onClick={() => handleExport("scorm2")}
-          >
-            Скачать SCORM2
-          </button>
-          <button
-              className="ghost-button"
-              disabled={isPending}
-              type="button"
-              onClick={handleSave}
-          >
-            Сохранить
-          </button>
-          <button
-              className="ghost-button"
-              disabled={isPending}
-              type="button"
-              onClick={handleJsonExport}
-          >
-            Скачать JSON
-          </button>
-          <button
-              className="ghost-button"
-              disabled={isPending}
-              type="button"
-              onClick={() => importInputRef.current?.click()}
-          >
-            Импорт JSON
-          </button>
-          <button className="ghost-button" type="button" onClick={handleReset}>
-            Сбросить пример
-          </button>
-          {!isMatchingPairs ? (
-              <button className="ghost-button" type="button" onClick={applyDataText}>
-                Обновить превью
-              </button>
-          ) : null}
-        </div>
+        ) : null}
+      </div>
 
-        <input
+      <input
         ref={importInputRef}
         accept=".json,application/json"
         hidden
@@ -427,16 +376,11 @@ export function StudioEditor({
           <Link href={`/play/${currentSlug}`}>{`/play/${currentSlug}`}</Link>
         </p>
       ) : null}
-<<<<<<< Updated upstream
       <p className="editor-hint">
-        `Автономный SCORM` создаёт полностью автономный пакет: локальный
-        iframe, локальный player и скачанные внутрь архива медиафайлы.
+        "Автономный SCORM" создаёт полностью автономный пакет: локальный iframe,
+        локальный player и скачанные внутрь архива медиафайлы.
       </p>
-      {notice ? <p className="editor-hint">{notice}</p> : null}
-=======
 
-
->>>>>>> Stashed changes
     </div>
   );
 

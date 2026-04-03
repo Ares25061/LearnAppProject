@@ -1191,15 +1191,10 @@ function MatchingCardContent({
     case "video": {
       const embeddedVideoMeta = getMatchingEmbeddedVideoMeta(normalized.url);
       const startSeconds =
-<<<<<<< Updated upstream
         getMatchingVideoStartSeconds(normalized) ||
         embeddedVideoMeta?.startSeconds ||
         0;
-      const videoSize = getMatchingVideoSize(normalized);
-=======
-        getMatchingVideoStartSeconds(normalized) || youTubeMeta?.startSeconds || 0;
       const videoSize = Math.max(58, cardHeight - 74);
->>>>>>> Stashed changes
 
       return (
         <div className={contentClassName}>
