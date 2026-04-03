@@ -53,6 +53,7 @@ export function StudioEditor({
   const matchingPairsData = isMatchingPairs
     ? (draft.data as MatchingPairsData)
     : null;
+  type ExportVariant = "scorm1" | "scorm2";
 
   const setDraftData = (
     nextData: AnyExerciseDraft["data"],
@@ -100,7 +101,11 @@ export function StudioEditor({
     setNotice("Шаблон сброшен к начальному примеру.");
   };
 
-  const persistDraft = (endpoint: string, action: "save" | "export") => {
+  const persistDraft = (
+    endpoint: string,
+    action: "save" | "export",
+    variant: ExportVariant = "scorm1",
+  ) => {
     const resolvedDraft = resolveCurrentDraft();
     if (!resolvedDraft) {
       return;
@@ -109,6 +114,7 @@ export function StudioEditor({
     const payload = {
       id: currentId,
       draft: resolvedDraft,
+      variant: action === "export" ? variant : undefined,
     };
 
     startTransition(async () => {
@@ -146,7 +152,9 @@ export function StudioEditor({
         const downloadUrl = URL.createObjectURL(blob);
         const anchor = document.createElement("a");
         anchor.href = downloadUrl;
-        anchor.download = `${safeFilename(draft.title)}.zip`;
+        anchor.download = `${safeFilename(resolvedDraft.title)}${
+          variant === "scorm2" ? "-scorm2" : ""
+        }.zip`;
         document.body.append(anchor);
         anchor.click();
         anchor.remove();
@@ -164,6 +172,11 @@ export function StudioEditor({
         }
 
         setNotice("SCORM-архив скачан.");
+        setNotice(
+          variant === "scorm2"
+            ? "SCORM2-архив скачан."
+            : "SCORM-архив скачан.",
+        );
         if (mode === "create" && user && appId) {
           router.replace(`/edit/${appId}`);
         }
@@ -247,8 +260,8 @@ export function StudioEditor({
     persistDraft("/api/apps", "save");
   };
 
-  const handleExport = () => {
-    persistDraft("/api/export", "export");
+  const handleExport = (variant: ExportVariant) => {
+    persistDraft("/api/export", "export", variant);
   };
 
   const draftActionsBlock = (
@@ -267,9 +280,17 @@ export function StudioEditor({
           className="primary-button"
           disabled={isPending}
           type="button"
-          onClick={handleExport}
+          onClick={() => handleExport("scorm1")}
         >
           Скачать SCORM
+        </button>
+        <button
+          className="primary-button"
+          disabled={isPending}
+          type="button"
+          onClick={() => handleExport("scorm2")}
+        >
+          Скачать SCORM2
         </button>
         <button
           className="ghost-button"
@@ -319,6 +340,10 @@ export function StudioEditor({
           <Link href={`/play/${currentSlug}`}>{`/play/${currentSlug}`}</Link>
         </p>
       ) : null}
+      <p className="editor-hint">
+        `SCORM2` создаёт полностью автономный пакет: локальный iframe, локальный
+        player и скачанные внутрь архива медиафайлы.
+      </p>
       {notice ? <p className="editor-hint">{notice}</p> : null}
     </div>
   );

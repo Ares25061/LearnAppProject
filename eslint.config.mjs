@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    "scorm-template/scorm-player.js",
+    "scorm-template/scorm-player.css",
   ]),
 ]);
 
