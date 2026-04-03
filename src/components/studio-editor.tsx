@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import {
+  useEffect,
   useDeferredValue,
   useRef,
   useState,
@@ -38,6 +39,7 @@ export function StudioEditor({
 }>) {
   const router = useRouter();
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const previewHostRef = useRef<HTMLDivElement | null>(null);
   const [draft, setDraft] = useState(initialDraft);
   const [currentId, setCurrentId] = useState(existingId);
   const [currentSlug, setCurrentSlug] = useState(existingSlug);
@@ -46,6 +48,7 @@ export function StudioEditor({
   );
   const [dataError, setDataError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [isPreviewFullscreen, setIsPreviewFullscreen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const deferredDraft = useDeferredValue(draft);
   const definition = exerciseDefinitionMap[draft.type];
@@ -263,17 +266,53 @@ export function StudioEditor({
     persistDraft("/api/export", "export", variant);
   };
 
-  const draftActionsBlock = (
-    <div className="editor-block">
-      <div className="editor-block__head">
-        <div>
-          <strong>Действия с черновиком</strong>
-          <p className="editor-hint">
-            Сохранение, экспорт и импорт собраны в одном месте без лишних настроек.
-          </p>
-        </div>
-      </div>
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
 
+    const getPreviewFullscreenTarget = () =>
+      isMatchingPairs
+        ? (previewHostRef.current?.querySelector(".exercise-player__body") as HTMLElement | null)
+        : previewHostRef.current;
+
+    const syncFullscreenState = () => {
+      setIsPreviewFullscreen(document.fullscreenElement === getPreviewFullscreenTarget());
+    };
+
+    document.addEventListener("fullscreenchange", syncFullscreenState);
+    return () => {
+      document.removeEventListener("fullscreenchange", syncFullscreenState);
+    };
+  }, [isMatchingPairs]);
+
+  const togglePreviewFullscreen = async () => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    const target = isMatchingPairs
+      ? (previewHostRef.current?.querySelector(".exercise-player__body") as HTMLElement | null)
+      : previewHostRef.current;
+
+    if (document.fullscreenElement === target) {
+      await document.exitFullscreen();
+      return;
+    }
+
+    await target?.requestFullscreen();
+  };
+
+  const draftActionsBlock = (
+      <div className="editor-block">
+        <div className="editor-block__head">
+          <div>
+            <strong>Действия с черновиком</strong>
+
+          </div>
+        </div>
+
+<<<<<<< Updated upstream
       <div className="inline-actions">
         <button
           className="primary-button"
@@ -321,11 +360,60 @@ export function StudioEditor({
         {!isMatchingPairs ? (
           <button className="ghost-button" type="button" onClick={applyDataText}>
             Обновить превью
+=======
+        <div className="inline-actions">
+          <button
+              className="primary-button"
+              disabled={isPending}
+              type="button"
+              onClick={() => handleExport("scorm1")}
+          >
+            Скачать SCORM
+>>>>>>> Stashed changes
           </button>
-        ) : null}
-      </div>
+          <button
+              className="primary-button"
+              disabled={isPending}
+              type="button"
+              onClick={() => handleExport("scorm2")}
+          >
+            Скачать SCORM2
+          </button>
+          <button
+              className="ghost-button"
+              disabled={isPending}
+              type="button"
+              onClick={handleSave}
+          >
+            Сохранить
+          </button>
+          <button
+              className="ghost-button"
+              disabled={isPending}
+              type="button"
+              onClick={handleJsonExport}
+          >
+            Скачать JSON
+          </button>
+          <button
+              className="ghost-button"
+              disabled={isPending}
+              type="button"
+              onClick={() => importInputRef.current?.click()}
+          >
+            Импорт JSON
+          </button>
+          <button className="ghost-button" type="button" onClick={handleReset}>
+            Сбросить пример
+          </button>
+          {!isMatchingPairs ? (
+              <button className="ghost-button" type="button" onClick={applyDataText}>
+                Обновить превью
+              </button>
+          ) : null}
+        </div>
 
-      <input
+        <input
         ref={importInputRef}
         accept=".json,application/json"
         hidden
@@ -339,41 +427,99 @@ export function StudioEditor({
           <Link href={`/play/${currentSlug}`}>{`/play/${currentSlug}`}</Link>
         </p>
       ) : null}
+<<<<<<< Updated upstream
       <p className="editor-hint">
         `Автономный SCORM` создаёт полностью автономный пакет: локальный
         iframe, локальный player и скачанные внутрь архива медиафайлы.
       </p>
       {notice ? <p className="editor-hint">{notice}</p> : null}
+=======
+
+
+>>>>>>> Stashed changes
     </div>
   );
 
+  const matchingPreviewDraft = isMatchingPairs
+    ? ({
+        ...deferredDraft,
+        title: "Пары терминов",
+        description: "Соедините элементы из левого и правого столбцов.",
+        instructions:
+          "Перетаскивайте карточки по полю. Когда правильные элементы окажутся рядом, они склеятся и будут двигаться уже вместе. Карточку можно таскать за любую ее неинтерактивную область, а разъединение находится между скрепленными элементами.",
+        successMessage: "Все пары собраны верно.",
+      } as AnyExerciseDraft)
+    : deferredDraft;
+
   const previewBlock = (
-    <div className="editor-block">
+    <div
+      className={`editor-block ${isPreviewFullscreen ? "editor-block--preview-fullscreen" : ""}`}
+      ref={previewHostRef}
+    >
       <div className="editor-block__head">
         <div>
-          <strong>Живое превью</strong>
-          <p className="editor-hint">
-            Сразу видно, как упражнение будет выглядеть для пользователя.
-          </p>
+          <strong>Предварительный просмотр</strong>
         </div>
-        <span className="eyebrow">{isPending ? "Сохранение..." : "Готово"}</span>
       </div>
-      <ExercisePlayer key={JSON.stringify(deferredDraft)} draft={deferredDraft} />
+      <ExercisePlayer
+        boardOnly={isMatchingPairs && isPreviewFullscreen}
+        bodyOverlay={
+          <button
+            aria-label={isPreviewFullscreen ? "Свернуть" : "На весь экран"}
+            className="preview-fullscreen-button"
+            title={isPreviewFullscreen ? "Свернуть" : "На весь экран"}
+            type="button"
+            onClick={() => void togglePreviewFullscreen()}
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              {isPreviewFullscreen ? (
+                <path
+                  d="M9 4H4v5m11-5h5v5M4 15v5h5m10-5v5h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="1.8"
+                />
+              ) : (
+                <path
+                  d="M9 4H4v5m0-5 6 6m5-6h5v5m0-5-6 6M4 15v5h5m-5 0 6-6m9 6h-5m5 0-6-6"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="1.8"
+                />
+              )}
+            </svg>
+          </button>
+        }
+        compactHead={isMatchingPairs}
+        draft={matchingPreviewDraft}
+        fullscreen={isPreviewFullscreen}
+        key={JSON.stringify(matchingPreviewDraft)}
+      />
     </div>
   );
 
   return (
     <div className={`editor-shell ${isMatchingPairs ? "editor-shell--single" : ""}`}>
       <aside className="editor-sidebar">
-        <div className="editor-block editor-block--hero">
-          <span className="eyebrow">Редактор упражнения</span>
-          <h2>{definition.title}</h2>
-          <p>{definition.shortDescription}</p>
-          <div className="editor-status-list">
-            <span className="tag">{mode === "create" ? "Новый черновик" : "Редактирование"}</span>
-            <span className="tag">{isMatchingPairs ? "Упрощенный поток" : "Стандартный режим"}</span>
+        {!isMatchingPairs ? (
+          <div className="editor-block editor-block--hero">
+            <span className="eyebrow">Редактор упражнения</span>
+            <h2>{definition.title}</h2>
+            <p>{definition.shortDescription}</p>
+            <div className="editor-status-list">
+              <span className="tag">
+                {mode === "create" ? "Новый черновик" : "Редактирование"}
+              </span>
+              <span className="tag">
+                {isMatchingPairs ? "Упрощенный поток" : "Стандартный режим"}
+              </span>
+            </div>
           </div>
-        </div>
+        ) : null}
 
         <details className="editor-block editor-details" open>
           <summary className="editor-details__summary">Основная информация</summary>
@@ -409,42 +555,53 @@ export function StudioEditor({
             />
           </label>
 
-          <label className="matching-editor-field" htmlFor="instructions">
-            <span className="field-label">Инструкция</span>
-            <textarea
-              className="editor-textarea"
-              id="instructions"
-              rows={3}
-              value={draft.instructions}
-              onChange={(event) =>
-                setDraft((current) => ({
-                  ...current,
-                  instructions: event.target.value,
-                }) as AnyExerciseDraft)
-              }
-            />
-          </label>
+          {!isMatchingPairs ? (
+            <>
+              <label className="matching-editor-field" htmlFor="instructions">
+                <span className="field-label">Инструкция</span>
+                <textarea
+                  className="editor-textarea"
+                  id="instructions"
+                  rows={3}
+                  value={draft.instructions}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      instructions: event.target.value,
+                    }) as AnyExerciseDraft)
+                  }
+                />
+              </label>
 
-          <label className="matching-editor-field" htmlFor="successMessage">
-            <span className="field-label">Сообщение об успехе</span>
-            <input
-              className="editor-input"
-              id="successMessage"
-              value={draft.successMessage}
-              onChange={(event) =>
-                setDraft((current) => ({
-                  ...current,
-                  successMessage: event.target.value,
-                }) as AnyExerciseDraft)
-              }
-            />
-          </label>
+              <label className="matching-editor-field" htmlFor="successMessage">
+                <span className="field-label">Сообщение об успехе</span>
+                <input
+                  className="editor-input"
+                  id="successMessage"
+                  value={draft.successMessage}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      successMessage: event.target.value,
+                    }) as AnyExerciseDraft)
+                  }
+                />
+              </label>
+            </>
+          ) : null}
         </details>
 
         {isMatchingPairs && matchingPairsData ? (
           <MatchingPairsEditor
+            themeColor={draft.themeColor}
             value={matchingPairsData}
             onChange={(nextData) => setDraftData(nextData)}
+            onThemeColorChange={(nextColor) =>
+              setDraft((current) => ({
+                ...current,
+                themeColor: nextColor,
+              }) as AnyExerciseDraft)
+            }
             onNotice={setNotice}
           />
         ) : null}
@@ -471,17 +628,11 @@ export function StudioEditor({
         {draftActionsBlock}
       </aside>
 
-      <section className="editor-preview">
-        {!isMatchingPairs && matchingPairsData ? (
-          <MatchingPairsEditor
-            value={matchingPairsData}
-            onChange={(nextData) => setDraftData(nextData)}
-            onNotice={setNotice}
-          />
-        ) : null}
-
-        {!isMatchingPairs ? previewBlock : null}
-      </section>
+      {!isMatchingPairs ? (
+        <section className="editor-preview">
+          {previewBlock}
+        </section>
+      ) : null}
     </div>
   );
 }

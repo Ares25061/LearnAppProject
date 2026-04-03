@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import {
@@ -50,6 +51,7 @@ type ActivityProps<T extends ExerciseTypeId> = {
   draft: Extract<AnyExerciseDraft, { type: T }>;
   revisionKey: string;
   onReport: ReportResult;
+  boardOnly?: boolean;
 };
 
 function ActionRow({
@@ -63,7 +65,14 @@ function ActionRow({
 function PlayerButton(
   props: Readonly<React.ButtonHTMLAttributes<HTMLButtonElement>>,
 ) {
-  return <button className="player-button" type="button" {...props} />;
+  const { className, ...rest } = props;
+  return (
+    <button
+      className={className ? `player-button ${className}` : "player-button"}
+      type="button"
+      {...rest}
+    />
+  );
 }
 
 function cellsKey(cells: GridPoint[]) {
@@ -100,16 +109,39 @@ function reportMatrixScore(data: MatchingMatrixData, selected: Set<string>) {
   return percentage(good, good + bad + missed);
 }
 
-const MATCHING_CARD_WIDTH = 286;
-const MATCHING_DEFAULT_CARD_HEIGHT = 248;
-const MATCHING_CARD_GAP = 20;
-const MATCHING_CARD_STEP = 20;
-const MATCHING_IMAGE_CARD_BASE_HEIGHT = 100;
-const MATCHING_IMAGE_CAPTION_HEIGHT = 44;
-const MATCHING_AUDIO_CARD_BASE_HEIGHT = 164;
-const MATCHING_VIDEO_CARD_BASE_HEIGHT = 156;
+const MATCHING_CARD_WIDTH = 272;
+const MATCHING_DEFAULT_CARD_HEIGHT = 144;
+const MATCHING_CARD_GAP = 18;
+const MATCHING_CARD_STEP = 18;
+const MATCHING_CARD_MIN_WIDTH = 156;
+const MATCHING_BOARD_DEFAULT_WIDTH = 920;
+const MATCHING_BOARD_DEFAULT_HEIGHT = 560;
+const MATCHING_BOARD_PADDING = 20;
+const MATCHING_BOARD_PADDING_COMPACT = 16;
+const MATCHING_BOARD_BOTTOM_SPACE = 96;
+const MATCHING_BOARD_BOTTOM_SPACE_COMPACT = 88;
+const MATCHING_IMAGE_CARD_BASE_HEIGHT = 72;
+const MATCHING_IMAGE_CAPTION_HEIGHT = 38;
+const MATCHING_AUDIO_CARD_BASE_HEIGHT = 128;
+const MATCHING_VIDEO_CARD_BASE_HEIGHT = 118;
 
 type MatchingGroupStatus = "neutral" | "correct" | "incorrect";
+type MatchingBoardSize = {
+  width: number;
+  height: number;
+};
+type MatchingBoardMetrics = {
+  width: number;
+  height: number;
+  padding: number;
+  minInset: number;
+  columnGap: number;
+  columnWidth: number;
+  availableHeight: number;
+  bottomLimit: number;
+  leftColumnX: number;
+  rightColumnX: number;
+};
 
 interface MatchingDragCard {
   id: string;
@@ -121,6 +153,8 @@ interface MatchingDragCard {
   groupId: string;
   x: number;
   y: number;
+  width: number;
+  height: number;
 }
 
 type MatchingPlayableContent = MatchingAudioContent | MatchingVideoContent;
@@ -223,18 +257,74 @@ function getMatchingVideoVolume(content: MatchingVideoContent) {
   return clamp(Math.round(content.volume), 0, 100);
 }
 
-function getMatchingCardHeight(content: MatchingContent) {
+function getMatchingBoardMetrics(
+  boardSize: Partial<MatchingBoardSize> = {},
+): MatchingBoardMetrics {
+  const width =
+    boardSize.width && boardSize.width > 0
+      ? Math.max(320, Math.round(boardSize.width))
+      : MATCHING_BOARD_DEFAULT_WIDTH;
+  const height =
+    boardSize.height && boardSize.height > 0
+      ? Math.max(400, Math.round(boardSize.height))
+      : MATCHING_BOARD_DEFAULT_HEIGHT;
+  const padding = width < 640 ? MATCHING_BOARD_PADDING_COMPACT : MATCHING_BOARD_PADDING;
+  const bottomSpace =
+    height < 500 ? MATCHING_BOARD_BOTTOM_SPACE_COMPACT : MATCHING_BOARD_BOTTOM_SPACE;
+  const minInset = Math.max(12, padding - 4);
+  const columnGap = clamp(Math.round(width * 0.03), 16, 28);
+  const innerWidth = Math.max(280, width - padding * 2);
+  const columnWidth = Math.max(132, Math.floor((innerWidth - columnGap) / 2));
+  const availableHeight = Math.max(240, height - padding - bottomSpace - minInset);
+
+  return {
+    width,
+    height,
+    padding,
+    minInset,
+    columnGap,
+    columnWidth,
+    availableHeight,
+    bottomLimit: height - bottomSpace - minInset,
+    leftColumnX: padding,
+    rightColumnX: padding + columnWidth + columnGap,
+  };
+}
+
+function estimateMatchingTextHeight(
+  text: string,
+  width: number,
+  minHeight: number,
+) {
+  const compact = text.trim().replace(/\s+/g, " ");
+  const charsPerLine = Math.max(10, Math.floor(Math.max(width - 44, 112) / 8.4));
+  const lineCount = Math.max(1, Math.ceil(Math.max(compact.length, 1) / charsPerLine));
+  return clamp(minHeight + (lineCount - 1) * 24, minHeight, 340);
+}
+
+function getMatchingCardHeight(
+  content: MatchingContent,
+  width = MATCHING_CARD_WIDTH,
+) {
   const normalized = normalizeMatchingSide(content);
+  const widthScale = clamp(width / MATCHING_CARD_WIDTH, 0.58, 1);
+
   if (normalized.kind === "video") {
-    return MATCHING_VIDEO_CARD_BASE_HEIGHT + getMatchingVideoSize(normalized);
+    return (
+      MATCHING_VIDEO_CARD_BASE_HEIGHT +
+      Math.round(clamp(getMatchingVideoSize(normalized), 120, 220) * widthScale)
+    );
   }
 
   if (normalized.kind === "audio") {
-    return MATCHING_AUDIO_CARD_BASE_HEIGHT + getMatchingAudioSize(normalized);
+    return (
+      MATCHING_AUDIO_CARD_BASE_HEIGHT +
+      Math.round(clamp(getMatchingAudioSize(normalized), 72, 156) * widthScale)
+    );
   }
 
   if (normalized.kind === "text" || normalized.kind === "spoken-text") {
-    return getMatchingTextSize(normalized);
+    return estimateMatchingTextHeight(normalized.text, width, 112);
   }
 
   if (normalized.kind !== "image") {
@@ -243,33 +333,126 @@ function getMatchingCardHeight(content: MatchingContent) {
 
   return (
     MATCHING_IMAGE_CARD_BASE_HEIGHT +
-    getMatchingImageHeight(normalized) +
+    Math.round(clamp(getMatchingImageHeight(normalized), 110, 220) * widthScale) +
     (normalized.alt.trim() ? MATCHING_IMAGE_CAPTION_HEIGHT : 0)
   );
 }
 
-function getMatchingCardWidth() {
-  return MATCHING_CARD_WIDTH;
+function getMatchingCardBaseWidth(content: MatchingContent, columnWidth: number) {
+  const normalized = normalizeMatchingSide(content);
+  const maxWidth = Math.max(MATCHING_CARD_MIN_WIDTH, Math.floor(columnWidth));
+
+  if (normalized.kind === "video") {
+    return clamp(Math.round(maxWidth * 0.96), 208, maxWidth);
+  }
+
+  if (normalized.kind === "audio") {
+    return clamp(Math.round(maxWidth * 0.9), 196, maxWidth);
+  }
+
+  if (normalized.kind === "image") {
+    return clamp(
+      Math.round(176 + clamp(getMatchingImageHeight(normalized), 110, 220) * 0.52),
+      172,
+      maxWidth,
+    );
+  }
+
+  const preferredWidth = Math.round(164 + Math.min(normalized.text.length, 120) * 1.6);
+  const minWidth = normalized.kind === "spoken-text" ? 188 : 168;
+  return clamp(preferredWidth, minWidth, maxWidth);
 }
 
-function getMatchingBoardMetrics(cards: MatchingDragCard[]) {
-  const height = Math.max(
-    ...cards.map((card) => card.y + getMatchingCardHeight(card.content) + 40),
-    420,
+function getMatchingCardMinimumHeight(content: MatchingContent) {
+  const normalized = normalizeMatchingSide(content);
+
+  if (normalized.kind === "video") {
+    return 124;
+  }
+
+  if (normalized.kind === "audio") {
+    return 114;
+  }
+
+  if (normalized.kind === "image") {
+    return 108;
+  }
+
+  if (normalized.kind === "spoken-text") {
+    return 102;
+  }
+
+  return 84;
+}
+
+function getMatchingCardSize(
+  content: MatchingContent,
+  columnWidth: number,
+  scale: number,
+) {
+  const maxWidth = Math.max(MATCHING_CARD_MIN_WIDTH, Math.floor(columnWidth));
+  const baseWidth = getMatchingCardBaseWidth(content, columnWidth);
+  const baseHeight = getMatchingCardHeight(content, baseWidth);
+  const minimumWidth = Math.min(
+    maxWidth,
+    Math.max(132, Math.round(MATCHING_CARD_MIN_WIDTH * Math.max(scale, 0.82))),
+  );
+  const minimumHeight = Math.max(
+    76,
+    Math.round(getMatchingCardMinimumHeight(content) * Math.max(scale, 0.74)),
   );
 
   return {
-    minHeight: height,
+    width: clamp(Math.round(baseWidth * scale), minimumWidth, maxWidth),
+    height: Math.max(minimumHeight, Math.round(baseHeight * scale)),
   };
 }
 
-function truncateMatchingMeta(value: string, maxLength = 40) {
-  const trimmed = value.trim().replace(/\s+/g, " ");
-  if (trimmed.length <= maxLength) {
-    return trimmed;
+function getMatchingStackScale(
+  cards: ReadonlyArray<Pick<MatchingDragCard, "content">>,
+  columnWidth: number,
+  availableHeight: number,
+) {
+  if (cards.length === 0) {
+    return 1;
   }
 
-  return `${trimmed.slice(0, Math.max(1, maxLength - 3)).trimEnd()}...`;
+  const naturalHeights = cards.reduce(
+    (total, card) =>
+      total + getMatchingCardHeight(card.content, getMatchingCardBaseWidth(card.content, columnWidth)),
+    0,
+  );
+  const totalHeight = naturalHeights + MATCHING_CARD_STEP * (cards.length - 1);
+
+  return clamp(availableHeight / Math.max(totalHeight, 1), 0.42, 1);
+}
+
+function positionMatchingColumn(
+  cards: MatchingDragCard[],
+  columnX: number,
+  metrics: MatchingBoardMetrics,
+  scale: number,
+) {
+  const gap = Math.max(10, Math.round(MATCHING_CARD_STEP * scale));
+  const sizedCards = cards.map((card) => ({
+    ...card,
+    ...getMatchingCardSize(card.content, metrics.columnWidth, scale),
+  }));
+  const totalHeight =
+    sizedCards.reduce((sum, card) => sum + card.height, 0) +
+    gap * Math.max(0, sizedCards.length - 1);
+  let currentY =
+    metrics.minInset + Math.max(0, Math.floor((metrics.availableHeight - totalHeight) / 2));
+
+  return sizedCards.map((card) => {
+    const positionedCard = {
+      ...card,
+      x: Math.round(columnX + (metrics.columnWidth - card.width) / 2),
+      y: currentY,
+    };
+    currentY += card.height + gap;
+    return positionedCard;
+  });
 }
 
 function parseHexColor(value: string) {
@@ -307,7 +490,11 @@ function getExerciseThemeStyle(themeColor: string): CSSProperties {
   return {
     "--accent": `rgb(${rgb.red} ${rgb.green} ${rgb.blue})`,
     "--accent-deep": `rgb(${deepen(rgb.red)} ${deepen(rgb.green)} ${deepen(rgb.blue)})`,
-    "--accent-soft": `rgb(${rgb.red} ${rgb.green} ${rgb.blue} / 0.12)`,
+    "--accent-soft": `rgb(${rgb.red} ${rgb.green} ${rgb.blue} / 0.14)`,
+    "--board-surface": `rgb(${rgb.red} ${rgb.green} ${rgb.blue} / 0.16)`,
+    "--board-surface-strong": `rgb(${rgb.red} ${rgb.green} ${rgb.blue} / 0.28)`,
+    "--board-grid": `rgb(${deepen(rgb.red)} ${deepen(rgb.green)} ${deepen(rgb.blue)} / 0.12)`,
+    "--board-border": `rgb(${deepen(rgb.red)} ${deepen(rgb.green)} ${deepen(rgb.blue)} / 0.34)`,
   } as CSSProperties;
 }
 
@@ -417,9 +604,11 @@ function deterministicShuffle<T>(items: T[], seedSource: string) {
 
 function createMatchingCards(
   data: Extract<AnyExerciseDraft, { type: "matching-pairs" }>["data"],
+  boardSize: Partial<MatchingBoardSize> = {},
 ): MatchingDragCard[] {
   const normalized = normalizeMatchingPairsData(data);
   const { extras, pairs } = normalized;
+  const metrics = getMatchingBoardMetrics(boardSize);
   const leftCards = [
     ...pairs.map((pair, index) => ({
       id: `left-${index}`,
@@ -444,56 +633,48 @@ function createMatchingCards(
   ];
   const rightCards = deterministicShuffle(
     [
-    pairs.map((pair, index) => ({
-      pairIndex: index,
-      content: pair.right,
-      label: getMatchingContentSummary(pair.right),
-      role: "pair" as const,
-      side: "right" as const,
-      id: `right-${index}`,
-      groupId: `group-right-${index}`,
-    })),
-    ...extras
-      .filter((item) => item.side === "right")
-      .map((item, index) => ({
-        id: `extra-right-${index}`,
-        content: item.content,
-        label: getMatchingContentSummary(item.content),
-        role: "extra" as const,
+      pairs.map((pair, index) => ({
+        pairIndex: index,
+        content: pair.right,
+        label: getMatchingContentSummary(pair.right),
+        role: "pair" as const,
         side: "right" as const,
-        pairIndex: null,
-        groupId: `group-extra-right-${index}`,
+        id: `right-${index}`,
+        groupId: `group-right-${index}`,
       })),
+      ...extras
+        .filter((item) => item.side === "right")
+        .map((item, index) => ({
+          id: `extra-right-${index}`,
+          content: item.content,
+          label: getMatchingContentSummary(item.content),
+          role: "extra" as const,
+          side: "right" as const,
+          pairIndex: null,
+          groupId: `group-extra-right-${index}`,
+        })),
     ].flat(),
     JSON.stringify(normalized),
   );
+  const scale = Math.min(
+    1,
+    getMatchingStackScale(leftCards, metrics.columnWidth, metrics.availableHeight),
+    getMatchingStackScale(rightCards, metrics.columnWidth, metrics.availableHeight),
+  );
+  const positionedLeftCards = positionMatchingColumn(
+    leftCards,
+    metrics.leftColumnX,
+    metrics,
+    scale,
+  );
+  const positionedRightCards = positionMatchingColumn(
+    rightCards,
+    metrics.rightColumnX,
+    metrics,
+    scale,
+  );
 
-  let leftY = 24;
-  const positionedLeftCards = leftCards.map((card) => {
-    const positioned = {
-      ...card,
-      x: 24,
-      y: leftY,
-    };
-    leftY += getMatchingCardHeight(card.content) + MATCHING_CARD_STEP;
-    return positioned;
-  });
-
-  let rightY = 24;
-  const positionedRightCards = rightCards.map((card) => {
-    const positioned = {
-      ...card,
-      x: 430,
-      y: rightY,
-    };
-    rightY += getMatchingCardHeight(card.content) + MATCHING_CARD_STEP;
-    return positioned;
-  });
-
-  return [
-    ...positionedLeftCards,
-    ...positionedRightCards,
-  ];
+  return [...positionedLeftCards, ...positionedRightCards];
 }
 
 function speakMatchingText(text: string) {
@@ -899,9 +1080,11 @@ function isMatchingInteractiveTarget(target: EventTarget | null) {
 }
 
 function MatchingCardContent({
+  cardHeight,
   content,
   onOpenMedia,
 }: Readonly<{
+  cardHeight: number;
   content: MatchingContent;
   onOpenMedia: (next: MatchingPlayableContent) => void;
 }>) {
@@ -910,7 +1093,7 @@ function MatchingCardContent({
 
   switch (normalized.kind) {
     case "spoken-text": {
-      const spokenTextSize = Math.max(getMatchingTextSize(normalized) - 82, 0);
+      const spokenTextSize = Math.max(cardHeight - 108, 0);
       return (
         <div
           className={contentClassName}
@@ -936,7 +1119,7 @@ function MatchingCardContent({
       );
     }
     case "image": {
-      const imageHeight = getMatchingImageHeight(normalized);
+      const imageHeight = Math.max(60, cardHeight - (normalized.alt ? 72 : 36));
       return (
         <div className={contentClassName}>
           <div
@@ -964,7 +1147,7 @@ function MatchingCardContent({
     }
     case "audio": {
       const canPlayAudio = isMatchingAudioPlayable(normalized.url);
-      const audioSize = getMatchingAudioSize(normalized);
+      const audioSize = Math.max(44, cardHeight - 88);
       return (
         <div className={contentClassName}>
           <span className="tag">AUD</span>
@@ -1008,10 +1191,15 @@ function MatchingCardContent({
     case "video": {
       const embeddedVideoMeta = getMatchingEmbeddedVideoMeta(normalized.url);
       const startSeconds =
+<<<<<<< Updated upstream
         getMatchingVideoStartSeconds(normalized) ||
         embeddedVideoMeta?.startSeconds ||
         0;
       const videoSize = getMatchingVideoSize(normalized);
+=======
+        getMatchingVideoStartSeconds(normalized) || youTubeMeta?.startSeconds || 0;
+      const videoSize = Math.max(58, cardHeight - 74);
+>>>>>>> Stashed changes
 
       return (
         <div className={contentClassName}>
@@ -1074,7 +1262,7 @@ function MatchingCardContent({
     }
     case "text":
     default: {
-      const textSize = Math.max(getMatchingTextSize(normalized) - 68, 0);
+      const textSize = Math.max(cardHeight - 68, 0);
       return (
         <div
           className={contentClassName}
@@ -1396,11 +1584,21 @@ function MatchingMediaDialog({
 function MatchingPairsActivity({
   draft,
   onReport,
+  boardOnly = false,
 }: ActivityProps<"matching-pairs">) {
   const normalized = normalizeMatchingPairsData(draft.data);
   const totalPairs = normalized.pairs.length;
   const boardRef = useRef<HTMLDivElement | null>(null);
-  const [cards, setCards] = useState(() => createMatchingCards(draft.data));
+  const [boardSize, setBoardSize] = useState<MatchingBoardSize>({
+    width: MATCHING_BOARD_DEFAULT_WIDTH,
+    height: MATCHING_BOARD_DEFAULT_HEIGHT,
+  });
+  const [cards, setCards] = useState(() =>
+    createMatchingCards(draft.data, {
+      width: MATCHING_BOARD_DEFAULT_WIDTH,
+      height: MATCHING_BOARD_DEFAULT_HEIGHT,
+    }),
+  );
   const [solvedPairs, setSolvedPairs] = useState<Set<number>>(new Set());
   const [hasChecked, setHasChecked] = useState(false);
   const [draggingGroupId, setDraggingGroupId] = useState<string | null>(null);
@@ -1414,15 +1612,50 @@ function MatchingPairsActivity({
     startX: number;
     startY: number;
   } | null>(null);
+  const boardMetrics = useMemo(
+    () => getMatchingBoardMetrics(boardSize),
+    [boardSize.height, boardSize.width],
+  );
 
   useEffect(() => {
-    setCards(createMatchingCards(draft.data));
+    const node = boardRef.current;
+    if (!node) {
+      return;
+    }
+
+    const updateBoardSize = () => {
+      const nextSize = {
+        width: node.clientWidth || MATCHING_BOARD_DEFAULT_WIDTH,
+        height: node.clientHeight || MATCHING_BOARD_DEFAULT_HEIGHT,
+      };
+
+      setBoardSize((current) =>
+        current.width === nextSize.width && current.height === nextSize.height
+          ? current
+          : nextSize,
+      );
+    };
+
+    updateBoardSize();
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateBoardSize);
+      return () => window.removeEventListener("resize", updateBoardSize);
+    }
+
+    const observer = new ResizeObserver(() => updateBoardSize());
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    setCards(createMatchingCards(draft.data, boardSize));
     setSolvedPairs(new Set());
     setHasChecked(false);
     setDraggingGroupId(null);
     setActiveMedia(null);
     dragRef.current = null;
-  }, [draft.data]);
+  }, [boardSize.height, boardSize.width, draft.data]);
 
   useEffect(() => {
     if (!normalized.autoRemoveCorrectPairs) {
@@ -1448,6 +1681,19 @@ function MatchingPairsActivity({
     }
   }, [onReport, solvedPairs, totalPairs]);
 
+  const getCardBounds = (card: Pick<MatchingDragCard, "height" | "width">) => ({
+    minX: boardMetrics.minInset,
+    maxX: Math.max(
+      boardMetrics.minInset,
+      boardMetrics.width - card.width - boardMetrics.minInset,
+    ),
+    minY: boardMetrics.minInset,
+    maxY: Math.max(
+      boardMetrics.minInset,
+      boardMetrics.bottomLimit - card.height,
+    ),
+  });
+
   const snapIfMatched = (nextCards: MatchingDragCard[], movedGroupId: string) => {
     const movedCards = nextCards.filter((card) => card.groupId === movedGroupId);
     const candidates = nextCards.filter((card) => card.groupId !== movedGroupId);
@@ -1464,17 +1710,20 @@ function MatchingPairsActivity({
             const combined = [...movedGroup, ...candidateGroup];
             const leftCount = combined.filter((card) => card.side === "left").length;
             const rightCount = combined.filter((card) => card.side === "right").length;
-            const movedWidth = getMatchingCardWidth();
-            const movedHeight = getMatchingCardHeight(movedCard.content);
-            const candidateWidth = getMatchingCardWidth();
-            const candidateHeight = getMatchingCardHeight(candidate.content);
-            const movedCenterX = movedCard.x + movedWidth / 2;
-            const movedCenterY = movedCard.y + movedHeight / 2;
-            const candidateCenterX = candidate.x + candidateWidth / 2;
-            const candidateCenterY = candidate.y + candidateHeight / 2;
+            const movedCenterX = movedCard.x + movedCard.width / 2;
+            const movedCenterY = movedCard.y + movedCard.height / 2;
+            const candidateCenterX = candidate.x + candidate.width / 2;
+            const candidateCenterY = candidate.y + candidate.height / 2;
             const distance = Math.hypot(
               movedCenterX - candidateCenterX,
               movedCenterY - candidateCenterY,
+            );
+            const mergeDistance = Math.max(
+              150,
+              Math.min(
+                boardMetrics.columnWidth,
+                (movedCard.width + candidate.width) / 2 + 44,
+              ),
             );
 
             return {
@@ -1483,6 +1732,7 @@ function MatchingPairsActivity({
               movedGroup,
               candidateGroup,
               distance,
+              mergeDistance,
               canMerge:
                 candidate.side !== movedCard.side &&
                 movedGroup.length === 1 &&
@@ -1492,7 +1742,7 @@ function MatchingPairsActivity({
             };
           }),
       )
-      .filter((entry) => entry.canMerge && entry.distance < 210)
+      .filter((entry) => entry.canMerge && entry.distance < entry.mergeDistance)
       .sort((left, right) => left.distance - right.distance)[0];
 
     if (!match) {
@@ -1504,14 +1754,13 @@ function MatchingPairsActivity({
     const rightCard =
       match.movedCard.side === "right" ? match.movedCard : match.candidate;
     const groupId = `paired-${leftCard.id}-${rightCard.id}`;
-    const leftWidth = getMatchingCardWidth();
-    const leftHeight = getMatchingCardHeight(leftCard.content);
+    const pairGap = Math.max(12, Math.round(MATCHING_CARD_GAP * 0.9));
     const leftMoved = leftCard.groupId === movedGroupId;
     const leftX =
       normalized.pairAlignment === "horizontal"
         ? leftMoved
           ? leftCard.x
-          : rightCard.x - leftWidth - MATCHING_CARD_GAP
+          : rightCard.x - leftCard.width - pairGap
         : leftMoved
           ? leftCard.x
           : rightCard.x;
@@ -1522,21 +1771,39 @@ function MatchingPairsActivity({
           : rightCard.y
         : leftMoved
           ? leftCard.y
-          : rightCard.y - leftHeight - MATCHING_CARD_GAP;
-    const boardWidth = getBoardWidth();
+          : rightCard.y - leftCard.height - pairGap;
     const maxLeftX =
       normalized.pairAlignment === "horizontal"
         ? Math.max(
-            12,
-            boardWidth -
-              leftWidth -
-              MATCHING_CARD_GAP -
-              getMatchingCardWidth() -
-              12,
+            boardMetrics.minInset,
+            boardMetrics.width -
+              leftCard.width -
+              pairGap -
+              rightCard.width -
+              boardMetrics.minInset,
           )
-        : Math.max(12, boardWidth - leftWidth - 12);
-    const clampedX = clamp(leftX, 12, maxLeftX);
-    const clampedY = Math.max(12, topY);
+        : Math.max(
+            boardMetrics.minInset,
+            boardMetrics.width -
+              Math.max(leftCard.width, rightCard.width) -
+              boardMetrics.minInset,
+          );
+    const maxLeftY =
+      normalized.pairAlignment === "horizontal"
+        ? Math.max(
+            boardMetrics.minInset,
+            boardMetrics.bottomLimit -
+              Math.max(leftCard.height, rightCard.height),
+          )
+        : Math.max(
+            boardMetrics.minInset,
+            boardMetrics.bottomLimit -
+              leftCard.height -
+              pairGap -
+              rightCard.height,
+          );
+    const clampedX = clamp(leftX, boardMetrics.minInset, maxLeftX);
+    const clampedY = clamp(topY, boardMetrics.minInset, maxLeftY);
 
     return nextCards.map((card) => {
       if (card.id === leftCard.id) {
@@ -1554,12 +1821,12 @@ function MatchingPairsActivity({
           groupId,
           x:
             normalized.pairAlignment === "horizontal"
-              ? clampedX + leftWidth + MATCHING_CARD_GAP
+              ? clampedX + leftCard.width + pairGap
               : clampedX,
           y:
             normalized.pairAlignment === "horizontal"
               ? clampedY
-              : clampedY + leftHeight + MATCHING_CARD_GAP,
+              : clampedY + leftCard.height + pairGap,
         };
       }
 
@@ -1591,29 +1858,18 @@ function MatchingPairsActivity({
           return {
             groupId,
             status: getMatchingGroupStatus(groupCards),
-            x:
-              (first.x +
-                getMatchingCardWidth() / 2 +
-                second.x +
-                getMatchingCardWidth() / 2) /
-              2,
+            x: (first.x + first.width / 2 + second.x + second.width / 2) / 2,
             y:
               (first.y +
-                getMatchingCardHeight(first.content) / 2 +
+                first.height / 2 +
                 second.y +
-                getMatchingCardHeight(second.content) / 2) /
+                second.height / 2) /
               2,
           };
         }),
     [cards],
   );
   const showGroupFeedback = normalized.showImmediateFeedback || hasChecked;
-  const boardMetrics = useMemo(() => getMatchingBoardMetrics(cards), [cards]);
-
-  const getBoardWidth = () => {
-    const width = boardRef.current?.clientWidth ?? 0;
-    return width > 0 ? width : 920;
-  };
 
   const beginDrag = (
     event: ReactPointerEvent<HTMLDivElement>,
@@ -1649,27 +1905,27 @@ function MatchingPairsActivity({
     onReport(score, correct === totalPairs);
   };
 
+  const boardCorrect = solvedPairs.size + countVisibleCorrectPairs(cards);
+  const boardScore = percentage(boardCorrect, totalPairs);
+  const boardSolved = boardCorrect === totalPairs && totalPairs > 0;
+  const showBoardStatus = hasChecked || boardSolved;
+  const boardStatusDetail = boardSolved
+    ? draft.successMessage
+    : `\u0420\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442: ${boardScore}%`;
+
   return (
-    <div className="stack">
-      <p className="editor-hint">
-        Перетаскивайте карточки по полю. Когда правильные элементы окажутся рядом,
-        они склеятся и будут двигаться уже вместе. Карточку можно таскать за
-        любую ее неинтерактивную область, а разъединение находится между
-        скрепленными элементами.
-      </p>
+    <div className="stack matching-pairs-stack">
       <div
-        className="matching-drag-board"
-        ref={boardRef}
-        style={{
-          minHeight: `${boardMetrics.minHeight}px`,
-        }}
+        className={`matching-activity-surface ${
+          boardOnly ? "matching-activity-surface--board-only" : ""
+        }`}
       >
+        <div
+          className="matching-drag-board"
+          ref={boardRef}
+        >
         {cards.map((card) => {
           const normalizedCardContent = normalizeMatchingSide(card.content);
-          const showToolbarMeta =
-            normalizedCardContent.kind === "text" ||
-            normalizedCardContent.kind === "spoken-text";
-
           return (
             <div
               className={`matching-drag-card ${
@@ -1701,8 +1957,8 @@ function MatchingPairsActivity({
               style={{
                 left: `${card.x}px`,
                 top: `${card.y}px`,
-                width: `${getMatchingCardWidth()}px`,
-                minHeight: `${getMatchingCardHeight(normalizedCardContent)}px`,
+                width: `${card.width}px`,
+                height: `${card.height}px`,
               }}
               onPointerDown={(event) => beginDrag(event, card)}
               onPointerMove={(event) => {
@@ -1717,7 +1973,6 @@ function MatchingPairsActivity({
 
                 const deltaX = event.clientX - currentDrag.startX;
                 const deltaY = event.clientY - currentDrag.startY;
-                const boardWidth = getBoardWidth();
 
                 setCards((current) =>
                   current.map((currentCard) => {
@@ -1726,14 +1981,11 @@ function MatchingPairsActivity({
                       return currentCard;
                     }
 
+                    const bounds = getCardBounds(currentCard);
                     return {
                       ...currentCard,
-                      x: clamp(
-                        initialPosition.x + deltaX,
-                        12,
-                        Math.max(12, boardWidth - getMatchingCardWidth() - 12),
-                      ),
-                      y: Math.max(12, initialPosition.y + deltaY),
+                      x: clamp(initialPosition.x + deltaX, bounds.minX, bounds.maxX),
+                      y: clamp(initialPosition.y + deltaY, bounds.minY, bounds.maxY),
                     };
                   }),
                 );
@@ -1759,16 +2011,16 @@ function MatchingPairsActivity({
               }}
             >
               <div className="matching-drag-card__toolbar">
-                <span className="matching-drag-card__side">
+                <span
+                  className={`matching-drag-card__side matching-drag-card__side--${
+                    card.side === "left" ? "left" : "right"
+                  }`}
+                >
                   {card.side === "left" ? "A" : "B"}
                 </span>
-                {showToolbarMeta ? (
-                  <span className="matching-drag-card__meta" title={card.label}>
-                    {truncateMatchingMeta(card.label)}
-                  </span>
-                ) : null}
               </div>
               <MatchingCardContent
+                cardHeight={card.height}
                 content={normalizedCardContent}
                 onOpenMedia={setActiveMedia}
               />
@@ -1798,8 +2050,43 @@ function MatchingPairsActivity({
             ×
           </button>
         ))}
+        <div className="matching-drag-board__controls" data-card-interactive="true">
+          <PlayerButton
+            aria-label={"\u041F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C"}
+            className="matching-drag-board__button matching-drag-board__button--check"
+            onClick={handleCheck}
+          >
+            {"\u041F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C"}
+          </PlayerButton>
+          <button
+            aria-label={"\u0421\u0431\u0440\u043E\u0441\u0438\u0442\u044C \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0438"}
+            className="ghost-button matching-drag-board__button matching-drag-board__button--reset"
+            type="button"
+            onClick={() => {
+              setCards(createMatchingCards(draft.data, boardSize));
+              setSolvedPairs(new Set());
+              setHasChecked(false);
+              setDraggingGroupId(null);
+              setActiveMedia(null);
+              dragRef.current = null;
+            }}
+          >
+            РЎР±СЂРѕСЃРёС‚СЊ РєР°СЂС‚РѕС‡РєРё
+          </button>
+          {showBoardStatus ? (
+            <div
+              className={`matching-drag-board__status ${
+                boardSolved ? "matching-drag-board__status--success" : ""
+              }`}
+            >
+              <strong>{`${boardScore}%`}</strong>
+              <span>{boardStatusDetail}</span>
+            </div>
+          ) : null}
+        </div>
       </div>
-      {(normalized.showImmediateFeedback || normalized.autoRemoveCorrectPairs) &&
+      {!boardOnly &&
+      (normalized.showImmediateFeedback || normalized.autoRemoveCorrectPairs) &&
       (getEvaluatedPairGroups(cards) > 0 || solvedPairs.size > 0) ? (
         <p className="editor-hint">
           Сейчас собрано верных пар: {solvedPairs.size + countVisibleCorrectPairs(cards)}
@@ -1813,7 +2100,7 @@ function MatchingPairsActivity({
           className="ghost-button"
           type="button"
           onClick={() => {
-            setCards(createMatchingCards(draft.data));
+            setCards(createMatchingCards(draft.data, boardSize));
             setSolvedPairs(new Set());
             setHasChecked(false);
             setDraggingGroupId(null);
@@ -1821,9 +2108,10 @@ function MatchingPairsActivity({
             dragRef.current = null;
           }}
         >
-          Сбросить карточки
+          Сбросить
         </button>
       </ActionRow>
+      </div>
       <MatchingMediaDialog media={activeMedia} onClose={() => setActiveMedia(null)} />
     </div>
   );
@@ -3094,11 +3382,13 @@ function renderActivity(
   draft: AnyExerciseDraft,
   revisionKey: string,
   onReport: ReportResult,
+  boardOnly = false,
 ) {
   switch (draft.type) {
     case "matching-pairs":
       return (
         <MatchingPairsActivity
+          boardOnly={boardOnly}
           draft={draft}
           onReport={onReport}
           revisionKey={revisionKey}
@@ -3268,9 +3558,17 @@ function renderActivity(
 export function ExercisePlayer({
   draft,
   fullscreen = false,
+  compactHead = false,
+  instructionOverride,
+  bodyOverlay,
+  boardOnly = false,
 }: Readonly<{
   draft: AnyExerciseDraft;
   fullscreen?: boolean;
+  compactHead?: boolean;
+  instructionOverride?: string;
+  bodyOverlay?: ReactNode;
+  boardOnly?: boolean;
 }>) {
   const [status, setStatus] = useState<{
     score: number;
@@ -3282,6 +3580,8 @@ export function ExercisePlayer({
     () => getExerciseThemeStyle(draft.themeColor),
     [draft.themeColor],
   );
+  const instructionsText = instructionOverride ?? draft.instructions;
+  const showInstructions = compactHead ? Boolean(instructionOverride) : Boolean(instructionsText);
 
   useEffect(() => {
     setStatus(null);
@@ -3310,19 +3610,24 @@ export function ExercisePlayer({
     <section
       className={`exercise-player ${
         fullscreen ? "exercise-player--fullscreen" : ""
-      }`}
+      } ${boardOnly ? "exercise-player--board-only" : ""}`}
       style={themeStyle}
     >
-      <div className="exercise-player__head">
-        <span className="eyebrow">Тип: {draft.type}</span>
+      {!boardOnly ? <div className="exercise-player__head">
+        {!compactHead ? <span className="eyebrow">Тип: {draft.type}</span> : null}
         <h1>{draft.title}</h1>
         <p>{draft.description}</p>
-        <div className="player-instructions">{draft.instructions}</div>
-      </div>
+        {showInstructions ? (
+          <div className="player-instructions">{instructionsText}</div>
+        ) : null}
+      </div> : null}
       <div className="exercise-player__body">
-        {renderActivity(draft, revisionKey, reportResult)}
+        {bodyOverlay ? (
+          <div className="exercise-player__overlay">{bodyOverlay}</div>
+        ) : null}
+        {renderActivity(draft, revisionKey, reportResult, boardOnly)}
       </div>
-      {status ? (
+      {status && !boardOnly && draft.type !== "matching-pairs" ? (
         <div
           className={`player-status ${
             status.solved ? "player-status--success" : ""

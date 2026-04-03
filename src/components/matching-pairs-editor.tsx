@@ -1,21 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useState, type ChangeEvent } from "react";
 import {
-  MATCHING_AUDIO_SIZE_DEFAULT,
   MATCHING_AUDIO_VOLUME_DEFAULT,
-  MATCHING_IMAGE_HEIGHT_DEFAULT,
-  MATCHING_IMAGE_HEIGHT_MAX,
-  MATCHING_IMAGE_HEIGHT_MIN,
-  MATCHING_SPOKEN_TEXT_SIZE_DEFAULT,
-  MATCHING_TEXT_SIZE_DEFAULT,
-  MATCHING_VIDEO_SIZE_DEFAULT,
   createMatchingContent,
   createMatchingExtra,
   createMatchingPair,
-  getMatchingContentSummary,
   matchingContentOptions,
-  normalizeMatchingSize,
   normalizeMatchingPairsData,
 } from "@/lib/matching-pairs";
 import type {
@@ -27,15 +18,172 @@ import type {
 import { moveItem } from "@/lib/utils";
 
 const BULK_SEPARATORS = ["\t", ";", "|", "=>"];
-const MATCHING_TAG_SUMMARY_LIMIT = 65;
 
-function truncateMatchingTagText(value: string) {
-  const trimmed = value.trim();
-  if (trimmed.length <= MATCHING_TAG_SUMMARY_LIMIT) {
-    return trimmed;
+function MatchingTypeIcon({
+  kind,
+}: Readonly<{
+  kind: MatchingContent["kind"];
+}>) {
+  switch (kind) {
+    case "spoken-text":
+      return (
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path
+            d="M6 9a3 3 0 1 1 6 0v3a3 3 0 1 1-6 0V9Zm3 9v2m-4-2a4 4 0 0 0 8 0m3-6h2m1-3 2 3-2 3"
+            fill="none"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.8"
+          />
+        </svg>
+      );
+    case "image":
+      return (
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path
+            d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-11Zm3 9 3.2-3.2a1 1 0 0 1 1.4 0l2.4 2.4 1.7-1.7a1 1 0 0 1 1.4 0L19 15.2M9 9.25a1.25 1.25 0 1 0 0-.01Z"
+            fill="none"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.8"
+          />
+        </svg>
+      );
+    case "audio":
+      return (
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path
+            d="M5 14h3l4 4V6L8 10H5v4Zm11.5-4.5a4.5 4.5 0 0 1 0 5m2.5-7.5a7.5 7.5 0 0 1 0 10"
+            fill="none"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.8"
+          />
+        </svg>
+      );
+    case "video":
+      return (
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path
+            d="M4 7.5A2.5 2.5 0 0 1 6.5 5h7A2.5 2.5 0 0 1 16 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-7A2.5 2.5 0 0 1 4 16.5v-9Zm12 3.2 4-2.2v7l-4-2.2"
+            fill="none"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.8"
+          />
+        </svg>
+      );
+    case "text":
+    default:
+      return (
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path
+            d="M5 6h14M9 6v12m-3 0h6m2-8h5m-5 4h4"
+            fill="none"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.8"
+          />
+        </svg>
+      );
   }
+}
 
-  return `${trimmed.slice(0, MATCHING_TAG_SUMMARY_LIMIT - 3).trimEnd()}...`;
+function ActionIcon({
+  kind,
+}: Readonly<{
+  kind: "up" | "down" | "duplicate" | "delete";
+}>) {
+  switch (kind) {
+    case "up":
+      return (
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path
+            d="M12 5v14m0-14-5 5m5-5 5 5"
+            fill="none"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.8"
+          />
+        </svg>
+      );
+    case "down":
+      return (
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path
+            d="M12 19V5m0 14-5-5m5 5 5-5"
+            fill="none"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.8"
+          />
+        </svg>
+      );
+    case "duplicate":
+      return (
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path
+            d="M9 9V6.5A2.5 2.5 0 0 1 11.5 4h6A2.5 2.5 0 0 1 20 6.5v6A2.5 2.5 0 0 1 17.5 15H15M6.5 9h6A2.5 2.5 0 0 1 15 11.5v6A2.5 2.5 0 0 1 12.5 20h-6A2.5 2.5 0 0 1 4 17.5v-6A2.5 2.5 0 0 1 6.5 9Z"
+            fill="none"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.8"
+          />
+        </svg>
+      );
+    case "delete":
+    default:
+      return (
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path
+            d="M5 7h14m-9 4v5m4-5v5M9 4h6l1 3H8l1-3Zm-1 3h8l-.7 11.2A2 2 0 0 1 13.3 20h-2.6a2 2 0 0 1-1.99-1.8L8 7Z"
+            fill="none"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.8"
+          />
+        </svg>
+      );
+  }
+}
+
+function MediaSettingsIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24">
+      <path
+        d="M4 7h10m-7 5h13M4 17h10m4-12v4m-7 1v4m4 1v4"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24">
+      <path
+        d="m6 6 12 12M18 6 6 18"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  );
 }
 
 function parseBulkLine(line: string) {
@@ -119,10 +267,6 @@ function parseBulkPairs(source: string) {
   };
 }
 
-function getMediaSizeDescription() {
-  return `Минимум ${MATCHING_IMAGE_HEIGHT_MIN}px, максимум ${MATCHING_IMAGE_HEIGHT_MAX}px.`;
-}
-
 function getBaseFileLabel(fileName: string) {
   return fileName.replace(/\.[^.]+$/, "").trim();
 }
@@ -180,60 +324,6 @@ function isAcceptedMediaFile(
   );
 }
 
-function MatchingSizeField({
-  hint,
-  label,
-  value,
-  defaultValue,
-  onCommit,
-}: Readonly<{
-  hint?: string;
-  label: string;
-  value: number;
-  defaultValue: number;
-  onCommit: (next: number) => void;
-}>) {
-  const [inputValue, setInputValue] = useState(`${value}`);
-
-  useEffect(() => {
-    setInputValue(`${value}`);
-  }, [value]);
-
-  const commitValue = () => {
-    const next = normalizeMatchingSize(
-      inputValue.trim() ? Number.parseInt(inputValue, 10) : Number.NaN,
-      defaultValue,
-    );
-    onCommit(next);
-    setInputValue(`${next}`);
-  };
-
-  return (
-    <label className="matching-editor-field">
-      <span className="field-label">{label}</span>
-      <input
-        className="editor-input"
-        inputMode="numeric"
-        max={MATCHING_IMAGE_HEIGHT_MAX}
-        min={MATCHING_IMAGE_HEIGHT_MIN}
-        step={10}
-        type="number"
-        value={inputValue}
-        onBlur={commitValue}
-        onChange={(event) => setInputValue(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            commitValue();
-          }
-        }}
-      />
-      <p className="editor-hint">{getMediaSizeDescription()}</p>
-      {hint ? <p className="editor-hint">{hint}</p> : null}
-    </label>
-  );
-}
-
 function MatchingSideFields({
   content,
   label,
@@ -245,11 +335,6 @@ function MatchingSideFields({
   onChange: (next: MatchingContent) => void;
   onNotice?: (message: string) => void;
 }>) {
-  const activeOption = useMemo(
-    () => matchingContentOptions.find((option) => option.id === content.kind),
-    [content.kind],
-  );
-
   const setField = (
     field: "text" | "url" | "alt" | "label",
     value: string,
@@ -330,13 +415,7 @@ function MatchingSideFields({
   return (
     <div className="matching-editor-side">
       <div className="matching-editor-side__head">
-        <div>
-          <strong>{label}</strong>
-          <p className="editor-hint">{activeOption?.hint}</p>
-        </div>
-        <span className="tag">
-          {truncateMatchingTagText(getMatchingContentSummary(content))}
-        </span>
+        <strong>{label}</strong>
       </div>
 
       <div className="matching-editor-types">
@@ -346,11 +425,12 @@ function MatchingSideFields({
               option.id === content.kind ? "matching-editor-type--active" : ""
             }`}
             key={option.id}
+            title={option.label}
             type="button"
             onClick={() => onChange(createMatchingContent(option.id))}
           >
-            <span>{option.shortLabel}</span>
-            <span>{option.label}</span>
+            <MatchingTypeIcon kind={option.id} />
+            <span className="sr-only">{option.label}</span>
           </button>
         ))}
       </div>
@@ -359,34 +439,15 @@ function MatchingSideFields({
         <>
           <label className="matching-editor-field">
             <span className="field-label">
-              {content.kind === "spoken-text" ? "Текст для озвучивания" : "Текст"}
+              {content.kind === "spoken-text" ? "Текст" : "Текст"}
             </span>
             <textarea
               className="editor-textarea"
-              rows={4}
+              rows={3}
               value={content.text}
               onChange={(event) => setField("text", event.target.value)}
             />
           </label>
-          <MatchingSizeField
-            defaultValue={
-              content.kind === "spoken-text"
-                ? MATCHING_SPOKEN_TEXT_SIZE_DEFAULT
-                : MATCHING_TEXT_SIZE_DEFAULT
-            }
-            hint={
-              content.kind === "spoken-text"
-                ? "Меняется общая высота карточки с озвученным текстом."
-                : "Меняется общая высота текстовой карточки."
-            }
-            label={
-              content.kind === "spoken-text"
-                ? "Размер карточки озвученного текста, px"
-                : "Размер текстовой карточки, px"
-            }
-            value={content.size}
-            onCommit={(next) => setNumberField("size", next)}
-          />
         </>
       ) : null}
 
@@ -423,13 +484,6 @@ function MatchingSideFields({
               onChange={(event) => setField("alt", event.target.value)}
             />
           </label>
-          <MatchingSizeField
-            defaultValue={MATCHING_IMAGE_HEIGHT_DEFAULT}
-            hint="Меняется высота изображения внутри карточки."
-            label="Размер изображения в карточке, px"
-            value={content.size}
-            onCommit={(next) => setNumberField("size", next)}
-          />
         </>
       ) : null}
 
@@ -488,46 +542,6 @@ function MatchingSideFields({
               onChange={(event) => setField("label", event.target.value)}
             />
           </label>
-          {content.kind === "audio" ? (
-            <label className="matching-editor-field">
-              <span className="field-label">Громкость, %</span>
-              <input
-                className="editor-input"
-                max={100}
-                min={0}
-                step={5}
-                type="number"
-                value={content.volume}
-                onChange={(event) =>
-                  setNumberField(
-                    "volume",
-                    Number.isFinite(event.target.valueAsNumber)
-                      ? Math.min(100, Math.max(0, Math.round(event.target.valueAsNumber)))
-                      : MATCHING_AUDIO_VOLUME_DEFAULT,
-                  )
-                }
-              />
-            </label>
-          ) : null}
-          <MatchingSizeField
-            defaultValue={
-              content.kind === "audio"
-                ? MATCHING_AUDIO_SIZE_DEFAULT
-                : MATCHING_VIDEO_SIZE_DEFAULT
-            }
-            hint={
-              content.kind === "audio"
-                ? "Меняется высота блока проигрывания внутри аудио-карточки."
-                : "Меняется высота превью видео в карточке."
-            }
-            label={
-              content.kind === "audio"
-                ? "Размер аудио-блока, px"
-                : "Размер превью видео, px"
-            }
-            value={content.size}
-            onCommit={(next) => setNumberField("size", next)}
-          />
           {content.kind === "video" ? (
             <label className="matching-editor-field">
               <span className="field-label">Громкость, %</span>
@@ -553,6 +567,7 @@ function MatchingSideFields({
               </p>
             </label>
           ) : null}
+<<<<<<< Updated upstream
           {content.kind === "video" ? (
             <label className="matching-editor-field">
               <span className="field-label">Начинать с секунды</span>
@@ -577,7 +592,336 @@ function MatchingSideFields({
               </p>
             </label>
           ) : null}
+=======
+>>>>>>> Stashed changes
         </>
+      ) : null}
+    </div>
+  );
+}
+
+void MatchingSideFields;
+
+function MatchingSideFieldsCompact({
+  content,
+  label,
+  onChange,
+  onNotice,
+}: Readonly<{
+  content: MatchingContent;
+  label: string;
+  onChange: (next: MatchingContent) => void;
+  onNotice?: (message: string) => void;
+}>) {
+  const [isMediaDialogOpen, setIsMediaDialogOpen] = useState(false);
+  const activeOption =
+    matchingContentOptions.find((option) => option.id === content.kind) ??
+    matchingContentOptions[0];
+  const isMediaContent =
+    content.kind === "image" ||
+    content.kind === "audio" ||
+    content.kind === "video";
+
+  const setField = (
+    field: "text" | "url" | "alt" | "label",
+    value: string,
+  ) => {
+    onChange({
+      ...content,
+      [field]: value,
+    } as MatchingContent);
+  };
+
+  const setNumberField = (
+    field: "size" | "startSeconds" | "volume",
+    value: number,
+  ) => {
+    onChange({
+      ...content,
+      [field]: value,
+    } as MatchingContent);
+  };
+
+  const handleMediaFile = async (
+    kind: "image" | "audio" | "video",
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    if (!isAcceptedMediaFile(kind, file)) {
+      onNotice?.("Файл не подходит для выбранного типа карточки.");
+      return;
+    }
+
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      const baseLabel = getBaseFileLabel(file.name);
+
+      if (kind === "image" && content.kind === "image") {
+        onChange({
+          ...content,
+          url: dataUrl,
+          alt: content.alt.trim() ? content.alt : baseLabel,
+        });
+        onNotice?.("Изображение встроено в карточку.");
+        return;
+      }
+
+      if (kind === "audio" && content.kind === "audio") {
+        onChange({
+          ...content,
+          url: dataUrl,
+          label: content.label.trim() ? content.label : baseLabel,
+        });
+        onNotice?.("Аудиофайл встроен в карточку.");
+        return;
+      }
+
+      if (kind === "video" && content.kind === "video") {
+        onChange({
+          ...content,
+          url: dataUrl,
+          label: content.label.trim() ? content.label : baseLabel,
+        });
+        onNotice?.("Видеофайл встроен в карточку.");
+      }
+    } catch (error) {
+      onNotice?.(
+        error instanceof Error
+          ? error.message
+          : "Не удалось загрузить файл в карточку.",
+      );
+    }
+  };
+
+  useEffect(() => {
+    if (!isMediaDialogOpen) {
+      return;
+    }
+
+    if (!isMediaContent) {
+      setIsMediaDialogOpen(false);
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsMediaDialogOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isMediaContent, isMediaDialogOpen]);
+
+  const mediaButtonLabel =
+    content.kind === "image"
+      ? "Настроить изображение"
+      : content.kind === "audio"
+        ? "Настроить аудио"
+        : "Настроить видео";
+
+  return (
+    <div className="matching-editor-side">
+      <div className="matching-editor-side__head">
+        <strong>{label}</strong>
+      </div>
+
+      <div className="matching-editor-types">
+        {matchingContentOptions.map((option) => (
+          <button
+            aria-label={option.label}
+            aria-pressed={option.id === content.kind}
+            className={`matching-editor-type ${
+              option.id === content.kind ? "matching-editor-type--active" : ""
+            }`}
+            key={option.id}
+            title={option.label}
+            type="button"
+            onClick={() => onChange(createMatchingContent(option.id))}
+          >
+            <MatchingTypeIcon kind={option.id} />
+            <span className="sr-only">{option.label}</span>
+          </button>
+        ))}
+      </div>
+
+      {content.kind === "text" || content.kind === "spoken-text" ? (
+        <textarea
+          aria-label={label}
+          className="editor-textarea"
+          placeholder="Введите содержимое карточки"
+          rows={3}
+          value={content.text}
+          onChange={(event) => setField("text", event.target.value)}
+        />
+      ) : null}
+
+      {isMediaContent ? (
+        <button
+          className="ghost-button matching-editor-media-button matching-editor-media-button--block"
+          title={mediaButtonLabel}
+          type="button"
+          onClick={() => setIsMediaDialogOpen(true)}
+        >
+          <MediaSettingsIcon />
+          Медиа
+        </button>
+      ) : null}
+
+      {isMediaContent && isMediaDialogOpen ? (
+        <div
+          aria-label={mediaButtonLabel}
+          aria-modal="true"
+          className="matching-editor-modal"
+          role="dialog"
+        >
+          <button
+            aria-label="Закрыть окно"
+            className="matching-editor-modal__backdrop"
+            type="button"
+            onClick={() => setIsMediaDialogOpen(false)}
+          />
+          <div
+            className="matching-editor-modal__dialog"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="matching-editor-modal__head">
+              <div>
+                <strong>{label}</strong>
+                <p className="editor-hint">{activeOption.label}</p>
+              </div>
+              <button
+                aria-label="Закрыть окно"
+                className="ghost-button matching-editor-modal__close"
+                title="Закрыть"
+                type="button"
+                onClick={() => setIsMediaDialogOpen(false)}
+              >
+                <CloseIcon />
+              </button>
+            </div>
+
+            <div className="matching-editor-modal__body">
+              {content.kind === "image" ? (
+                <>
+                  <label className="matching-editor-field">
+                    <span className="field-label">URL изображения</span>
+                    <input
+                      className="editor-input"
+                      placeholder="https://..."
+                      value={content.url}
+                      onChange={(event) => setField("url", event.target.value)}
+                    />
+                  </label>
+                  <label className="matching-editor-field">
+                    <span className="field-label">Файл изображения</span>
+                    <input
+                      accept="image/*"
+                      className="editor-input"
+                      type="file"
+                      onChange={(event) => void handleMediaFile("image", event)}
+                    />
+                  </label>
+                  <label className="matching-editor-field">
+                    <span className="field-label">Подпись / alt</span>
+                    <input
+                      className="editor-input"
+                      placeholder="Короткое описание"
+                      value={content.alt}
+                      onChange={(event) => setField("alt", event.target.value)}
+                    />
+                  </label>
+                </>
+              ) : null}
+
+              {content.kind === "audio" || content.kind === "video" ? (
+                <>
+                  <label className="matching-editor-field">
+                    <span className="field-label">
+                      {content.kind === "audio"
+                        ? "URL аудио / видео для звука"
+                        : "URL видео"}
+                    </span>
+                    <input
+                      className="editor-input"
+                      placeholder="https://..."
+                      value={content.url}
+                      onChange={(event) => setField("url", event.target.value)}
+                    />
+                  </label>
+                  <label className="matching-editor-field">
+                    <span className="field-label">
+                      {content.kind === "audio" ? "Файл аудио" : "Файл видео"}
+                    </span>
+                    <input
+                      accept={
+                        content.kind === "audio"
+                          ? "audio/*,video/mp4,.mp3,.mp4,.m4a,.wav,.ogg"
+                          : "video/*,.mp4,.webm,.ogv,.ogg"
+                      }
+                      className="editor-input"
+                      type="file"
+                      onChange={(event) =>
+                        void handleMediaFile(content.kind, event)
+                      }
+                    />
+                  </label>
+                  <label className="matching-editor-field">
+                    <span className="field-label">Подпись карточки</span>
+                    <input
+                      className="editor-input"
+                      placeholder="Что увидит ученик"
+                      value={content.label}
+                      onChange={(event) => setField("label", event.target.value)}
+                    />
+                  </label>
+                </>
+              ) : null}
+
+              {content.kind === "video" ? (
+                <>
+                  <label className="matching-editor-field">
+                    <span className="field-label">Громкость, %</span>
+                    <input
+                      className="editor-input"
+                      max={100}
+                      min={0}
+                      step={5}
+                      type="number"
+                      value={content.volume}
+                      onChange={(event) =>
+                        setNumberField(
+                          "volume",
+                          Number.isFinite(event.target.valueAsNumber)
+                            ? Math.min(
+                                100,
+                                Math.max(0, Math.round(event.target.valueAsNumber)),
+                              )
+                            : MATCHING_AUDIO_VOLUME_DEFAULT,
+                        )
+                      }
+                    />
+                  </label>встроенно
+                </>
+              ) : null}
+
+              {content.kind === "audio" ? (
+                <p className="editor-hint">
+                  Можно использовать прямую ссылку или YouTube, если нужен
+                  только звук.
+                </p>
+              ) : null}
+            </div>
+          </div>
+        </div>
       ) : null}
     </div>
   );
@@ -606,12 +950,16 @@ function SideSelect({
 }
 
 export function MatchingPairsEditor({
+  themeColor = "#0b7a75",
   value,
   onChange,
+  onThemeColorChange,
   onNotice,
 }: Readonly<{
+  themeColor?: string;
   value: MatchingPairsData;
   onChange: (next: MatchingPairsData) => void;
+  onThemeColorChange?: (next: string) => void;
   onNotice?: (message: string) => void;
 }>) {
   const [bulkInput, setBulkInput] = useState("");
@@ -671,26 +1019,19 @@ export function MatchingPairsEditor({
   };
 
   return (
-    <>
+    <div className="matching-editor-root">
       <div className="editor-block">
         <div className="editor-block__head">
           <div>
             <strong>Редактор пар</strong>
             <p className="editor-hint">
-              Каждая строка задает одну пару. У каждой стороны можно выбрать
-              текст, картинку, аудио, видео или озвученный текст.
+              Для каждой пары заполните левую и правую карточку. Тип содержимого
+              выбирается иконкой.
             </p>
           </div>
-          <button
-            className="primary-button"
-            type="button"
-            onClick={() =>
-              updatePairs((current) => [...current, createMatchingPair()])
-            }
-          >
-            Добавить следующую пару
-          </button>
         </div>
+
+
 
         <div className="matching-editor-list">
           {normalized.pairs.map((pair, index) => (
@@ -699,27 +1040,35 @@ export function MatchingPairsEditor({
                 <strong>{`Пара ${index + 1}`}</strong>
                 <div className="inline-actions">
                   <button
-                    className="ghost-button"
+                    aria-label="Поднять выше"
+                    className="ghost-button matching-action-button"
                     disabled={index === 0}
+                    title="Поднять выше"
                     type="button"
                     onClick={() =>
                       updatePairs((current) => moveItem(current, index, index - 1))
                     }
                   >
+                    <ActionIcon kind="up" />
                     Вверх
                   </button>
                   <button
-                    className="ghost-button"
+                    aria-label="Опустить ниже"
+                    className="ghost-button matching-action-button"
                     disabled={index === normalized.pairs.length - 1}
+                    title="Опустить ниже"
                     type="button"
                     onClick={() =>
                       updatePairs((current) => moveItem(current, index, index + 1))
                     }
                   >
+                    <ActionIcon kind="down" />
                     Вниз
                   </button>
                   <button
-                    className="ghost-button"
+                    aria-label="Дублировать"
+                    className="ghost-button matching-action-button"
+                    title="Дублировать"
                     type="button"
                     onClick={() =>
                       updatePairs((current) => {
@@ -729,10 +1078,13 @@ export function MatchingPairsEditor({
                       })
                     }
                   >
+                    <ActionIcon kind="duplicate" />
                     Дублировать
                   </button>
                   <button
-                    className="ghost-button"
+                    aria-label="Удалить"
+                    className="ghost-button matching-action-button"
+                    title="Удалить"
                     type="button"
                     onClick={() =>
                       updatePairs((current) => {
@@ -743,13 +1095,14 @@ export function MatchingPairsEditor({
                       })
                     }
                   >
+                    <ActionIcon kind="delete" />
                     Удалить
                   </button>
                 </div>
               </div>
 
               <div className="matching-editor-grid">
-                <MatchingSideFields
+                <MatchingSideFieldsCompact
                   content={pair.left}
                   label="Левая карточка"
                   onNotice={onNotice}
@@ -766,7 +1119,7 @@ export function MatchingPairsEditor({
                     )
                   }
                 />
-                <MatchingSideFields
+                <MatchingSideFieldsCompact
                   content={pair.right}
                   label="Правая карточка"
                   onNotice={onNotice}
@@ -787,6 +1140,15 @@ export function MatchingPairsEditor({
             </article>
           ))}
         </div>
+        <button
+          className="primary-button"
+          type="button"
+          onClick={() =>
+            updatePairs((current) => [...current, createMatchingPair()])
+          }
+        >
+          Добавить следующую пару
+        </button>
       </div>
 
       <div className="editor-block">
@@ -822,27 +1184,35 @@ export function MatchingPairsEditor({
                   <strong>{`Элемент ${index + 1}`}</strong>
                   <div className="inline-actions">
                     <button
-                      className="ghost-button"
+                      aria-label="Поднять выше"
+                      className="ghost-button matching-action-button"
                       disabled={index === 0}
+                      title="Поднять выше"
                       type="button"
                       onClick={() =>
                         updateExtras((current) => moveItem(current, index, index - 1))
                       }
                     >
+                      <ActionIcon kind="up" />
                       Вверх
                     </button>
                     <button
-                      className="ghost-button"
+                      aria-label="Опустить ниже"
+                      className="ghost-button matching-action-button"
                       disabled={index === normalized.extras.length - 1}
+                      title="Опустить ниже"
                       type="button"
                       onClick={() =>
                         updateExtras((current) => moveItem(current, index, index + 1))
                       }
                     >
+                      <ActionIcon kind="down" />
                       Вниз
                     </button>
                     <button
-                      className="ghost-button"
+                      aria-label="Дублировать"
+                      className="ghost-button matching-action-button"
+                      title="Дублировать"
                       type="button"
                       onClick={() =>
                         updateExtras((current) => {
@@ -852,10 +1222,13 @@ export function MatchingPairsEditor({
                         })
                       }
                     >
+                      <ActionIcon kind="duplicate" />
                       Дублировать
                     </button>
                     <button
-                      className="ghost-button"
+                      aria-label="Удалить"
+                      className="ghost-button matching-action-button"
+                      title="Удалить"
                       type="button"
                       onClick={() =>
                         updateExtras((current) =>
@@ -863,6 +1236,7 @@ export function MatchingPairsEditor({
                         )
                       }
                     >
+                      <ActionIcon kind="delete" />
                       Удалить
                     </button>
                   </div>
@@ -885,7 +1259,7 @@ export function MatchingPairsEditor({
                         )
                       }
                     />
-                    <MatchingSideFields
+                    <MatchingSideFieldsCompact
                       content={item.content as MatchingContent}
                       label="Карточка без пары"
                       onNotice={onNotice}
@@ -918,6 +1292,20 @@ export function MatchingPairsEditor({
         </p>
 
         <div className="matching-settings-grid">
+          <label className="matching-setting-card">
+            <span className="field-label">Основной цвет фона и акцентов в игровом поле.</span>
+            <div className="matching-setting-color">
+              <input
+                className="editor-input editor-input--color"
+                id="themeColor"
+                type="color"
+                value={themeColor}
+                onChange={(event) => onThemeColorChange?.(event.target.value)}
+              />
+             
+            </div>
+          </label>
+
           <div className="matching-setting-card">
             <span className="field-label">Выравнивание при скреплении</span>
             <div className="matching-setting-options">
@@ -1050,6 +1438,6 @@ export function MatchingPairsEditor({
           </button>
         </div>
       </details>
-    </>
+    </div>
   );
 }

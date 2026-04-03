@@ -25,14 +25,6 @@ export const exerciseDefinitions: ExerciseDefinition[] = [
             left: "HTML",
             right: "Структура страницы",
           },
-          {
-            left: "CSS",
-            right: "Оформление страницы",
-          },
-          {
-            left: "JavaScript",
-            right: "Поведение страницы",
-          },
         ],
         extras: [],
         pairAlignment: "horizontal",
@@ -618,7 +610,7 @@ export function createDefaultDraft<T extends ExerciseTypeId>(
   ) {
     (draft as ExerciseDraft<"matching-pairs">).data.pairs = (
       draft as ExerciseDraft<"matching-pairs">
-    ).data.pairs.slice(0, 2);
+    ).data.pairs.slice(0, 1);
   }
 
   return draft;
