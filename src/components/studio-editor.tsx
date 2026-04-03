@@ -153,7 +153,7 @@ export function StudioEditor({
         const anchor = document.createElement("a");
         anchor.href = downloadUrl;
         anchor.download = `${safeFilename(resolvedDraft.title)}${
-          variant === "scorm2" ? "-scorm2" : ""
+          variant === "scorm2" ? "-autonomous-scorm" : ""
         }.zip`;
         document.body.append(anchor);
         anchor.click();
@@ -171,10 +171,9 @@ export function StudioEditor({
           setCurrentSlug(appSlug);
         }
 
-        setNotice("SCORM-архив скачан.");
         setNotice(
           variant === "scorm2"
-            ? "SCORM2-архив скачан."
+            ? "Архив «Автономный SCORM» скачан."
             : "SCORM-архив скачан.",
         );
         if (mode === "create" && user && appId) {
@@ -290,7 +289,7 @@ export function StudioEditor({
           type="button"
           onClick={() => handleExport("scorm2")}
         >
-          Скачать SCORM2
+          Скачать Автономный SCORM
         </button>
         <button
           className="ghost-button"
@@ -341,8 +340,8 @@ export function StudioEditor({
         </p>
       ) : null}
       <p className="editor-hint">
-        `SCORM2` создаёт полностью автономный пакет: локальный iframe, локальный
-        player и скачанные внутрь архива медиафайлы.
+        `Автономный SCORM` создаёт полностью автономный пакет: локальный
+        iframe, локальный player и скачанные внутрь архива медиафайлы.
       </p>
       {notice ? <p className="editor-hint">{notice}</p> : null}
     </div>

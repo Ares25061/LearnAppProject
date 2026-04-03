@@ -152,6 +152,14 @@ type MatchingYouTubeApi = {
     },
   ) => MatchingYouTubePlayer;
 };
+type MatchingEmbeddedVideoProvider = "youtube" | "rutube" | "vk";
+type MatchingEmbeddedVideoMeta = {
+  embedUrl: string;
+  provider: MatchingEmbeddedVideoProvider;
+  startSeconds: number;
+  thumbnailUrl?: string;
+  videoId?: string;
+};
 
 declare global {
   interface Window {
@@ -602,7 +610,15 @@ function parseMatchingTimeValue(value: string | null) {
   return Number.isNaN(numeric) ? 0 : Math.max(0, numeric);
 }
 
-function getMatchingYouTubeMeta(url: string) {
+function getMatchingServiceStartSeconds(parsed: URL) {
+  return (
+    parseMatchingTimeValue(parsed.searchParams.get("t")) ||
+    parseMatchingTimeValue(parsed.searchParams.get("start")) ||
+    parseMatchingTimeValue(parsed.hash.replace(/^#(?:t=)?/, ""))
+  );
+}
+
+function getMatchingYouTubeMeta(url: string): MatchingEmbeddedVideoMeta | null {
   const parsed = parseMatchingUrl(url);
   if (!parsed) {
     return null;
@@ -636,12 +652,11 @@ function getMatchingYouTubeMeta(url: string) {
     return null;
   }
 
-  const startSeconds =
-    parseMatchingTimeValue(parsed.searchParams.get("t")) ||
-    parseMatchingTimeValue(parsed.searchParams.get("start")) ||
-    parseMatchingTimeValue(parsed.hash.replace(/^#(?:t=)?/, ""));
+  const startSeconds = getMatchingServiceStartSeconds(parsed);
 
   return {
+    embedUrl: buildMatchingYouTubeEmbedUrl(videoId, startSeconds),
+    provider: "youtube",
     videoId,
     startSeconds,
     thumbnailUrl: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
@@ -664,10 +679,143 @@ function buildMatchingYouTubeEmbedUrl(videoId: string, startSeconds = 0) {
   return `https://www.youtube-nocookie.com/embed/${videoId}?${params.toString()}`;
 }
 
+function getMatchingRutubeMeta(url: string): MatchingEmbeddedVideoMeta | null {
+  const parsed = parseMatchingUrl(url);
+  if (!parsed) {
+    return null;
+  }
+
+  const host = parsed.hostname.replace(/^www\./, "").toLowerCase();
+  if (host !== "rutube.ru") {
+    return null;
+  }
+
+  const segments = parsed.pathname.split("/").filter(Boolean);
+  let videoId = "";
+
+  if (segments[0] === "play" && segments[1] === "embed") {
+    videoId = segments[2] ?? "";
+  } else if (segments[0] === "video" && segments[1] === "private") {
+    videoId = segments[2] ?? "";
+  } else if (segments[0] === "video") {
+    videoId = segments[1] ?? "";
+  }
+
+  if (!videoId) {
+    return null;
+  }
+
+  const startSeconds = getMatchingServiceStartSeconds(parsed);
+  const embedUrl = new URL(`https://rutube.ru/play/embed/${videoId}`);
+
+  parsed.searchParams.forEach((value, key) => {
+    embedUrl.searchParams.set(key, value);
+  });
+  embedUrl.searchParams.set("autoplay", "1");
+
+  if (startSeconds > 0) {
+    embedUrl.searchParams.set("t", `${startSeconds}`);
+  }
+
+  return {
+    embedUrl: embedUrl.toString(),
+    provider: "rutube",
+    startSeconds,
+  };
+}
+
+function getMatchingVkVideoMeta(url: string): MatchingEmbeddedVideoMeta | null {
+  const parsed = parseMatchingUrl(url);
+  if (!parsed) {
+    return null;
+  }
+
+  const host = parsed.hostname.replace(/^www\./, "").toLowerCase();
+  const isVkHost =
+    host === "vk.com" ||
+    host === "m.vk.com" ||
+    host === "vkvideo.ru" ||
+    host === "m.vkvideo.ru";
+
+  if (!isVkHost) {
+    return null;
+  }
+
+  let ownerId = parsed.searchParams.get("oid") ?? "";
+  let videoId = parsed.searchParams.get("id") ?? "";
+
+  if (!ownerId || !videoId) {
+    const pathMatch = parsed.pathname.match(/\/video(-?\d+)_(\d+)/);
+    if (pathMatch) {
+      ownerId = pathMatch[1] ?? "";
+      videoId = pathMatch[2] ?? "";
+    }
+  }
+
+  if (!ownerId || !videoId) {
+    return null;
+  }
+
+  const startSeconds = getMatchingServiceStartSeconds(parsed);
+  const embedUrl = new URL("https://vkvideo.ru/video_ext.php");
+
+  embedUrl.searchParams.set("oid", ownerId);
+  embedUrl.searchParams.set("id", videoId);
+
+  for (const key of ["hash", "hd", "list", "referrer", "player"]) {
+    const value = parsed.searchParams.get(key);
+    if (value) {
+      embedUrl.searchParams.set(key, value);
+    }
+  }
+
+  embedUrl.searchParams.set(
+    "autoplay",
+    parsed.searchParams.get("autoplay") ?? "1",
+  );
+
+  if (startSeconds > 0) {
+    embedUrl.searchParams.set("t", `${startSeconds}`);
+  }
+
+  return {
+    embedUrl: embedUrl.toString(),
+    provider: "vk",
+    startSeconds,
+  };
+}
+
+function getMatchingEmbeddedVideoMeta(url: string) {
+  return (
+    getMatchingYouTubeMeta(url) ??
+    getMatchingRutubeMeta(url) ??
+    getMatchingVkVideoMeta(url)
+  );
+}
+
+function getMatchingEmbeddedVideoLabel(
+  provider: MatchingEmbeddedVideoProvider,
+) {
+  switch (provider) {
+    case "rutube":
+      return "Rutube";
+    case "vk":
+      return "VK Видео";
+    case "youtube":
+    default:
+      return "видеосервис";
+  }
+}
+
 function getMatchingMediaSourceLabel(url: string) {
   const dataUrlMatch = url.trim().match(/^data:([^;,]+)[;,]/i);
   if (dataUrlMatch?.[1]) {
     return `встроенный файл (${dataUrlMatch[1]})`;
+  }
+
+  const embeddedVideoMeta = getMatchingEmbeddedVideoMeta(url);
+  if (embeddedVideoMeta) {
+    return getMatchingEmbeddedVideoLabel(embeddedVideoMeta.provider);
   }
 
   const parsed = parseMatchingUrl(url);
@@ -691,7 +839,9 @@ function getMatchingAudioVolume(content: MatchingAudioContent) {
 
 function loadMatchingYouTubeApi() {
   if (typeof window === "undefined") {
-    return Promise.reject(new Error("YouTube API недоступен на сервере."));
+    return Promise.reject(
+      new Error("API встроенного плеера недоступен на сервере."),
+    );
   }
 
   if (window.YT?.Player) {
@@ -711,7 +861,7 @@ function loadMatchingYouTubeApi() {
         if (window.YT?.Player) {
           resolve(window.YT);
         } else {
-          reject(new Error("YouTube API загрузился без Player."));
+          reject(new Error("API встроенного плеера загрузился без Player."));
         }
       };
 
@@ -725,7 +875,7 @@ function loadMatchingYouTubeApi() {
       script.src = "https://www.youtube.com/iframe_api";
       script.async = true;
       script.onerror = () =>
-        reject(new Error("Не удалось загрузить YouTube iframe API."));
+        reject(new Error("Не удалось загрузить API встроенного плеера."));
       document.head.append(script);
     },
   );
@@ -841,7 +991,7 @@ function MatchingCardContent({
               </button>
             ) : normalized.url ? (
               <div className="matching-card-placeholder">
-                Для аудио используйте mp3/mp4 или ссылку на YouTube
+                Для аудио используйте mp3/mp4 или ссылку на поддерживаемый видеосервис
               </div>
             ) : (
               <div className="matching-card-placeholder">URL аудио не задан</div>
@@ -856,9 +1006,11 @@ function MatchingCardContent({
       );
     }
     case "video": {
-      const youTubeMeta = getMatchingYouTubeMeta(normalized.url);
+      const embeddedVideoMeta = getMatchingEmbeddedVideoMeta(normalized.url);
       const startSeconds =
-        getMatchingVideoStartSeconds(normalized) || youTubeMeta?.startSeconds || 0;
+        getMatchingVideoStartSeconds(normalized) ||
+        embeddedVideoMeta?.startSeconds ||
+        0;
       const videoSize = getMatchingVideoSize(normalized);
 
       return (
@@ -882,11 +1034,11 @@ function MatchingCardContent({
                   minHeight: `${videoSize}px`,
                 }}
               >
-                {youTubeMeta ? (
+                {embeddedVideoMeta?.thumbnailUrl ? (
                   <img
                     alt={normalized.label || "Превью видео"}
                     className="matching-card-thumbnail"
-                    src={youTubeMeta.thumbnailUrl}
+                    src={embeddedVideoMeta.thumbnailUrl}
                   />
                 ) : getMatchingMediaType("video", normalized.url) ? (
                   <video
@@ -1114,7 +1266,10 @@ function MatchingMediaDialog({
     return null;
   }
 
-  const youTubeMeta = getMatchingYouTubeMeta(media.url);
+  const audioServiceMeta =
+    media.kind === "audio" ? getMatchingYouTubeMeta(media.url) : null;
+  const embeddedVideoMeta =
+    media.kind === "video" ? getMatchingEmbeddedVideoMeta(media.url) : null;
   const canPlayAudio = media.kind === "audio" ? isMatchingAudioPlayable(media.url) : false;
   const audioVolume =
     media.kind === "audio" ? getMatchingAudioVolume(media) : 100;
@@ -1122,8 +1277,8 @@ function MatchingMediaDialog({
     media.kind === "video" ? getMatchingVideoVolume(media) : 100;
   const startSeconds =
     media.kind === "video"
-      ? getMatchingVideoStartSeconds(media) || youTubeMeta?.startSeconds || 0
-      : youTubeMeta?.startSeconds || 0;
+      ? getMatchingVideoStartSeconds(media) || embeddedVideoMeta?.startSeconds || 0
+      : audioServiceMeta?.startSeconds || 0;
   const title = media.label || (media.kind === "audio" ? "Аудио" : "Видео");
 
   return (
@@ -1166,13 +1321,13 @@ function MatchingMediaDialog({
             <div className="matching-card-placeholder">
               Источник не удалось открыть как аудио.
             </div>
-          ) : media.kind === "audio" && youTubeMeta ? (
+          ) : media.kind === "audio" && audioServiceMeta?.videoId ? (
             <MatchingYouTubeAudioPlayer
               startSeconds={startSeconds}
-              videoId={youTubeMeta.videoId}
+              videoId={audioServiceMeta.videoId}
               volume={audioVolume}
             />
-          ) : youTubeMeta ? (
+          ) : embeddedVideoMeta ? (
             <>
               <div className="matching-media-modal__frame-wrap">
                 <iframe
@@ -1180,17 +1335,14 @@ function MatchingMediaDialog({
                   allowFullScreen
                   className="matching-media-modal__frame"
                   referrerPolicy="strict-origin-when-cross-origin"
-                  src={buildMatchingYouTubeEmbedUrl(
-                    youTubeMeta.videoId,
-                    startSeconds,
-                  )}
+                  src={embeddedVideoMeta.embedUrl}
                   title={title}
                 />
               </div>
               {media.kind === "audio" ? (
                 <p className="editor-hint">
-                  Источник YouTube открыт встроенным плеером, потому что сама
-                  ссылка ведет на видео.
+                  Источник открыт встроенным плеером видеосервиса, потому что
+                  сама ссылка ведет на страницу с видео.
                 </p>
               ) : null}
             </>

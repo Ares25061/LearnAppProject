@@ -15,6 +15,8 @@ const blockedUrlSnippets = [
   "https://www.youtube.com/iframe_api",
   "https://img.youtube.com/vi/",
   "https://www.youtube-nocookie.com/embed/",
+  "https://rutube.ru/play/embed/",
+  "https://vkvideo.ru/video_ext.php",
   "https://react.dev/",
   "https://github.com/facebook/react/",
 ];
@@ -36,7 +38,7 @@ async function sanitizeOutput(filePath) {
 
   if (remainingUrls.length > 0) {
     throw new Error(
-      `SCORM2 bundle still contains external URLs: ${remainingUrls.join(", ")}`,
+      `Autonomous SCORM bundle still contains external URLs: ${remainingUrls.join(", ")}`,
     );
   }
 

@@ -13,11 +13,11 @@ const container = document.getElementById("app");
 const draft = window.__SCORM_EXERCISE_DRAFT__;
 
 if (!container) {
-  throw new Error("SCORM2 player container is missing.");
+  throw new Error("Autonomous SCORM player container is missing.");
 }
 
 if (!draft) {
-  throw new Error("SCORM2 exercise draft is missing.");
+  throw new Error("Autonomous SCORM exercise draft is missing.");
 }
 
 createRoot(container).render(<ExercisePlayer draft={draft} fullscreen />);

@@ -67,7 +67,7 @@ export const matchingContentOptions: Array<{
     id: "audio",
     label: "Аудио",
     shortLabel: "AUD",
-    hint: "Ссылка или файл mp3/mp4/YouTube, подпись, громкость и размер.",
+    hint: "Ссылка или файл mp3/mp4, подпись, громкость и размер.",
   },
   {
     id: "video",

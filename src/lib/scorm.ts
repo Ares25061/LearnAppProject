@@ -117,21 +117,21 @@ async function getAssets() {
       ),
       readTemplateAsset(
         path.join(templateDirectory, "scorm-player.js"),
-        "Не найден офлайн-плеер SCORM2. Запустите `npm run build:scorm-player` и повторите экспорт.",
+        "Не найден офлайн-плеер «Автономный SCORM». Запустите `npm run build:scorm-player` и повторите экспорт.",
       ),
       readTemplateAsset(
         path.join(templateDirectory, "scorm-player.css"),
-        "Не найдены стили офлайн-плеера SCORM2. Запустите `npm run build:scorm-player` и повторите экспорт.",
+        "Не найдены стили офлайн-плеера «Автономный SCORM». Запустите `npm run build:scorm-player` и повторите экспорт.",
       ),
     ]).then(
       ([adlcp, imscp, imsmd, wrapper, offlinePlayerJs, offlinePlayerCss]) => {
         assertPlayerAssetHasNoExternalLinks(
           offlinePlayerJs.toString("utf8"),
-          "SCORM2 player bundle",
+          "Autonomous SCORM player bundle",
         );
         assertPlayerAssetHasNoExternalLinks(
           offlinePlayerCss.toString("utf8"),
-          "SCORM2 player styles",
+          "Autonomous SCORM player styles",
         );
 
         return {
@@ -348,6 +348,35 @@ function isYouTubeHost(hostname: string) {
   );
 }
 
+function isRutubeHost(hostname: string) {
+  const host = hostname.toLowerCase();
+  return (
+    host === "rutube.ru" ||
+    host === "www.rutube.ru" ||
+    host === "m.rutube.ru"
+  );
+}
+
+function isVkVideoHost(hostname: string) {
+  const host = hostname.toLowerCase();
+  return (
+    host === "vk.com" ||
+    host === "www.vk.com" ||
+    host === "m.vk.com" ||
+    host === "vkvideo.ru" ||
+    host === "www.vkvideo.ru" ||
+    host === "m.vkvideo.ru"
+  );
+}
+
+function isExternalVideoServiceHost(hostname: string) {
+  return (
+    isYouTubeHost(hostname) ||
+    isRutubeHost(hostname) ||
+    isVkVideoHost(hostname)
+  );
+}
+
 function decodeDataUrl(source: string) {
   const trimmed = source.trim();
   const commaIndex = trimmed.indexOf(",");
@@ -384,19 +413,19 @@ async function downloadRemoteAsset(url: string) {
     parsedUrl = new URL(url);
   } catch {
     throw new ScormArchiveError(
-      `SCORM2 поддерживает только абсолютные URL или загруженные файлы. Не удалось обработать: ${url}`,
+      `Автономный SCORM поддерживает только абсолютные URL или загруженные файлы. Не удалось обработать: ${url}`,
     );
   }
 
   if (!["http:", "https:"].includes(parsedUrl.protocol)) {
     throw new ScormArchiveError(
-      `SCORM2 не может скачать ресурс с протоколом ${parsedUrl.protocol}: ${url}`,
+      `Автономный SCORM не может скачать ресурс с протоколом ${parsedUrl.protocol}: ${url}`,
     );
   }
 
-  if (isYouTubeHost(parsedUrl.hostname)) {
+  if (isExternalVideoServiceHost(parsedUrl.hostname)) {
     throw new ScormArchiveError(
-      "SCORM2 не поддерживает прямые ссылки на YouTube. Замените их на загруженный файл или прямую ссылку на mp3/mp4/webm.",
+      "Автономный SCORM не поддерживает прямые ссылки на внешние видеосервисы. Замените их на загруженный файл или прямую ссылку на mp3/mp4/webm.",
     );
   }
 
@@ -474,7 +503,7 @@ function assertContentTypeMatchesKind(
 ) {
   if (!isAllowedContentType(kind, contentType)) {
     throw new ScormArchiveError(
-      `Ресурс ${source} вернул тип ${contentType}, который не подходит для ${kind} в SCORM2.`,
+      `Ресурс ${source} вернул тип ${contentType}, который не подходит для ${kind} в «Автономном SCORM».`,
       400,
     );
   }
@@ -555,7 +584,7 @@ function assertOfflineDraftResources(draft: AnyExerciseDraft) {
 
   if (invalidResources.length > 0) {
     throw new ScormArchiveError(
-      `SCORM2 всё ещё содержит внешние ресурсы: ${invalidResources.join(", ")}`,
+      `Автономный SCORM всё ещё содержит внешние ресурсы: ${invalidResources.join(", ")}`,
       500,
     );
   }
@@ -576,7 +605,7 @@ async function localizeDraftForOfflineExport(input: AnyExerciseDraft) {
 
     if (!isExternalOrEmbeddedResource(source)) {
       throw new ScormArchiveError(
-        `SCORM2 не может упаковать относительный ресурс ${source}. Используйте абсолютную ссылку или загрузите файл в редакторе.`,
+        `Автономный SCORM не может упаковать относительный ресурс ${source}. Используйте абсолютную ссылку или загрузите файл в редакторе.`,
       );
     }
 

@@ -445,6 +445,11 @@ function MatchingSideFields({
               value={content.url}
               onChange={(event) => setField("url", event.target.value)}
             />
+            {content.kind === "video" ? (
+              <p className="editor-hint">
+                Поддерживаются прямые видеофайлы, Rutube и VK Видео.
+              </p>
+            ) : null}
           </label>
           <label className="matching-editor-field">
             <span className="field-label">
@@ -469,9 +474,9 @@ function MatchingSideFields({
           </label>
           {content.kind === "audio" ? (
             <p className="editor-hint">
-              Можно использовать прямую ссылку на `.mp3`, `.mp4` или YouTube.
-              В audio-карточке будет открываться именно аудиоплеер, без показа
-              видео.
+              Можно использовать прямую ссылку на `.mp3`, `.mp4` или ссылку на
+              поддерживаемый видеосервис. В аудиокарточке будет открываться
+              именно аудиоплеер, без показа видео.
             </p>
           ) : null}
           <label className="matching-editor-field">
@@ -543,8 +548,8 @@ function MatchingSideFields({
                 }
               />
               <p className="editor-hint">
-                Работает для видеофайлов. Для YouTube громкость остается на стороне
-                встроенного плеера.
+                Работает для видеофайлов. Для встроенных видеосервисов
+                громкость остается на стороне их плеера.
               </p>
             </label>
           ) : null}
@@ -567,7 +572,8 @@ function MatchingSideFields({
                 }
               />
               <p className="editor-hint">
-                Для YouTube и обычного видео. `0` означает старт с самого начала.
+                Для видеофайлов и поддерживаемых видеосервисов. `0` означает
+                старт с самого начала.
               </p>
             </label>
           ) : null}

@@ -49,7 +49,7 @@ export async function POST(request: Request) {
         "Content-Type": "application/zip",
         "Content-Disposition": `attachment; filename="${safeFilename(
           draft.title,
-        )}${variant === "scorm2" ? "-scorm2" : ""}.zip"`,
+        )}${variant === "scorm2" ? "-autonomous-scorm" : ""}.zip"`,
         "x-app-id": app.id,
         "x-app-slug": app.slug,
       },
