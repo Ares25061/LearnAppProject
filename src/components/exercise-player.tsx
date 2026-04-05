@@ -119,6 +119,9 @@ const MATCHING_BOARD_PADDING = 20;
 const MATCHING_BOARD_PADDING_COMPACT = 16;
 const MATCHING_BOARD_BOTTOM_SPACE = 96;
 const MATCHING_BOARD_BOTTOM_SPACE_COMPACT = 88;
+const MATCHING_BOARD_SCALE_MIN = 0.45;
+const MATCHING_BOARD_SCALE_MAX = 1;
+const MATCHING_BOARD_SCALE_STEP = 0.05;
 const MATCHING_IMAGE_CARD_BASE_HEIGHT = 72;
 const MATCHING_IMAGE_CAPTION_HEIGHT = 38;
 const MATCHING_AUDIO_CARD_BASE_HEIGHT = 128;
@@ -286,10 +289,31 @@ function estimateMatchingTextHeight(
   width: number,
   minHeight: number,
 ) {
-  const compact = text.trim().replace(/\s+/g, " ");
-  const charsPerLine = Math.max(10, Math.floor(Math.max(width - 44, 112) / 8.4));
-  const lineCount = Math.max(1, Math.ceil(Math.max(compact.length, 1) / charsPerLine));
-  return clamp(minHeight + (lineCount - 1) * 24, minHeight, 340);
+  const normalizedLines = text
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, " ").trim());
+  const charsPerLine = Math.max(10, Math.floor(Math.max(width - 34, 132) / 8.2));
+  const lineCount = Math.max(
+    1,
+    normalizedLines.reduce((total, line) => {
+      if (!line) {
+        return total + 1;
+      }
+
+      return total + Math.max(1, Math.ceil(line.length / charsPerLine));
+    }, 0),
+  );
+  const paragraphGap = Math.max(normalizedLines.length - 1, 0) * 8;
+
+  return clamp(minHeight + (lineCount - 1) * 24 + paragraphGap, minHeight, 520);
+}
+
+function getMatchingLongestLineLength(text: string) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, " ").trim().length)
+    .reduce((maxLength, lineLength) => Math.max(maxLength, lineLength), 0);
 }
 
 function getMatchingCardHeight(
@@ -301,20 +325,21 @@ function getMatchingCardHeight(
 
   if (normalized.kind === "video") {
     return (
-      MATCHING_VIDEO_CARD_BASE_HEIGHT +
-      Math.round(clamp(getMatchingVideoSize(normalized), 120, 220) * widthScale)
+      92 + Math.round(clamp(getMatchingVideoSize(normalized), 120, 220) * widthScale * 0.72)
     );
   }
 
   if (normalized.kind === "audio") {
-    return (
-      MATCHING_AUDIO_CARD_BASE_HEIGHT +
-      Math.round(clamp(getMatchingAudioSize(normalized), 72, 156) * widthScale)
-    );
+    const audioLabel = normalized.label || getMatchingPlayableSourceLabel(normalized) || "Аудио";
+    return estimateMatchingTextHeight(audioLabel, width, 52) + 52;
   }
 
-  if (normalized.kind === "text" || normalized.kind === "spoken-text") {
-    return estimateMatchingTextHeight(normalized.text, width, 112);
+  if (normalized.kind === "spoken-text") {
+    return estimateMatchingTextHeight(normalized.text, width, 92) + 40;
+  }
+
+  if (normalized.kind === "text") {
+    return estimateMatchingTextHeight(normalized.text, width, 72);
   }
 
   if (normalized.kind !== "image") {
@@ -323,7 +348,7 @@ function getMatchingCardHeight(
 
   return (
     MATCHING_IMAGE_CARD_BASE_HEIGHT +
-    Math.round(clamp(getMatchingImageHeight(normalized), 110, 220) * widthScale) +
+    Math.round(clamp(getMatchingImageHeight(normalized), 110, 220) * widthScale * 0.84) +
     (normalized.alt.trim() ? MATCHING_IMAGE_CAPTION_HEIGHT : 0)
   );
 }
@@ -337,7 +362,12 @@ function getMatchingCardBaseWidth(content: MatchingContent, columnWidth: number)
   }
 
   if (normalized.kind === "audio") {
-    return clamp(Math.round(maxWidth * 0.9), 196, maxWidth);
+    const audioLabel = normalized.label || getMatchingPlayableSourceLabel(normalized) || "Аудио";
+    const longestLine = getMatchingLongestLineLength(audioLabel);
+    const preferredWidth = Math.round(
+      196 + Math.min(longestLine, 36) * 5.2 + Math.min(audioLabel.trim().length, 120) * 0.38,
+    );
+    return clamp(preferredWidth, 248, maxWidth);
   }
 
   if (normalized.kind === "image") {
@@ -348,8 +378,13 @@ function getMatchingCardBaseWidth(content: MatchingContent, columnWidth: number)
     );
   }
 
-  const preferredWidth = Math.round(164 + Math.min(normalized.text.length, 120) * 1.6);
-  const minWidth = normalized.kind === "spoken-text" ? 188 : 168;
+  const longestLine = getMatchingLongestLineLength(normalized.text);
+  const preferredWidth = Math.round(
+    134 +
+      Math.min(longestLine, 30) * 4.6 +
+      Math.min(normalized.text.trim().length, 180) * 0.72,
+  );
+  const minWidth = normalized.kind === "spoken-text" ? 172 : 148;
   return clamp(preferredWidth, minWidth, maxWidth);
 }
 
@@ -361,7 +396,7 @@ function getMatchingCardMinimumHeight(content: MatchingContent) {
   }
 
   if (normalized.kind === "audio") {
-    return 114;
+    return 92;
   }
 
   if (normalized.kind === "image") {
@@ -369,10 +404,10 @@ function getMatchingCardMinimumHeight(content: MatchingContent) {
   }
 
   if (normalized.kind === "spoken-text") {
-    return 102;
+    return 126;
   }
 
-  return 84;
+  return 74;
 }
 
 function getMatchingCardSize(
@@ -380,15 +415,32 @@ function getMatchingCardSize(
   columnWidth: number,
   scale: number,
 ) {
+  const normalized = normalizeMatchingSide(content);
   const maxWidth = Math.max(MATCHING_CARD_MIN_WIDTH, Math.floor(columnWidth));
   const baseWidth = getMatchingCardBaseWidth(content, columnWidth);
   const baseHeight = getMatchingCardHeight(content, baseWidth);
+  const minimumWidthFloor =
+    normalized.kind === "text"
+      ? 112
+        : normalized.kind === "spoken-text"
+          ? 152
+          : normalized.kind === "audio"
+            ? 212
+            : 132;
+  const minimumHeightFloor =
+    normalized.kind === "text"
+      ? 60
+      : normalized.kind === "spoken-text"
+        ? 108
+        : normalized.kind === "audio"
+          ? 72
+          : 76;
   const minimumWidth = Math.min(
     maxWidth,
-    Math.max(132, Math.round(MATCHING_CARD_MIN_WIDTH * Math.max(scale, 0.82))),
+    Math.max(minimumWidthFloor, Math.round(minimumWidthFloor * Math.max(scale, 0.82))),
   );
   const minimumHeight = Math.max(
-    76,
+    minimumHeightFloor,
     Math.round(getMatchingCardMinimumHeight(content) * Math.max(scale, 0.74)),
   );
 
@@ -998,6 +1050,15 @@ function getMatchingMediaSourceLabel(url: string) {
   return parsed.hostname.replace(/^www\./, "");
 }
 
+function isMatchingEmbeddedFileUrl(url: string) {
+  return url.trim().startsWith("data:");
+}
+
+function getMatchingPlayableSourceLabel(content: MatchingPlayableContent) {
+  const fileName = content.fileName?.trim();
+  return fileName || getMatchingMediaSourceLabel(content.url);
+}
+
 function formatMatchingMediaTime(value: number) {
   const safeValue = Math.max(0, Math.floor(value));
   const minutes = Math.floor(safeValue / 60);
@@ -1070,6 +1131,402 @@ function isMatchingInteractiveTarget(target: EventTarget | null) {
   );
 }
 
+function MatchingInlineAudioPlayer({
+  src,
+  title,
+  initialVolume,
+}: Readonly<{
+  src: string;
+  title: string;
+  initialVolume: number;
+}>) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [position, setPosition] = useState(0);
+  const [volume, setVolume] = useState(initialVolume);
+
+  useEffect(() => {
+    setVolume(initialVolume);
+    setPosition(0);
+    setDuration(0);
+    setPlaying(false);
+  }, [initialVolume, src]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    audio.volume = volume / 100;
+  }, [volume]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    const syncState = () => {
+      setDuration(Number.isFinite(audio.duration) ? Math.max(audio.duration, 0) : 0);
+      setPosition(Math.max(audio.currentTime || 0, 0));
+      setPlaying(!audio.paused && !audio.ended);
+    };
+
+    const handleLoadedMetadata = () => {
+      audio.volume = volume / 100;
+      syncState();
+    };
+
+    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
+    audio.addEventListener("timeupdate", syncState);
+    audio.addEventListener("play", syncState);
+    audio.addEventListener("pause", syncState);
+    audio.addEventListener("ended", syncState);
+
+    return () => {
+      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      audio.removeEventListener("timeupdate", syncState);
+      audio.removeEventListener("play", syncState);
+      audio.removeEventListener("pause", syncState);
+      audio.removeEventListener("ended", syncState);
+    };
+  }, [src, volume]);
+
+  const handleTogglePlayback = () => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    if (audio.paused || audio.ended) {
+      void audio.play().catch(() => {});
+      return;
+    }
+
+    audio.pause();
+  };
+
+  const handleSeek = (nextValue: number) => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    audio.currentTime = nextValue;
+    setPosition(nextValue);
+  };
+
+  return (
+    <div className="matching-inline-audio" data-card-interactive="true">
+      <audio ref={audioRef} preload="metadata" src={src} />
+      <span className="matching-inline-audio__title" title={title}>
+        {title}
+      </span>
+      <div className="matching-inline-audio__controls">
+        <button
+          aria-label={playing ? "Пауза" : "Воспроизвести"}
+          className="ghost-button matching-inline-audio__play"
+          type="button"
+          onClick={handleTogglePlayback}
+        >
+          {playing ? "II" : ">"}
+        </button>
+        <input
+          aria-label="Перемотка"
+          className="matching-inline-audio__seek"
+          max={Math.max(duration, 1)}
+          min={0}
+          step={0.1}
+          type="range"
+          value={Math.min(position, Math.max(duration, 1))}
+          onChange={(event) =>
+            handleSeek(Number.parseFloat(event.currentTarget.value) || 0)
+          }
+        />
+      </div>
+      <div className="matching-inline-audio__footer">
+        <span className="matching-inline-audio__time">
+          {formatMatchingMediaTime(position)} / {formatMatchingMediaTime(duration)}
+        </span>
+        <label className="matching-inline-audio__volume" title="Громкость">
+          <span>VOL</span>
+          <input
+            aria-label="Громкость"
+            max={100}
+            min={0}
+            step={5}
+            type="range"
+            value={volume}
+            onChange={(event) =>
+              setVolume(Math.max(0, Math.min(100, Number.parseInt(event.currentTarget.value, 10) || 0)))
+            }
+          />
+        </label>
+      </div>
+    </div>
+  );
+}
+
+function MatchingCompactAudioPlayer({
+  src,
+  title,
+  initialVolume,
+}: Readonly<{
+  src: string;
+  title: string;
+  initialVolume: number;
+}>) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [position, setPosition] = useState(0);
+
+  useEffect(() => {
+    setPosition(0);
+    setDuration(0);
+    setPlaying(false);
+  }, [src, initialVolume]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    audio.volume = initialVolume / 100;
+  }, [initialVolume, src]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    const syncState = () => {
+      setDuration(Number.isFinite(audio.duration) ? Math.max(audio.duration, 0) : 0);
+      setPosition(Math.max(audio.currentTime || 0, 0));
+      setPlaying(!audio.paused && !audio.ended);
+    };
+
+    audio.addEventListener("loadedmetadata", syncState);
+    audio.addEventListener("timeupdate", syncState);
+    audio.addEventListener("play", syncState);
+    audio.addEventListener("pause", syncState);
+    audio.addEventListener("ended", syncState);
+
+    return () => {
+      audio.removeEventListener("loadedmetadata", syncState);
+      audio.removeEventListener("timeupdate", syncState);
+      audio.removeEventListener("play", syncState);
+      audio.removeEventListener("pause", syncState);
+      audio.removeEventListener("ended", syncState);
+    };
+  }, [src]);
+
+  const handleTogglePlayback = () => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    if (audio.paused || audio.ended) {
+      void audio.play().catch(() => {});
+      return;
+    }
+
+    audio.pause();
+  };
+
+  const handleSeek = (nextValue: number) => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    audio.currentTime = nextValue;
+    setPosition(nextValue);
+  };
+
+  return (
+    <div className="matching-inline-audio" data-card-interactive="true">
+      <audio ref={audioRef} preload="metadata" src={src} />
+      <span className="matching-inline-audio__title" title={title}>
+        {title}
+      </span>
+      <div className="matching-inline-audio__controls">
+        <button
+          aria-label={playing ? "Пауза" : "Воспроизвести"}
+          className="ghost-button matching-inline-audio__play"
+          type="button"
+          onClick={handleTogglePlayback}
+        >
+          {playing ? "II" : ">"}
+        </button>
+        <input
+          aria-label="Перемотка"
+          className="matching-inline-audio__seek"
+          max={Math.max(duration, 1)}
+          min={0}
+          step={0.1}
+          type="range"
+          value={Math.min(position, Math.max(duration, 1))}
+          onChange={(event) =>
+            handleSeek(Number.parseFloat(event.currentTarget.value) || 0)
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+function MatchingAdaptiveAudioPlayer({
+  src,
+  title,
+  initialVolume,
+}: Readonly<{
+  src: string;
+  title: string;
+  initialVolume: number;
+}>) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [position, setPosition] = useState(0);
+
+  useEffect(() => {
+    setPosition(0);
+    setDuration(0);
+    setPlaying(false);
+  }, [src, initialVolume]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    audio.volume = initialVolume / 100;
+  }, [initialVolume, src]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    const syncState = () => {
+      setDuration(Number.isFinite(audio.duration) ? Math.max(audio.duration, 0) : 0);
+      setPosition(Math.max(audio.currentTime || 0, 0));
+      setPlaying(!audio.paused && !audio.ended);
+    };
+
+    audio.addEventListener("loadedmetadata", syncState);
+    audio.addEventListener("timeupdate", syncState);
+    audio.addEventListener("play", syncState);
+    audio.addEventListener("pause", syncState);
+    audio.addEventListener("ended", syncState);
+
+    return () => {
+      audio.removeEventListener("loadedmetadata", syncState);
+      audio.removeEventListener("timeupdate", syncState);
+      audio.removeEventListener("play", syncState);
+      audio.removeEventListener("pause", syncState);
+      audio.removeEventListener("ended", syncState);
+    };
+  }, [src]);
+
+  const handleTogglePlayback = () => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    if (audio.paused || audio.ended) {
+      void audio.play().catch(() => {});
+      return;
+    }
+
+    audio.pause();
+  };
+
+  const handleSeek = (nextValue: number) => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    audio.currentTime = nextValue;
+    setPosition(nextValue);
+  };
+
+  return (
+    <div className="matching-inline-audio matching-inline-audio--adaptive" data-card-interactive="true">
+      <audio ref={audioRef} preload="metadata" src={src} />
+      <span className="matching-inline-audio__title" title={title}>
+        {title}
+      </span>
+      <div className="matching-inline-audio__controls">
+        <button
+          aria-label={playing ? "Пауза" : "Воспроизвести"}
+          className="ghost-button matching-inline-audio__play"
+          type="button"
+          onClick={handleTogglePlayback}
+        >
+          <span
+            aria-hidden="true"
+            className={`matching-inline-audio__icon ${
+              playing
+                ? "matching-inline-audio__icon--pause"
+                : "matching-inline-audio__icon--play"
+            }`}
+          />
+        </button>
+        <input
+          aria-label="Перемотка"
+          className="matching-inline-audio__seek"
+          max={Math.max(duration, 1)}
+          min={0}
+          step={0.1}
+          type="range"
+          value={Math.min(position, Math.max(duration, 1))}
+          onChange={(event) =>
+            handleSeek(Number.parseFloat(event.currentTarget.value) || 0)
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+function MatchingNativeAudioPlayer({
+  src,
+  title,
+  initialVolume,
+}: Readonly<{
+  src: string;
+  title: string;
+  initialVolume: number;
+}>) {
+  return (
+    <div className="matching-inline-audio matching-inline-audio--native" data-card-interactive="true">
+      <span className="matching-inline-audio__title" title={title}>
+        {title}
+      </span>
+      <audio
+        className="matching-inline-audio__native"
+        controls
+        preload="metadata"
+        src={src}
+        onLoadedMetadata={(event) => {
+          event.currentTarget.volume = initialVolume / 100;
+        }}
+      />
+    </div>
+  );
+}
+
 function MatchingCardContent({
   cardHeight,
   content,
@@ -1084,7 +1541,7 @@ function MatchingCardContent({
 
   switch (normalized.kind) {
     case "spoken-text": {
-      const spokenTextSize = Math.max(cardHeight - 108, 0);
+      const spokenTextSize = Math.max(cardHeight - 74, 0);
       return (
         <div
           className={contentClassName}
@@ -1110,7 +1567,7 @@ function MatchingCardContent({
       );
     }
     case "image": {
-      const imageHeight = Math.max(60, cardHeight - (normalized.alt ? 72 : 36));
+      const imageHeight = Math.max(72, cardHeight - (normalized.alt ? 54 : 24));
       return (
         <div className={contentClassName}>
           <div
@@ -1138,19 +1595,23 @@ function MatchingCardContent({
     }
     case "audio": {
       const canPlayAudio = isMatchingAudioPlayable(normalized.url);
-      const audioSize = Math.max(44, cardHeight - 88);
+      const inlineAudioType =
+        getMatchingMediaType("audio", normalized.url) ??
+        getMatchingMediaType("video", normalized.url);
+      const canInlineAudio = Boolean(normalized.url && inlineAudioType);
+      const audioVolume = getMatchingAudioVolume(normalized);
+      const audioSourceLabel = getMatchingPlayableSourceLabel(normalized);
+      const audioTitle = normalized.label || audioSourceLabel || "Аудио";
       return (
         <div className={contentClassName}>
-          <span className="tag">AUD</span>
-          <strong>{normalized.label || "Аудио"}</strong>
-          <div
-            className="matching-card-media-frame matching-card-media-frame--audio"
-            style={{
-              height: `${audioSize}px`,
-              minHeight: `${audioSize}px`,
-            }}
-          >
-            {normalized.url && canPlayAudio ? (
+          <div className="matching-card-media-frame matching-card-media-frame--audio">
+            {canInlineAudio ? (
+              <MatchingNativeAudioPlayer
+                initialVolume={audioVolume}
+                src={normalized.url}
+                title={audioTitle}
+              />
+            ) : normalized.url && canPlayAudio ? (
               <button
                 className="ghost-button matching-media-launch"
                 data-card-interactive="true"
@@ -1171,11 +1632,6 @@ function MatchingCardContent({
               <div className="matching-card-placeholder">URL аудио не задан</div>
             )}
           </div>
-          {normalized.url ? (
-            <span className="matching-card-url">
-              {getMatchingMediaSourceLabel(normalized.url)}
-            </span>
-          ) : null}
         </div>
       );
     }
@@ -1185,7 +1641,8 @@ function MatchingCardContent({
         getMatchingVideoStartSeconds(normalized) ||
         embeddedVideoMeta?.startSeconds ||
         0;
-      const videoSize = Math.max(58, cardHeight - 74);
+      const videoSize = Math.max(92, cardHeight - 70);
+      const videoSourceLabel = getMatchingPlayableSourceLabel(normalized);
 
       return (
         <div className={contentClassName}>
@@ -1239,7 +1696,7 @@ function MatchingCardContent({
           )}
           {normalized.url ? (
             <span className="matching-card-url">
-              {getMatchingMediaSourceLabel(normalized.url)}
+              {videoSourceLabel}
               {startSeconds > 0 ? ` · с ${startSeconds} с` : ""}
             </span>
           ) : null}
@@ -1248,7 +1705,7 @@ function MatchingCardContent({
     }
     case "text":
     default: {
-      const textSize = Math.max(cardHeight - 68, 0);
+      const textSize = Math.max(cardHeight - 32, 0);
       return (
         <div
           className={contentClassName}
@@ -1448,11 +1905,15 @@ function MatchingMediaDialog({
   const audioVolume =
     media.kind === "audio" ? getMatchingAudioVolume(media) : 100;
   const videoVolume =
-    media.kind === "video" ? getMatchingVideoVolume(media) : 100;
+    media.kind === "video" && isMatchingEmbeddedFileUrl(media.url)
+      ? getMatchingVideoVolume(media)
+      : 100;
   const startSeconds =
     media.kind === "video"
       ? getMatchingVideoStartSeconds(media) || embeddedVideoMeta?.startSeconds || 0
       : audioServiceMeta?.startSeconds || 0;
+  const sourceLabel =
+    media.fileName?.trim() || getMatchingMediaSourceLabel(media.url);
   const title = media.label || (media.kind === "audio" ? "Аудио" : "Видео");
 
   return (
@@ -1476,7 +1937,7 @@ function MatchingMediaDialog({
             <span className="tag">{media.kind === "audio" ? "AUD" : "VID"}</span>
             <strong>{title}</strong>
             <span className="matching-card-url">
-              {getMatchingMediaSourceLabel(media.url)}
+              {sourceLabel}
               {startSeconds > 0 ? ` · старт ${startSeconds} c` : ""}
             </span>
           </div>
@@ -1591,6 +2052,8 @@ function MatchingPairsActivity({
   const [activeMedia, setActiveMedia] = useState<MatchingPlayableContent | null>(
     null,
   );
+  const [boardScale, setBoardScale] = useState(1);
+  const [boardResultVisible, setBoardResultVisible] = useState(false);
   const dragRef = useRef<{
     pointerId: number;
     groupId: string;
@@ -1638,6 +2101,7 @@ function MatchingPairsActivity({
     setCards(createMatchingCards(draft.data, boardSize));
     setSolvedPairs(new Set());
     setHasChecked(false);
+    setBoardResultVisible(false);
     setDraggingGroupId(null);
     setActiveMedia(null);
     dragRef.current = null;
@@ -1822,6 +2286,7 @@ function MatchingPairsActivity({
 
   const ungroupCards = (groupId: string) => {
     setHasChecked(false);
+    setBoardResultVisible(false);
     setCards((current) =>
       current.map((card) =>
         card.groupId === groupId
@@ -1841,21 +2306,94 @@ function MatchingPairsActivity({
         .filter(([, groupCards]) => groupCards.length === 2)
         .map(([groupId, groupCards]) => {
           const [first, second] = groupCards;
+          const status = getMatchingGroupStatus(groupCards);
+
+          if (normalized.pairAlignment === "horizontal") {
+            const leftCard = first.x <= second.x ? first : second;
+            const rightCard = leftCard.id === first.id ? second : first;
+            const seamStartX = leftCard.x + leftCard.width;
+            const seamEndX = rightCard.x;
+            const overlapTop = Math.max(leftCard.y, rightCard.y);
+            const overlapBottom = Math.min(
+              leftCard.y + leftCard.height,
+              rightCard.y + rightCard.height,
+            );
+            const overlapHeight = Math.max(0, overlapBottom - overlapTop);
+
+            return {
+              groupId,
+              orientation: "vertical" as const,
+              size: clamp(
+                Math.round(Math.max(overlapHeight * 0.46, 52)),
+                52,
+                112,
+              ),
+              status,
+              x: seamStartX + (seamEndX - seamStartX) / 2,
+              y:
+                overlapHeight > 0
+                  ? overlapTop + overlapHeight / 2
+                  : (leftCard.y +
+                      leftCard.height / 2 +
+                      rightCard.y +
+                      rightCard.height / 2) /
+                    2,
+            };
+          }
+
+          const topCard = first.y <= second.y ? first : second;
+          const bottomCard = topCard.id === first.id ? second : first;
+          const seamStartY = topCard.y + topCard.height;
+          const seamEndY = bottomCard.y;
+          const overlapLeft = Math.max(topCard.x, bottomCard.x);
+          const overlapRight = Math.min(
+            topCard.x + topCard.width,
+            bottomCard.x + bottomCard.width,
+          );
+          const overlapWidth = Math.max(0, overlapRight - overlapLeft);
+
           return {
             groupId,
-            status: getMatchingGroupStatus(groupCards),
-            x: (first.x + first.width / 2 + second.x + second.width / 2) / 2,
-            y:
-              (first.y +
-                first.height / 2 +
-                second.y +
-                second.height / 2) /
-              2,
+            orientation: "horizontal" as const,
+            size: clamp(
+              Math.round(Math.max(overlapWidth * 0.44, 76)),
+              76,
+              160,
+            ),
+            status,
+            x:
+              overlapWidth > 0
+                ? overlapLeft + overlapWidth / 2
+                : (topCard.x + topCard.width / 2 + bottomCard.x + bottomCard.width / 2) /
+                  2,
+            y: seamStartY + (seamEndY - seamStartY) / 2,
           };
         }),
-    [cards],
+    [cards, normalized.pairAlignment],
   );
   const showGroupFeedback = normalized.showImmediateFeedback || hasChecked;
+  const scalePercentage = Math.round(boardScale * 100);
+
+  const updateBoardScale = (nextScale: number) => {
+    const clampedScale = clamp(
+      nextScale,
+      MATCHING_BOARD_SCALE_MIN,
+      MATCHING_BOARD_SCALE_MAX,
+    );
+    const snappedScale =
+      Math.round(clampedScale / MATCHING_BOARD_SCALE_STEP) * MATCHING_BOARD_SCALE_STEP;
+    setBoardScale(Number(snappedScale.toFixed(2)));
+  };
+
+  const resetBoard = () => {
+    setCards(createMatchingCards(draft.data, boardSize));
+    setSolvedPairs(new Set());
+    setHasChecked(false);
+    setBoardResultVisible(false);
+    setDraggingGroupId(null);
+    setActiveMedia(null);
+    dragRef.current = null;
+  };
 
   const beginDrag = (
     event: ReactPointerEvent<HTMLDivElement>,
@@ -1867,6 +2405,7 @@ function MatchingPairsActivity({
 
     event.preventDefault();
     setHasChecked(false);
+    setBoardResultVisible(false);
     event.currentTarget.setPointerCapture(event.pointerId);
     const groupCards = cards.filter((groupCard) => groupCard.groupId === card.groupId);
     dragRef.current = {
@@ -1888,6 +2427,7 @@ function MatchingPairsActivity({
     const correct = solvedPairs.size + countVisibleCorrectPairs(cards);
     const score = percentage(correct, totalPairs);
     setHasChecked(true);
+    setBoardResultVisible(true);
     onReport(score, correct === totalPairs);
   };
 
@@ -1910,6 +2450,12 @@ function MatchingPairsActivity({
           className="matching-drag-board"
           ref={boardRef}
         >
+          <div
+            className="matching-drag-board__canvas"
+            style={{
+              transform: `scale(${boardScale})`,
+            }}
+          >
         {cards.map((card) => {
           const normalizedCardContent = normalizeMatchingSide(card.content);
           return (
@@ -1957,8 +2503,8 @@ function MatchingPairsActivity({
                   return;
                 }
 
-                const deltaX = event.clientX - currentDrag.startX;
-                const deltaY = event.clientY - currentDrag.startY;
+                const deltaX = (event.clientX - currentDrag.startX) / boardScale;
+                const deltaY = (event.clientY - currentDrag.startY) / boardScale;
 
                 setCards((current) =>
                   current.map((currentCard) => {
@@ -1996,15 +2542,6 @@ function MatchingPairsActivity({
                 setDraggingGroupId(null);
               }}
             >
-              <div className="matching-drag-card__toolbar">
-                <span
-                  className={`matching-drag-card__side matching-drag-card__side--${
-                    card.side === "left" ? "left" : "right"
-                  }`}
-                >
-                  {card.side === "left" ? "A" : "B"}
-                </span>
-              </div>
               <MatchingCardContent
                 cardHeight={card.height}
                 content={normalizedCardContent}
@@ -2015,7 +2552,12 @@ function MatchingPairsActivity({
         })}
         {groupConnectors.map((connector) => (
           <button
+            aria-label="Разъединить карточки"
             className={`matching-drag-connector ${
+              connector.orientation === "vertical"
+                ? "matching-drag-connector--vertical"
+                : "matching-drag-connector--horizontal"
+            } ${
               connector.status === "correct" && showGroupFeedback
                 ? "matching-drag-connector--correct"
                 : ""
@@ -2029,6 +2571,9 @@ function MatchingPairsActivity({
             style={{
               left: `${connector.x}px`,
               top: `${connector.y}px`,
+              ...(connector.orientation === "vertical"
+                ? { height: `${connector.size}px` }
+                : { width: `${connector.size}px` }),
             }}
             type="button"
             onClick={() => ungroupCards(connector.groupId)}
@@ -2036,6 +2581,7 @@ function MatchingPairsActivity({
             ×
           </button>
         ))}
+          </div>
         <div className="matching-drag-board__controls" data-card-interactive="true">
           <PlayerButton
             aria-label={"\u041F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C"}
@@ -2045,31 +2591,100 @@ function MatchingPairsActivity({
             {"\u041F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C"}
           </PlayerButton>
           <button
-            aria-label={"\u0421\u0431\u0440\u043E\u0441\u0438\u0442\u044C \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0438"}
+            aria-label={"\u0421\u0431\u0440\u043E\u0441\u0438\u0442\u044C"}
             className="ghost-button matching-drag-board__button matching-drag-board__button--reset"
             type="button"
-            onClick={() => {
-              setCards(createMatchingCards(draft.data, boardSize));
-              setSolvedPairs(new Set());
-              setHasChecked(false);
-              setDraggingGroupId(null);
-              setActiveMedia(null);
-              dragRef.current = null;
-            }}
+            onClick={resetBoard}
           >
             РЎР±СЂРѕСЃРёС‚СЊ РєР°СЂС‚РѕС‡РєРё
           </button>
-          {showBoardStatus ? (
-            <div
-              className={`matching-drag-board__status ${
-                boardSolved ? "matching-drag-board__status--success" : ""
-              }`}
+          <div
+            aria-label={"\u041C\u0430\u0441\u0448\u0442\u0430\u0431 \u043F\u043E\u043B\u044F"}
+            className="matching-drag-board__zoom"
+            role="group"
+          >
+            <button
+              aria-label={"\u0423\u043C\u0435\u043D\u044C\u0448\u0438\u0442\u044C \u043C\u0430\u0441\u0448\u0442\u0430\u0431"}
+              className="ghost-button matching-drag-board__zoom-button"
+              disabled={boardScale <= MATCHING_BOARD_SCALE_MIN}
+              type="button"
+              onClick={() =>
+                updateBoardScale(boardScale - MATCHING_BOARD_SCALE_STEP)
+              }
             >
-              <strong>{`${boardScore}%`}</strong>
-              <span>{boardStatusDetail}</span>
-            </div>
-          ) : null}
+              -
+            </button>
+            <input
+              aria-label={"\u041C\u0430\u0441\u0448\u0442\u0430\u0431 \u043F\u043E\u043B\u044F"}
+              className="matching-drag-board__zoom-range"
+              max={MATCHING_BOARD_SCALE_MAX}
+              min={MATCHING_BOARD_SCALE_MIN}
+              step={MATCHING_BOARD_SCALE_STEP}
+              type="range"
+              value={boardScale}
+              onChange={(event) =>
+                updateBoardScale(Number.parseFloat(event.target.value))
+              }
+            />
+            <button
+              aria-label={"\u0421\u0431\u0440\u043E\u0441\u0438\u0442\u044C \u043C\u0430\u0441\u0448\u0442\u0430\u0431"}
+              className="ghost-button matching-drag-board__zoom-reset"
+              type="button"
+              onClick={() => updateBoardScale(1)}
+            >
+              {`${scalePercentage}%`}
+            </button>
+            <button
+              aria-label={"\u0423\u0432\u0435\u043B\u0438\u0447\u0438\u0442\u044C \u043C\u0430\u0441\u0448\u0442\u0430\u0431"}
+              className="ghost-button matching-drag-board__zoom-button"
+              disabled={boardScale >= MATCHING_BOARD_SCALE_MAX}
+              type="button"
+              onClick={() =>
+                updateBoardScale(boardScale + MATCHING_BOARD_SCALE_STEP)
+              }
+            >
+              +
+            </button>
+          </div>
         </div>
+        {boardResultVisible && showBoardStatus ? (
+          <div
+            className="matching-board-result"
+            data-card-interactive="true"
+            role="presentation"
+            onClick={() => setBoardResultVisible(false)}
+          >
+            <div
+              className={`matching-board-result__dialog ${
+                boardSolved ? "matching-board-result__dialog--success" : ""
+              }`}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Результат"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <span className="eyebrow">Результат</span>
+              <strong>{`${boardScore}%`}</strong>
+              <p>{boardStatusDetail}</p>
+              <div className="inline-actions">
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={() => setBoardResultVisible(false)}
+                >
+                  Продолжить
+                </button>
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={resetBoard}
+                >
+                  Сбросить
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
       {!boardOnly &&
       (normalized.showImmediateFeedback || normalized.autoRemoveCorrectPairs) &&
@@ -2080,23 +2695,18 @@ function MatchingPairsActivity({
           {totalPairs}
         </p>
       ) : null}
-      <ActionRow>
-        <PlayerButton onClick={handleCheck}>Проверить</PlayerButton>
-        <button
-          className="ghost-button"
-          type="button"
-          onClick={() => {
-            setCards(createMatchingCards(draft.data, boardSize));
-            setSolvedPairs(new Set());
-            setHasChecked(false);
-            setDraggingGroupId(null);
-            setActiveMedia(null);
-            dragRef.current = null;
-          }}
-        >
-          Сбросить
-        </button>
-      </ActionRow>
+      {!boardOnly ? (
+        <ActionRow>
+          <PlayerButton onClick={handleCheck}>Проверить</PlayerButton>
+          <button
+            className="ghost-button"
+            type="button"
+            onClick={resetBoard}
+          >
+            Сбросить
+          </button>
+        </ActionRow>
+      ) : null}
       </div>
       <MatchingMediaDialog media={activeMedia} onClose={() => setActiveMedia(null)} />
     </div>

@@ -92,6 +92,7 @@ export function createMatchingContent(
         kind,
         url: "",
         alt: "",
+        fileName: "",
         size: MATCHING_IMAGE_HEIGHT_DEFAULT,
       } satisfies MatchingImageContent;
     case "audio":
@@ -100,6 +101,7 @@ export function createMatchingContent(
         url: "",
         label: "",
         volume: MATCHING_AUDIO_VOLUME_DEFAULT,
+        fileName: "",
         size: MATCHING_AUDIO_SIZE_DEFAULT,
       } satisfies MatchingAudioContent;
     case "video":
@@ -109,6 +111,7 @@ export function createMatchingContent(
         label: "",
         startSeconds: MATCHING_VIDEO_START_DEFAULT,
         volume: MATCHING_AUDIO_VOLUME_DEFAULT,
+        fileName: "",
         size: MATCHING_VIDEO_SIZE_DEFAULT,
       } satisfies MatchingVideoContent;
     case "text":
@@ -174,6 +177,7 @@ export function normalizeMatchingSide(input: MatchingPairSide): MatchingContent 
         kind: "image",
         url: typeof input.url === "string" ? input.url : "",
         alt: typeof input.alt === "string" ? input.alt : "",
+        fileName: typeof input.fileName === "string" ? input.fileName : "",
         size: normalizeMatchingSize(
           typeof input.size === "number"
             ? input.size
@@ -186,6 +190,7 @@ export function normalizeMatchingSide(input: MatchingPairSide): MatchingContent 
         kind: "audio",
         url: typeof input.url === "string" ? input.url : "",
         label: typeof input.label === "string" ? input.label : "",
+        fileName: typeof input.fileName === "string" ? input.fileName : "",
         volume:
           typeof input.volume === "number" && Number.isFinite(input.volume)
             ? Math.min(100, Math.max(0, Math.round(input.volume)))
@@ -200,6 +205,7 @@ export function normalizeMatchingSide(input: MatchingPairSide): MatchingContent 
         kind: "video",
         url: typeof input.url === "string" ? input.url : "",
         label: typeof input.label === "string" ? input.label : "",
+        fileName: typeof input.fileName === "string" ? input.fileName : "",
         startSeconds:
           typeof input.startSeconds === "number" && Number.isFinite(input.startSeconds)
             ? Math.max(MATCHING_VIDEO_START_DEFAULT, Math.round(input.startSeconds))

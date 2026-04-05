@@ -619,11 +619,31 @@ function MatchingSideFieldsCompact({
     content.kind === "audio" ||
     content.kind === "video";
   const isMediaDialogVisible = isMediaContent && isMediaDialogOpen;
+  const hasEmbeddedFile =
+    isMediaContent && content.url.trim().startsWith("data:");
+  const selectedFileLabel =
+    isMediaContent && "fileName" in content && typeof content.fileName === "string"
+      ? content.fileName.trim()
+      : "";
+  const isFileVideo = content.kind === "video" && hasEmbeddedFile;
 
   const setField = (
     field: "text" | "url" | "alt" | "label",
     value: string,
   ) => {
+    if (field === "url" && isMediaContent) {
+      onChange({
+        ...content,
+        url: value,
+        fileName: value.trim().startsWith("data:")
+          ? "fileName" in content && typeof content.fileName === "string"
+            ? content.fileName
+            : ""
+          : "",
+      } as MatchingContent);
+      return;
+    }
+
     onChange({
       ...content,
       [field]: value,
@@ -665,6 +685,7 @@ function MatchingSideFieldsCompact({
           ...content,
           url: dataUrl,
           alt: content.alt.trim() ? content.alt : baseLabel,
+          fileName: file.name,
         });
         onNotice?.("Изображение встроено в карточку.");
         return;
@@ -675,6 +696,7 @@ function MatchingSideFieldsCompact({
           ...content,
           url: dataUrl,
           label: content.label.trim() ? content.label : baseLabel,
+          fileName: file.name,
         });
         onNotice?.("Аудиофайл встроен в карточку.");
         return;
@@ -685,6 +707,7 @@ function MatchingSideFieldsCompact({
           ...content,
           url: dataUrl,
           label: content.label.trim() ? content.label : baseLabel,
+          fileName: file.name,
         });
         onNotice?.("Видеофайл встроен в карточку.");
       }
@@ -825,6 +848,9 @@ function MatchingSideFieldsCompact({
                       type="file"
                       onChange={(event) => void handleMediaFile("image", event)}
                     />
+                    {selectedFileLabel ? (
+                      <span className="editor-hint">{selectedFileLabel}</span>
+                    ) : null}
                   </label>
                   <label className="matching-editor-field">
                     <span className="field-label">Подпись / alt</span>
@@ -869,6 +895,9 @@ function MatchingSideFieldsCompact({
                         void handleMediaFile(content.kind, event)
                       }
                     />
+                    {selectedFileLabel ? (
+                      <span className="editor-hint">{selectedFileLabel}</span>
+                    ) : null}
                   </label>
                   <label className="matching-editor-field">
                     <span className="field-label">Подпись карточки</span>
@@ -884,6 +913,25 @@ function MatchingSideFieldsCompact({
 
               {content.kind === "video" ? (
                 <>
+                  <label className="matching-editor-field">
+                    <span className="field-label">Начинать с секунды</span>
+                    <input
+                      className="editor-input"
+                      min={0}
+                      step={1}
+                      type="number"
+                      value={content.startSeconds}
+                      onChange={(event) =>
+                        setNumberField(
+                          "startSeconds",
+                          Number.isFinite(event.target.valueAsNumber)
+                            ? Math.max(0, Math.round(event.target.valueAsNumber))
+                            : 0,
+                        )
+                      }
+                    />
+                  </label>
+                  {isFileVideo ? (
                   <label className="matching-editor-field">
                     <span className="field-label">Громкость, %</span>
                     <input
@@ -906,6 +954,10 @@ function MatchingSideFieldsCompact({
                       }
                     />
                   </label>
+                  ) : null}
+                  <p className="editor-hint">
+                    Поддерживаются прямые ссылки, YouTube, RuTube и VK Видео.
+                  </p>
                 </>
               ) : null}
 

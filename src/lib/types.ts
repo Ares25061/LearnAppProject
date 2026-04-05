@@ -44,6 +44,7 @@ export interface MatchingImageContent {
   kind: "image";
   url: string;
   alt: string;
+  fileName?: string;
   size: number;
 }
 
@@ -52,6 +53,7 @@ export interface MatchingAudioContent {
   url: string;
   label: string;
   volume: number;
+  fileName?: string;
   size: number;
 }
 
@@ -61,6 +63,7 @@ export interface MatchingVideoContent {
   label: string;
   startSeconds: number;
   volume: number;
+  fileName?: string;
   size: number;
 }
 
