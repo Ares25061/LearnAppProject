@@ -24,6 +24,12 @@ import type {
 } from "@/lib/types";
 import { safeFilename } from "@/lib/utils";
 
+type EditorNoticeScope = "mesh" | "draft";
+type EditorNotice = {
+  message: string;
+  scope: EditorNoticeScope;
+};
+
 export function StudioEditor({
   initialDraft,
   user,
@@ -40,6 +46,7 @@ export function StudioEditor({
   const router = useRouter();
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const previewHostRef = useRef<HTMLDivElement | null>(null);
+  const meshExportRef = useRef<HTMLDivElement | null>(null);
   const [draft, setDraft] = useState(initialDraft);
   const [currentId, setCurrentId] = useState(existingId);
   const [currentSlug, setCurrentSlug] = useState(existingSlug);
@@ -47,8 +54,9 @@ export function StudioEditor({
     JSON.stringify(initialDraft.data, null, 2),
   );
   const [dataError, setDataError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<EditorNotice | null>(null);
   const [isPreviewFullscreen, setIsPreviewFullscreen] = useState(false);
+  const [isMeshExportOpen, setIsMeshExportOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const deferredDraft = useDeferredValue(draft);
   const definition = exerciseDefinitionMap[draft.type];
@@ -57,6 +65,13 @@ export function StudioEditor({
     ? (draft.data as MatchingPairsData)
     : null;
   type ExportVariant = "scorm1" | "scorm2";
+
+  const showNotice = (
+    message: string | null,
+    scope: EditorNoticeScope = "draft",
+  ) => {
+    setNotice(message ? { message, scope } : null);
+  };
 
   const setDraftData = (
     nextData: AnyExerciseDraft["data"],
@@ -68,7 +83,7 @@ export function StudioEditor({
     }) as AnyExerciseDraft);
     setDataText(JSON.stringify(nextData, null, 2));
     setDataError(null);
-    setNotice(nextNotice);
+    showNotice(nextNotice, "draft");
   };
 
   const resolveCurrentDraft = () => {
@@ -101,7 +116,7 @@ export function StudioEditor({
     setDraft(next as AnyExerciseDraft);
     setDataText(JSON.stringify(next.data, null, 2));
     setDataError(null);
-    setNotice("Шаблон сброшен к начальному состоянию.");
+    showNotice("Шаблон сброшен к начальному состоянию.");
   };
 
   const persistDraft = (
@@ -134,7 +149,10 @@ export function StudioEditor({
           const result = (await response.json().catch(() => null)) as
             | { error?: string }
             | null;
-          setNotice(result?.error ?? "Операция завершилась с ошибкой.");
+          showNotice(
+            result?.error ?? "Операция завершилась с ошибкой.",
+            action === "export" ? "mesh" : "draft",
+          );
           return;
         }
 
@@ -144,7 +162,7 @@ export function StudioEditor({
           };
           setCurrentId(result.app.id);
           setCurrentSlug(result.app.slug);
-          setNotice(
+          showNotice(
             action === "publish"
               ? "Упражнение опубликовано."
               : "Упражнение сохранено.",
@@ -182,17 +200,19 @@ export function StudioEditor({
           setCurrentSlug(appSlug);
         }
 
-        setNotice(
+        showNotice(
           variant === "scorm2"
-            ? "Архив «Автономный SCORM» скачан."
-            : "SCORM-архив скачан.",
+            ? "Автономный архив для МЭШ скачан."
+            : "Архив для МЭШ скачан.",
+          "mesh",
         );
         if (mode === "create" && user && appId) {
           router.replace(`/edit/${appId}`);
         }
       } catch (error) {
-        setNotice(
+        showNotice(
           error instanceof Error ? error.message : "Операция не завершилась.",
+          action === "export" ? "mesh" : "draft",
         );
       }
     });
@@ -222,7 +242,7 @@ export function StudioEditor({
     anchor.click();
     anchor.remove();
     URL.revokeObjectURL(downloadUrl);
-    setNotice("JSON-экспорт скачан.");
+    showNotice("JSON-экспорт скачан.");
   };
 
   const handleJsonImport = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -244,16 +264,16 @@ export function StudioEditor({
       );
 
       if (!importedDraft) {
-        setNotice("Файл не похож на экспорт упражнения.");
+        showNotice("Файл не похож на экспорт упражнения.");
         return;
       }
 
       setDraft(importedDraft);
       setDataText(JSON.stringify(importedDraft.data, null, 2));
       setDataError(null);
-      setNotice("Черновик импортирован из JSON.");
+      showNotice("Черновик импортирован из JSON.");
     } catch (error) {
-      setNotice(
+      showNotice(
         error instanceof Error ? error.message : "Не удалось импортировать JSON.",
       );
     }
@@ -261,7 +281,7 @@ export function StudioEditor({
 
   const handleSave = () => {
     if (!user) {
-      setNotice(
+      showNotice(
         "Для сохранения и дальнейшего редактирования войдите в аккаунт.",
       );
       return;
@@ -272,7 +292,7 @@ export function StudioEditor({
 
   const handlePublish = () => {
     if (!user) {
-      setNotice(
+      showNotice(
         "Для публикации и дальнейшего редактирования войдите в аккаунт.",
       );
       return;
@@ -282,6 +302,7 @@ export function StudioEditor({
   };
 
   const handleExport = (variant: ExportVariant) => {
+    setIsMeshExportOpen(false);
     persistDraft("/api/export", "export", variant);
   };
 
@@ -305,6 +326,35 @@ export function StudioEditor({
     };
   }, [isMatchingPairs]);
 
+  useEffect(() => {
+    if (!isMeshExportOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (
+        meshExportRef.current &&
+        event.target instanceof Node &&
+        !meshExportRef.current.contains(event.target)
+      ) {
+        setIsMeshExportOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsMeshExportOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isMeshExportOpen]);
+
   const togglePreviewFullscreen = async () => {
     if (typeof document === "undefined") {
       return;
@@ -322,30 +372,75 @@ export function StudioEditor({
     await target?.requestFullscreen();
   };
 
-  const draftActionsBlock = (
+  const meshExportBlock = (
     <div className="editor-block">
       <div className="editor-block__head">
         <div>
-          <strong>Действия с черновиком</strong>
+          <strong>Скачать для МЭШ</strong>
         </div>
       </div>
+
+      <div className="mesh-export" ref={meshExportRef}>
+        <button
+          className="primary-button"
+          disabled={isPending}
+          type="button"
+          onClick={() => setIsMeshExportOpen((current) => !current)}
+        >
+          Скачать для МЭШ
+        </button>
+
+        {isMeshExportOpen ? (
+          <div className="mesh-export__menu">
+            <button
+              className="ghost-button mesh-export__option"
+              disabled={isPending}
+              type="button"
+              onClick={() => handleExport("scorm1")}
+            >
+              <span className="mesh-export__option-title">Обычная версия</span>
+              <span className="mesh-export__option-text">
+                Стандартный архив для публикации в МЭШ.
+              </span>
+            </button>
+            <button
+              className="ghost-button mesh-export__option"
+              disabled={isPending}
+              type="button"
+              onClick={() => handleExport("scorm2")}
+            >
+              <span className="mesh-export__option-title">
+                Автономная версия
+              </span>
+              <span className="mesh-export__option-text">
+                Полностью автономный пакет. Некоторые ресурсы могут не работать.
+              </span>
+            </button>
+          </div>
+        ) : null}
+      </div>
+
+      <p className="editor-hint">
+        Выберите обычную или автономную версию архива перед скачиванием.
+      </p>
+      {notice?.scope === "mesh" ? (
+        <p className="editor-hint">{notice.message}</p>
+      ) : null}
+    </div>
+  );
+
+  const draftActionsBlock = (
+    <details className="editor-block editor-details">
+      <summary className="editor-details__summary">Другие действия</summary>
 
       <div className="inline-actions">
         <button
           className="primary-button"
           disabled={isPending}
           type="button"
-          onClick={() => handleExport("scorm1")}
+          onClick={handlePublish}
         >
-          Скачать SCORM
-        </button>
-        <button
-          className="primary-button"
-          disabled={isPending}
-          type="button"
-          onClick={() => handleExport("scorm2")}
-        >
-          Скачать автономный SCORM
+          Опубликовать
         </button>
         <button
           className="ghost-button"
@@ -354,14 +449,6 @@ export function StudioEditor({
           onClick={handleSave}
         >
           Сохранить
-        </button>
-        <button
-          className="primary-button"
-          disabled={isPending}
-          type="button"
-          onClick={handlePublish}
-        >
-          Опубликовать
         </button>
         <button
           className="ghost-button"
@@ -403,13 +490,10 @@ export function StudioEditor({
           <Link href={`/play/${currentSlug}`}>{`/play/${currentSlug}`}</Link>
         </p>
       ) : null}
-      {notice ? <p className="editor-hint">{notice}</p> : null}
-      <p className="editor-hint">
-        &quot;Автономный SCORM&quot; создаёт полностью автономный пакет:
-        локальный iframe, локальный плеер и скачанные внутрь архива
-        медиафайлы.
-      </p>
-    </div>
+      {notice?.scope === "draft" ? (
+        <p className="editor-hint">{notice.message}</p>
+      ) : null}
+    </details>
   );
 
   const matchingPreviewDraft = isMatchingPairs
@@ -574,7 +658,7 @@ export function StudioEditor({
                 themeColor: nextColor,
               }) as AnyExerciseDraft)
             }
-            onNotice={setNotice}
+            onNotice={(message) => showNotice(message, "draft")}
           />
         ) : null}
 
@@ -597,6 +681,7 @@ export function StudioEditor({
           </details>
         ) : null}
 
+        {meshExportBlock}
         {draftActionsBlock}
       </aside>
 
