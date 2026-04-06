@@ -108,11 +108,11 @@ function reportMatrixScore(data: MatchingMatrixData, selected: Set<string>) {
   return percentage(good, good + bad + missed);
 }
 
-const MATCHING_CARD_WIDTH = 272;
-const MATCHING_DEFAULT_CARD_HEIGHT = 144;
+const MATCHING_CARD_WIDTH = 296;
+const MATCHING_DEFAULT_CARD_HEIGHT = 132;
 const MATCHING_CARD_GAP = 18;
 const MATCHING_CARD_STEP = 18;
-const MATCHING_CARD_MIN_WIDTH = 156;
+const MATCHING_CARD_MIN_WIDTH = 112;
 const MATCHING_BOARD_DEFAULT_WIDTH = 920;
 const MATCHING_BOARD_DEFAULT_HEIGHT = 560;
 const MATCHING_BOARD_PADDING = 20;
@@ -123,7 +123,6 @@ const MATCHING_BOARD_SCALE_MIN = 0.45;
 const MATCHING_BOARD_SCALE_MAX = 1;
 const MATCHING_BOARD_SCALE_STEP = 0.05;
 const MATCHING_IMAGE_CARD_BASE_HEIGHT = 72;
-const MATCHING_IMAGE_CAPTION_HEIGHT = 38;
 const MATCHING_AUDIO_CARD_BASE_HEIGHT = 128;
 const MATCHING_VIDEO_CARD_BASE_HEIGHT = 118;
 
@@ -165,6 +164,10 @@ type MatchingDragCardSeed = Omit<
 >;
 
 type MatchingPlayableContent = MatchingAudioContent | MatchingVideoContent;
+type MatchingOpenableContent =
+  | MatchingAudioContent
+  | MatchingVideoContent
+  | MatchingImageContent;
 type MatchingYouTubePlayer = {
   destroy: () => void;
   getCurrentTime?: () => number;
@@ -293,7 +296,7 @@ function estimateMatchingTextHeight(
     .trim()
     .split(/\r?\n/)
     .map((line) => line.replace(/\s+/g, " ").trim());
-  const charsPerLine = Math.max(10, Math.floor(Math.max(width - 34, 132) / 8.2));
+  const charsPerLine = Math.max(10, Math.floor(Math.max(width - 30, 128) / 7.4));
   const lineCount = Math.max(
     1,
     normalizedLines.reduce((total, line) => {
@@ -304,11 +307,10 @@ function estimateMatchingTextHeight(
       return total + Math.max(1, Math.ceil(line.length / charsPerLine));
     }, 0),
   );
-  const paragraphGap = Math.max(normalizedLines.length - 1, 0) * 8;
+  const paragraphGap = Math.max(normalizedLines.length - 1, 0) * 6;
 
-  return clamp(minHeight + (lineCount - 1) * 24 + paragraphGap, minHeight, 520);
+  return clamp(minHeight + (lineCount - 1) * 22 + paragraphGap, minHeight, 520);
 }
-
 function getMatchingLongestLineLength(text: string) {
   return text
     .split(/\r?\n/)
@@ -321,25 +323,37 @@ function getMatchingCardHeight(
   width = MATCHING_CARD_WIDTH,
 ) {
   const normalized = normalizeMatchingSide(content);
-  const widthScale = clamp(width / MATCHING_CARD_WIDTH, 0.58, 1);
+  const widthScale = clamp(width / MATCHING_CARD_WIDTH, 0.64, 1);
+  const innerWidth = Math.max(width - 30, 96);
 
   if (normalized.kind === "video") {
+    const title = normalized.label || "\u0412\u0438\u0434\u0435\u043e";
+    const source = normalized.url ? getMatchingPlayableSourceLabel(normalized) : "";
+    const previewHeight = Math.round(
+      clamp(getMatchingVideoSize(normalized), 120, 220) *
+        clamp(width / MATCHING_CARD_WIDTH, 0.66, 1) *
+        0.54,
+    );
     return (
-      92 + Math.round(clamp(getMatchingVideoSize(normalized), 120, 220) * widthScale * 0.72)
+      estimateMatchingTextHeight(title, innerWidth, 30) +
+      previewHeight +
+      (source ? estimateMatchingTextHeight(source, innerWidth, 18) + 6 : 0) +
+      18
     );
   }
 
   if (normalized.kind === "audio") {
-    const audioLabel = normalized.label || getMatchingPlayableSourceLabel(normalized) || "Аудио";
-    return estimateMatchingTextHeight(audioLabel, width, 52) + 52;
+    const audioLabel =
+      normalized.label || getMatchingPlayableSourceLabel(normalized) || "\u0410\u0443\u0434\u0438\u043e";
+    return estimateMatchingTextHeight(audioLabel, innerWidth, 26) + 50;
   }
 
   if (normalized.kind === "spoken-text") {
-    return estimateMatchingTextHeight(normalized.text, width, 92) + 40;
+    return estimateMatchingTextHeight(normalized.text, innerWidth, 54) + 18;
   }
 
   if (normalized.kind === "text") {
-    return estimateMatchingTextHeight(normalized.text, width, 72);
+    return estimateMatchingTextHeight(normalized.text, innerWidth, 34);
   }
 
   if (normalized.kind !== "image") {
@@ -347,67 +361,71 @@ function getMatchingCardHeight(
   }
 
   return (
-    MATCHING_IMAGE_CARD_BASE_HEIGHT +
-    Math.round(clamp(getMatchingImageHeight(normalized), 110, 220) * widthScale * 0.84) +
-    (normalized.alt.trim() ? MATCHING_IMAGE_CAPTION_HEIGHT : 0)
+    28 +
+    Math.round(clamp(getMatchingImageHeight(normalized), 110, 220) * widthScale * 0.58) +
+    (normalized.alt.trim() ? 34 : 0)
   );
 }
-
 function getMatchingCardBaseWidth(content: MatchingContent, columnWidth: number) {
   const normalized = normalizeMatchingSide(content);
   const maxWidth = Math.max(MATCHING_CARD_MIN_WIDTH, Math.floor(columnWidth));
 
   if (normalized.kind === "video") {
-    return clamp(Math.round(maxWidth * 0.96), 208, maxWidth);
+    return clamp(Math.round(maxWidth * 0.96), Math.min(236, maxWidth), maxWidth);
   }
 
   if (normalized.kind === "audio") {
-    const audioLabel = normalized.label || getMatchingPlayableSourceLabel(normalized) || "Аудио";
+    const audioLabel =
+      normalized.label || getMatchingPlayableSourceLabel(normalized) || "\u0410\u0443\u0434\u0438\u043e";
     const longestLine = getMatchingLongestLineLength(audioLabel);
     const preferredWidth = Math.round(
-      196 + Math.min(longestLine, 36) * 5.2 + Math.min(audioLabel.trim().length, 120) * 0.38,
+      236 +
+        Math.min(longestLine, 42) * 5.6 +
+        Math.min(audioLabel.trim().length, 120) * 0.22,
     );
-    return clamp(preferredWidth, 248, maxWidth);
+    return clamp(preferredWidth, Math.min(248, maxWidth), maxWidth);
   }
 
   if (normalized.kind === "image") {
     return clamp(
-      Math.round(176 + clamp(getMatchingImageHeight(normalized), 110, 220) * 0.52),
-      172,
+      Math.round(176 + clamp(getMatchingImageHeight(normalized), 110, 220) * 0.92),
+      182,
       maxWidth,
     );
   }
 
-  const longestLine = getMatchingLongestLineLength(normalized.text);
+  const normalizedText = normalized.text.trim();
+  const longestLine = getMatchingLongestLineLength(normalizedText);
+  const lineCount = Math.max(normalizedText.split(/\r?\n/).filter(Boolean).length, 1);
   const preferredWidth = Math.round(
-    134 +
-      Math.min(longestLine, 30) * 4.6 +
-      Math.min(normalized.text.trim().length, 180) * 0.72,
+    84 +
+      Math.min(longestLine, 34) * 8.8 +
+      Math.min(normalizedText.length, 180) * 0.16 +
+      Math.min(lineCount, 5) * 4,
   );
-  const minWidth = normalized.kind === "spoken-text" ? 172 : 148;
+  const minWidth = normalized.kind === "spoken-text" ? 148 : 78;
   return clamp(preferredWidth, minWidth, maxWidth);
 }
-
 function getMatchingCardMinimumHeight(content: MatchingContent) {
   const normalized = normalizeMatchingSide(content);
 
   if (normalized.kind === "video") {
-    return 124;
+    return 140;
   }
 
   if (normalized.kind === "audio") {
-    return 92;
+    return 90;
   }
 
   if (normalized.kind === "image") {
-    return 108;
+    return 88;
   }
 
   if (normalized.kind === "spoken-text") {
-    return 126;
+    return 92;
   }
 
-  return 74;
+  return 44;
 }
 
 function getMatchingCardSize(
@@ -418,23 +436,22 @@ function getMatchingCardSize(
   const normalized = normalizeMatchingSide(content);
   const maxWidth = Math.max(MATCHING_CARD_MIN_WIDTH, Math.floor(columnWidth));
   const baseWidth = getMatchingCardBaseWidth(content, columnWidth);
-  const baseHeight = getMatchingCardHeight(content, baseWidth);
   const minimumWidthFloor =
     normalized.kind === "text"
-      ? 112
+      ? 78
         : normalized.kind === "spoken-text"
-          ? 152
+          ? 132
           : normalized.kind === "audio"
-            ? 212
-            : 132;
+            ? 224
+            : 148;
   const minimumHeightFloor =
     normalized.kind === "text"
-      ? 60
+      ? 38
       : normalized.kind === "spoken-text"
-        ? 108
+        ? 84
         : normalized.kind === "audio"
-          ? 72
-          : 76;
+          ? 88
+          : 72;
   const minimumWidth = Math.min(
     maxWidth,
     Math.max(minimumWidthFloor, Math.round(minimumWidthFloor * Math.max(scale, 0.82))),
@@ -443,10 +460,25 @@ function getMatchingCardSize(
     minimumHeightFloor,
     Math.round(getMatchingCardMinimumHeight(content) * Math.max(scale, 0.74)),
   );
+  const widthBias =
+    normalized.kind === "text" || normalized.kind === "spoken-text"
+      ? 0.34
+      : normalized.kind === "image"
+        ? 0.24
+        : normalized.kind === "audio"
+          ? 0.18
+          : 0.14;
+  const effectiveWidthScale = clamp(scale + widthBias, 0.68, 1);
+  const width = clamp(
+    Math.round(baseWidth * effectiveWidthScale),
+    minimumWidth,
+    maxWidth,
+  );
+  const height = Math.max(minimumHeight, getMatchingCardHeight(content, width));
 
   return {
-    width: clamp(Math.round(baseWidth * scale), minimumWidth, maxWidth),
-    height: Math.max(minimumHeight, Math.round(baseHeight * scale)),
+    width,
+    height,
   };
 }
 
@@ -459,14 +491,26 @@ function getMatchingStackScale(
     return 1;
   }
 
-  const naturalHeights = cards.reduce(
-    (total, card) =>
-      total + getMatchingCardHeight(card.content, getMatchingCardBaseWidth(card.content, columnWidth)),
-    0,
-  );
-  const totalHeight = naturalHeights + MATCHING_CARD_STEP * (cards.length - 1);
+  const fitsAtScale = (scale: number) => {
+    const gap = Math.max(10, Math.round(MATCHING_CARD_STEP * scale));
+    const totalHeight =
+      cards.reduce(
+        (total, card) =>
+          total + getMatchingCardSize(card.content, columnWidth, scale).height,
+        0,
+      ) +
+      gap * Math.max(cards.length - 1, 0);
+    return totalHeight <= availableHeight;
+  };
 
-  return clamp(availableHeight / Math.max(totalHeight, 1), 0.42, 1);
+  for (let scale = 1; scale >= 0.42; scale -= 0.02) {
+    const roundedScale = Number(scale.toFixed(2));
+    if (fitsAtScale(roundedScale)) {
+      return roundedScale;
+    }
+  }
+
+  return 0.42;
 }
 
 function positionMatchingColumn(
@@ -1024,17 +1068,17 @@ function getMatchingEmbeddedVideoLabel(
     case "rutube":
       return "Rutube";
     case "vk":
-      return "VK Видео";
+      return "VK \u0412\u0438\u0434\u0435\u043e";
     case "youtube":
     default:
-      return "видеосервис";
+      return "\u0432\u0438\u0434\u0435\u043e\u0441\u0435\u0440\u0432\u0438\u0441";
   }
 }
 
 function getMatchingMediaSourceLabel(url: string) {
   const dataUrlMatch = url.trim().match(/^data:([^;,]+)[;,]/i);
   if (dataUrlMatch?.[1]) {
-    return `встроенный файл (${dataUrlMatch[1]})`;
+    return `\u0432\u0441\u0442\u0440\u043e\u0435\u043d\u043d\u044b\u0439 \u0444\u0430\u0439\u043b (${dataUrlMatch[1]})`;
   }
 
   const embeddedVideoMeta = getMatchingEmbeddedVideoMeta(url);
@@ -1049,7 +1093,6 @@ function getMatchingMediaSourceLabel(url: string) {
 
   return parsed.hostname.replace(/^www\./, "");
 }
-
 function isMatchingEmbeddedFileUrl(url: string) {
   return url.trim().startsWith("data:");
 }
@@ -1073,7 +1116,7 @@ function getMatchingAudioVolume(content: MatchingAudioContent) {
 function loadMatchingYouTubeApi() {
   if (typeof window === "undefined") {
     return Promise.reject(
-      new Error("API встроенного плеера недоступен на сервере."),
+      new Error("API \u0432\u0441\u0442\u0440\u043e\u0435\u043d\u043d\u043e\u0433\u043e \u043f\u043b\u0435\u0435\u0440\u0430 \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d \u043d\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0435."),
     );
   }
 
@@ -1094,7 +1137,11 @@ function loadMatchingYouTubeApi() {
         if (window.YT?.Player) {
           resolve(window.YT);
         } else {
-          reject(new Error("API встроенного плеера загрузился без Player."));
+          reject(
+            new Error(
+              "API \u0432\u0441\u0442\u0440\u043e\u0435\u043d\u043d\u043e\u0433\u043e \u043f\u043b\u0435\u0435\u0440\u0430 \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u043b\u0441\u044f \u0431\u0435\u0437 Player.",
+            ),
+          );
         }
       };
 
@@ -1108,14 +1155,15 @@ function loadMatchingYouTubeApi() {
       script.src = "https://www.youtube.com/iframe_api";
       script.async = true;
       script.onerror = () =>
-        reject(new Error("Не удалось загрузить API встроенного плеера."));
+        reject(
+          new Error("\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c API \u0432\u0441\u0442\u0440\u043e\u0435\u043d\u043d\u043e\u0433\u043e \u043f\u043b\u0435\u0435\u0440\u0430."),
+        );
       document.head.append(script);
     },
   );
 
   return matchingYouTubeApiPromise;
 }
-
 function isMatchingAudioPlayable(url: string) {
   return Boolean(
     getMatchingMediaType("audio", url) ||
@@ -1226,7 +1274,11 @@ function MatchingInlineAudioPlayer({
       </span>
       <div className="matching-inline-audio__controls">
         <button
-          aria-label={playing ? "Пауза" : "Воспроизвести"}
+          aria-label={
+            playing
+              ? "\u041f\u0430\u0443\u0437\u0430"
+              : "\u0412\u043e\u0441\u043f\u0440\u043e\u0438\u0437\u0432\u0435\u0441\u0442\u0438"
+          }
           className="ghost-button matching-inline-audio__play"
           type="button"
           onClick={handleTogglePlayback}
@@ -1234,7 +1286,7 @@ function MatchingInlineAudioPlayer({
           {playing ? "II" : ">"}
         </button>
         <input
-          aria-label="Перемотка"
+          aria-label={"\u041f\u0435\u0440\u0435\u043c\u043e\u0442\u043a\u0430"}
           className="matching-inline-audio__seek"
           max={Math.max(duration, 1)}
           min={0}
@@ -1250,10 +1302,10 @@ function MatchingInlineAudioPlayer({
         <span className="matching-inline-audio__time">
           {formatMatchingMediaTime(position)} / {formatMatchingMediaTime(duration)}
         </span>
-        <label className="matching-inline-audio__volume" title="Громкость">
+        <label className="matching-inline-audio__volume" title={"\u0413\u0440\u043e\u043c\u043a\u043e\u0441\u0442\u044c"}>
           <span>VOL</span>
           <input
-            aria-label="Громкость"
+            aria-label={"\u0413\u0440\u043e\u043c\u043a\u043e\u0441\u0442\u044c"}
             max={100}
             min={0}
             step={5}
@@ -1268,7 +1320,6 @@ function MatchingInlineAudioPlayer({
     </div>
   );
 }
-
 function MatchingCompactAudioPlayer({
   src,
   title,
@@ -1357,7 +1408,11 @@ function MatchingCompactAudioPlayer({
       </span>
       <div className="matching-inline-audio__controls">
         <button
-          aria-label={playing ? "Пауза" : "Воспроизвести"}
+          aria-label={
+            playing
+              ? "\u041f\u0430\u0443\u0437\u0430"
+              : "\u0412\u043e\u0441\u043f\u0440\u043e\u0438\u0437\u0432\u0435\u0441\u0442\u0438"
+          }
           className="ghost-button matching-inline-audio__play"
           type="button"
           onClick={handleTogglePlayback}
@@ -1365,7 +1420,7 @@ function MatchingCompactAudioPlayer({
           {playing ? "II" : ">"}
         </button>
         <input
-          aria-label="Перемотка"
+          aria-label={"\u041f\u0435\u0440\u0435\u043c\u043e\u0442\u043a\u0430"}
           className="matching-inline-audio__seek"
           max={Math.max(duration, 1)}
           min={0}
@@ -1380,7 +1435,6 @@ function MatchingCompactAudioPlayer({
     </div>
   );
 }
-
 function MatchingAdaptiveAudioPlayer({
   src,
   title,
@@ -1469,7 +1523,11 @@ function MatchingAdaptiveAudioPlayer({
       </span>
       <div className="matching-inline-audio__controls">
         <button
-          aria-label={playing ? "Пауза" : "Воспроизвести"}
+          aria-label={
+            playing
+              ? "\u041f\u0430\u0443\u0437\u0430"
+              : "\u0412\u043e\u0441\u043f\u0440\u043e\u0438\u0437\u0432\u0435\u0441\u0442\u0438"
+          }
           className="ghost-button matching-inline-audio__play"
           type="button"
           onClick={handleTogglePlayback}
@@ -1484,7 +1542,7 @@ function MatchingAdaptiveAudioPlayer({
           />
         </button>
         <input
-          aria-label="Перемотка"
+          aria-label={"\u041f\u0435\u0440\u0435\u043c\u043e\u0442\u043a\u0430"}
           className="matching-inline-audio__seek"
           max={Math.max(duration, 1)}
           min={0}
@@ -1499,7 +1557,6 @@ function MatchingAdaptiveAudioPlayer({
     </div>
   );
 }
-
 function MatchingNativeAudioPlayer({
   src,
   title,
@@ -1529,12 +1586,14 @@ function MatchingNativeAudioPlayer({
 
 function MatchingCardContent({
   cardHeight,
+  cardWidth,
   content,
   onOpenMedia,
 }: Readonly<{
   cardHeight: number;
+  cardWidth: number;
   content: MatchingContent;
-  onOpenMedia: (next: MatchingPlayableContent) => void;
+  onOpenMedia: (next: MatchingOpenableContent) => void;
 }>) {
   const normalized = normalizeMatchingSide(content);
   const contentClassName = `matching-card-content matching-card-content--${normalized.kind}`;
@@ -1549,7 +1608,9 @@ function MatchingCardContent({
             minHeight: `${spokenTextSize}px`,
           }}
         >
-          <p className="matching-card-copy">{normalized.text || "Текст не задан"}</p>
+          <p className="matching-card-copy">
+            {normalized.text || "\u0422\u0435\u043a\u0441\u0442 \u043d\u0435 \u0437\u0430\u0434\u0430\u043d"}
+          </p>
           <button
             className="ghost-button matching-card-action"
             data-card-interactive="true"
@@ -1561,13 +1622,17 @@ function MatchingCardContent({
               }
             }}
           >
-            Озвучить
+            {"\u041e\u0437\u0432\u0443\u0447\u0438\u0442\u044c"}
           </button>
         </div>
       );
     }
     case "image": {
-      const imageHeight = Math.max(72, cardHeight - (normalized.alt ? 54 : 24));
+      const captionSpace = normalized.alt ? 44 : 14;
+      const imageHeight = Math.max(
+        72,
+        Math.min(cardHeight - captionSpace, Math.round(cardWidth * 0.82)),
+      );
       return (
         <div className={contentClassName}>
           <div
@@ -1579,12 +1644,22 @@ function MatchingCardContent({
           >
             {normalized.url ? (
               <img
-                alt={normalized.alt || "Изображение карточки"}
-                className="matching-card-image"
+                alt={
+                  normalized.alt ||
+                  "\u0418\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0435 \u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0438"
+                }
+                className="matching-card-image matching-card-image--interactive"
+                data-card-interactive="true"
                 src={normalized.url}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenMedia(normalized);
+                }}
               />
             ) : (
-              <div className="matching-card-placeholder">URL изображения не задан</div>
+              <div className="matching-card-placeholder">
+                {"URL \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f \u043d\u0435 \u0437\u0430\u0434\u0430\u043d"}
+              </div>
             )}
           </div>
           {normalized.alt ? (
@@ -1601,7 +1676,8 @@ function MatchingCardContent({
       const canInlineAudio = Boolean(normalized.url && inlineAudioType);
       const audioVolume = getMatchingAudioVolume(normalized);
       const audioSourceLabel = getMatchingPlayableSourceLabel(normalized);
-      const audioTitle = normalized.label || audioSourceLabel || "Аудио";
+      const audioTitle =
+        normalized.label || audioSourceLabel || "\u0410\u0443\u0434\u0438\u043e";
       return (
         <div className={contentClassName}>
           <div className="matching-card-media-frame matching-card-media-frame--audio">
@@ -1621,15 +1697,19 @@ function MatchingCardContent({
                   onOpenMedia(normalized);
                 }}
               >
-                <span className="matching-media-launch__icon">▶</span>
-                <span>Проиграть звук</span>
+                <span className="matching-media-launch__icon">{"\u25b6"}</span>
+                <span>{"\u041f\u0440\u043e\u0438\u0433\u0440\u0430\u0442\u044c \u0437\u0432\u0443\u043a"}</span>
               </button>
             ) : normalized.url ? (
               <div className="matching-card-placeholder">
-                Для аудио используйте mp3/mp4 или ссылку на поддерживаемый видеосервис
+                {
+                  "\u0414\u043b\u044f \u0430\u0443\u0434\u0438\u043e \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0439\u0442\u0435 mp3/mp4 \u0438\u043b\u0438 \u0441\u0441\u044b\u043b\u043a\u0443 \u043d\u0430 \u043f\u043e\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u043c\u044b\u0439 \u0432\u0438\u0434\u0435\u043e\u0441\u0435\u0440\u0432\u0438\u0441"
+                }
               </div>
             ) : (
-              <div className="matching-card-placeholder">URL аудио не задан</div>
+              <div className="matching-card-placeholder">
+                {"URL \u0430\u0443\u0434\u0438\u043e \u043d\u0435 \u0437\u0430\u0434\u0430\u043d"}
+              </div>
             )}
           </div>
         </div>
@@ -1641,13 +1721,15 @@ function MatchingCardContent({
         getMatchingVideoStartSeconds(normalized) ||
         embeddedVideoMeta?.startSeconds ||
         0;
-      const videoSize = Math.max(92, cardHeight - 70);
+      const videoSize = Math.max(
+        92,
+        Math.min(cardHeight - 66, Math.round(cardWidth * 0.62)),
+      );
       const videoSourceLabel = getMatchingPlayableSourceLabel(normalized);
 
       return (
         <div className={contentClassName}>
-          <span className="tag">VID</span>
-          <strong>{normalized.label || "Видео"}</strong>
+          <strong>{normalized.label || "\u0412\u0438\u0434\u0435\u043e"}</strong>
           {normalized.url ? (
             <button
               className="matching-media-preview"
@@ -1667,7 +1749,10 @@ function MatchingCardContent({
               >
                 {embeddedVideoMeta?.thumbnailUrl ? (
                   <img
-                    alt={normalized.label || "Превью видео"}
+                    alt={
+                      normalized.label ||
+                      "\u041f\u0440\u0435\u0432\u044c\u044e \u0432\u0438\u0434\u0435\u043e"
+                    }
                     className="matching-card-thumbnail"
                     src={embeddedVideoMeta.thumbnailUrl}
                   />
@@ -1683,21 +1768,23 @@ function MatchingCardContent({
                   />
                 ) : (
                   <div className="matching-card-thumbnail matching-card-thumbnail--placeholder">
-                    Видео
+                    {"\u0412\u0438\u0434\u0435\u043e"}
                   </div>
                 )}
               </div>
               <span className="matching-media-preview__label">
-                Открыть видео
+                {"\u041e\u0442\u043a\u0440\u044b\u0442\u044c \u0432\u0438\u0434\u0435\u043e"}
               </span>
             </button>
           ) : (
-            <div className="matching-card-placeholder">URL видео не задан</div>
+            <div className="matching-card-placeholder">
+              {"URL \u0432\u0438\u0434\u0435\u043e \u043d\u0435 \u0437\u0430\u0434\u0430\u043d"}
+            </div>
           )}
           {normalized.url ? (
             <span className="matching-card-url">
               {videoSourceLabel}
-              {startSeconds > 0 ? ` · с ${startSeconds} с` : ""}
+              {startSeconds > 0 ? ` \u00b7 \u0441 ${startSeconds} \u0441` : ""}
             </span>
           ) : null}
         </div>
@@ -1713,13 +1800,14 @@ function MatchingCardContent({
             minHeight: `${textSize}px`,
           }}
         >
-          <p className="matching-card-copy">{normalized.text || "Текст не задан"}</p>
+          <p className="matching-card-copy">
+            {normalized.text || "\u0422\u0435\u043a\u0441\u0442 \u043d\u0435 \u0437\u0430\u0434\u0430\u043d"}
+          </p>
         </div>
       );
     }
   }
 }
-
 function MatchingYouTubeAudioPlayer({
   startSeconds,
   videoId,
@@ -1814,9 +1902,9 @@ function MatchingYouTubeAudioPlayer({
         window.clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
-        playerRef.current?.destroy();
-        playerRef.current = null;
-      };
+      playerRef.current?.destroy();
+      playerRef.current = null;
+    };
   }, [startSeconds, videoId, volume]);
 
   const handleToggle = () => {
@@ -1847,7 +1935,11 @@ function MatchingYouTubeAudioPlayer({
           type="button"
           onClick={handleToggle}
         >
-          {ready ? (playing ? "Пауза" : "Слушать") : "Загрузка..."}
+          {ready
+            ? playing
+              ? "\u041f\u0430\u0443\u0437\u0430"
+              : "\u0421\u043b\u0443\u0448\u0430\u0442\u044c"
+            : "\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430..."}
         </button>
         <input
           className="matching-youtube-audio__range"
@@ -1870,12 +1962,11 @@ function MatchingYouTubeAudioPlayer({
     </div>
   );
 }
-
 function MatchingMediaDialog({
   media,
   onClose,
 }: Readonly<{
-  media: MatchingPlayableContent | null;
+  media: MatchingOpenableContent | null;
   onClose: () => void;
 }>) {
   useEffect(() => {
@@ -1914,7 +2005,14 @@ function MatchingMediaDialog({
       : audioServiceMeta?.startSeconds || 0;
   const sourceLabel =
     media.fileName?.trim() || getMatchingMediaSourceLabel(media.url);
-  const title = media.label || (media.kind === "audio" ? "Аудио" : "Видео");
+  const displayTitle =
+    media.kind === "image"
+      ? media.alt || sourceLabel || "\u0418\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0435"
+      : media.label ||
+          (media.kind === "audio"
+            ? "\u0410\u0443\u0434\u0438\u043e"
+            : "\u0412\u0438\u0434\u0435\u043e");
+  const title = displayTitle;
 
   return (
     <div
@@ -1934,27 +2032,42 @@ function MatchingMediaDialog({
       >
         <div className="matching-media-modal__head">
           <div className="stack">
-            <span className="tag">{media.kind === "audio" ? "AUD" : "VID"}</span>
             <strong>{title}</strong>
             <span className="matching-card-url">
               {sourceLabel}
-              {startSeconds > 0 ? ` · старт ${startSeconds} c` : ""}
+              {startSeconds > 0 ? ` \u00b7 \u0441\u0442\u0430\u0440\u0442 ${startSeconds} \u0441` : ""}
             </span>
           </div>
           <button
-            className="ghost-button"
+            aria-label={"\u0417\u0430\u043a\u0440\u044b\u0442\u044c"}
+            className="ghost-button matching-media-modal__close"
             data-card-interactive="true"
+            title={"\u0417\u0430\u043a\u0440\u044b\u0442\u044c"}
             type="button"
             onClick={onClose}
           >
-            Закрыть
+            <span className="sr-only">{"\u0417\u0430\u043a\u0440\u044b\u0442\u044c"}</span>
           </button>
         </div>
 
         <div className="matching-media-modal__body">
-          {media.kind === "audio" && !canPlayAudio ? (
+          {media.kind === "image" ? (
+            <div className="matching-media-modal__image-wrap">
+              {media.url ? (
+                <img
+                  alt={media.alt || title}
+                  className="matching-media-modal__image"
+                  src={media.url}
+                />
+              ) : (
+                <div className="matching-card-placeholder">
+                  {"\u0418\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0435 \u043d\u0435 \u0437\u0430\u0434\u0430\u043d\u043e."}
+                </div>
+              )}
+            </div>
+          ) : media.kind === "audio" && !canPlayAudio ? (
             <div className="matching-card-placeholder">
-              Источник не удалось открыть как аудио.
+              {"\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u043d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0442\u043a\u0440\u044b\u0442\u044c \u043a\u0430\u043a \u0430\u0443\u0434\u0438\u043e."}
             </div>
           ) : media.kind === "audio" && audioServiceMeta?.videoId ? (
             <MatchingYouTubeAudioPlayer
@@ -1976,8 +2089,9 @@ function MatchingMediaDialog({
               </div>
               {media.kind === "audio" ? (
                 <p className="editor-hint">
-                  Источник открыт встроенным плеером видеосервиса, потому что
-                  сама ссылка ведет на страницу с видео.
+                  {
+                    "\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u043e\u0442\u043a\u0440\u044b\u0442 \u0432\u0441\u0442\u0440\u043e\u0435\u043d\u043d\u044b\u043c \u043f\u043b\u0435\u0435\u0440\u043e\u043c \u0432\u0438\u0434\u0435\u043e\u0441\u0435\u0440\u0432\u0438\u0441\u0430, \u043f\u043e\u0442\u043e\u043c\u0443 \u0447\u0442\u043e \u0441\u0430\u043c\u0430 \u0441\u0441\u044b\u043b\u043a\u0430 \u0432\u0435\u0434\u0435\u0442 \u043d\u0430 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0443 \u0441 \u0432\u0438\u0434\u0435\u043e."
+                  }
                 </p>
               ) : null}
             </>
@@ -1993,7 +2107,9 @@ function MatchingMediaDialog({
                 event.currentTarget.volume = audioVolume / 100;
               }}
             >
-              Ваш браузер не поддерживает воспроизведение аудио.
+              {
+                "\u0412\u0430\u0448 \u0431\u0440\u0430\u0443\u0437\u0435\u0440 \u043d\u0435 \u043f\u043e\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442 \u0432\u043e\u0441\u043f\u0440\u043e\u0438\u0437\u0432\u0435\u0434\u0435\u043d\u0438\u0435 \u0430\u0443\u0434\u0438\u043e."
+              }
             </audio>
           ) : (
             <video
@@ -2019,7 +2135,9 @@ function MatchingMediaDialog({
                 src={media.url}
                 type={getMatchingMediaType("video", media.url)}
               />
-              Ваш браузер не поддерживает воспроизведение видео.
+              {
+                "\u0412\u0430\u0448 \u0431\u0440\u0430\u0443\u0437\u0435\u0440 \u043d\u0435 \u043f\u043e\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442 \u0432\u043e\u0441\u043f\u0440\u043e\u0438\u0437\u0432\u0435\u0434\u0435\u043d\u0438\u0435 \u0432\u0438\u0434\u0435\u043e."
+              }
             </video>
           )}
         </div>
@@ -2027,7 +2145,6 @@ function MatchingMediaDialog({
     </div>
   );
 }
-
 function MatchingPairsActivity({
   draft,
   onReport,
@@ -2040,16 +2157,11 @@ function MatchingPairsActivity({
     width: MATCHING_BOARD_DEFAULT_WIDTH,
     height: MATCHING_BOARD_DEFAULT_HEIGHT,
   });
-  const [cards, setCards] = useState(() =>
-    createMatchingCards(draft.data, {
-      width: MATCHING_BOARD_DEFAULT_WIDTH,
-      height: MATCHING_BOARD_DEFAULT_HEIGHT,
-    }),
-  );
+  const [cards, setCards] = useState<MatchingDragCard[]>([]);
   const [solvedPairs, setSolvedPairs] = useState<Set<number>>(new Set());
   const [hasChecked, setHasChecked] = useState(false);
   const [draggingGroupId, setDraggingGroupId] = useState<string | null>(null);
-  const [activeMedia, setActiveMedia] = useState<MatchingPlayableContent | null>(
+  const [activeMedia, setActiveMedia] = useState<MatchingOpenableContent | null>(
     null,
   );
   const [boardScale, setBoardScale] = useState(1);
@@ -2544,6 +2656,7 @@ function MatchingPairsActivity({
             >
               <MatchingCardContent
                 cardHeight={card.height}
+                cardWidth={card.width}
                 content={normalizedCardContent}
                 onOpenMedia={setActiveMedia}
               />
@@ -2552,11 +2665,15 @@ function MatchingPairsActivity({
         })}
         {groupConnectors.map((connector) => (
           <button
-            aria-label="Разъединить карточки"
+            aria-label={"\u0420\u0430\u0437\u044a\u0435\u0434\u0438\u043d\u0438\u0442\u044c \u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0438"}
             className={`matching-drag-connector ${
               connector.orientation === "vertical"
                 ? "matching-drag-connector--vertical"
                 : "matching-drag-connector--horizontal"
+            } matching-drag-connector--style-${normalized.connectorStyle} ${
+              normalized.connectorStyle === "circle"
+                ? "matching-drag-connector--compact"
+                : ""
             } ${
               connector.status === "correct" && showGroupFeedback
                 ? "matching-drag-connector--correct"
@@ -2571,40 +2688,45 @@ function MatchingPairsActivity({
             style={{
               left: `${connector.x}px`,
               top: `${connector.y}px`,
-              ...(connector.orientation === "vertical"
-                ? { height: `${connector.size}px` }
-                : { width: `${connector.size}px` }),
+              ...(normalized.connectorStyle === "circle"
+                ? {
+                    width: `${Math.min(connector.size, 48)}px`,
+                    height: `${Math.min(connector.size, 48)}px`,
+                  }
+                : connector.orientation === "vertical"
+                  ? { height: `${connector.size}px` }
+                  : { width: `${connector.size}px` }),
             }}
             type="button"
             onClick={() => ungroupCards(connector.groupId)}
           >
-            ×
+            {"\u00d7"}
           </button>
         ))}
           </div>
         <div className="matching-drag-board__controls" data-card-interactive="true">
           <PlayerButton
-            aria-label={"\u041F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C"}
+            aria-label={"\u041f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c"}
             className="matching-drag-board__button matching-drag-board__button--check"
             onClick={handleCheck}
           >
-            {"\u041F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C"}
+            {"\u041f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c"}
           </PlayerButton>
           <button
-            aria-label={"\u0421\u0431\u0440\u043E\u0441\u0438\u0442\u044C"}
+            aria-label={"\u0421\u0431\u0440\u043e\u0441\u0438\u0442\u044c"}
             className="ghost-button matching-drag-board__button matching-drag-board__button--reset"
             type="button"
             onClick={resetBoard}
           >
-            РЎР±СЂРѕСЃРёС‚СЊ РєР°СЂС‚РѕС‡РєРё
+            {"\u0421\u0431\u0440\u043e\u0441\u0438\u0442\u044c"}
           </button>
           <div
-            aria-label={"\u041C\u0430\u0441\u0448\u0442\u0430\u0431 \u043F\u043E\u043B\u044F"}
+            aria-label={"\u041c\u0430\u0441\u0448\u0442\u0430\u0431 \u043f\u043e\u043b\u044f"}
             className="matching-drag-board__zoom"
             role="group"
           >
             <button
-              aria-label={"\u0423\u043C\u0435\u043D\u044C\u0448\u0438\u0442\u044C \u043C\u0430\u0441\u0448\u0442\u0430\u0431"}
+              aria-label={"\u0423\u043c\u0435\u043d\u044c\u0448\u0438\u0442\u044c \u043c\u0430\u0441\u0448\u0442\u0430\u0431"}
               className="ghost-button matching-drag-board__zoom-button"
               disabled={boardScale <= MATCHING_BOARD_SCALE_MIN}
               type="button"
@@ -2615,7 +2737,7 @@ function MatchingPairsActivity({
               -
             </button>
             <input
-              aria-label={"\u041C\u0430\u0441\u0448\u0442\u0430\u0431 \u043F\u043E\u043B\u044F"}
+              aria-label={"\u041c\u0430\u0441\u0448\u0442\u0430\u0431 \u043f\u043e\u043b\u044f"}
               className="matching-drag-board__zoom-range"
               max={MATCHING_BOARD_SCALE_MAX}
               min={MATCHING_BOARD_SCALE_MIN}
@@ -2627,7 +2749,7 @@ function MatchingPairsActivity({
               }
             />
             <button
-              aria-label={"\u0421\u0431\u0440\u043E\u0441\u0438\u0442\u044C \u043C\u0430\u0441\u0448\u0442\u0430\u0431"}
+              aria-label={"\u0421\u0431\u0440\u043e\u0441\u0438\u0442\u044c \u043c\u0430\u0441\u0448\u0442\u0430\u0431"}
               className="ghost-button matching-drag-board__zoom-reset"
               type="button"
               onClick={() => updateBoardScale(1)}
@@ -2635,7 +2757,7 @@ function MatchingPairsActivity({
               {`${scalePercentage}%`}
             </button>
             <button
-              aria-label={"\u0423\u0432\u0435\u043B\u0438\u0447\u0438\u0442\u044C \u043C\u0430\u0441\u0448\u0442\u0430\u0431"}
+              aria-label={"\u0423\u0432\u0435\u043b\u0438\u0447\u0438\u0442\u044c \u043c\u0430\u0441\u0448\u0442\u0430\u0431"}
               className="ghost-button matching-drag-board__zoom-button"
               disabled={boardScale >= MATCHING_BOARD_SCALE_MAX}
               type="button"
@@ -2660,10 +2782,10 @@ function MatchingPairsActivity({
               }`}
               role="dialog"
               aria-modal="true"
-              aria-label="Результат"
+              aria-label={"\u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442"}
               onClick={(event) => event.stopPropagation()}
             >
-              <span className="eyebrow">Результат</span>
+              <span className="eyebrow">{"\u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442"}</span>
               <strong>{`${boardScore}%`}</strong>
               <p>{boardStatusDetail}</p>
               <div className="inline-actions">
@@ -2672,14 +2794,14 @@ function MatchingPairsActivity({
                   type="button"
                   onClick={() => setBoardResultVisible(false)}
                 >
-                  Продолжить
+                  {"\u041f\u0440\u043e\u0434\u043e\u043b\u0436\u0438\u0442\u044c"}
                 </button>
                 <button
                   className="ghost-button"
                   type="button"
                   onClick={resetBoard}
                 >
-                  Сбросить
+                  {"\u0421\u0431\u0440\u043e\u0441\u0438\u0442\u044c"}
                 </button>
               </div>
             </div>
@@ -2690,20 +2812,21 @@ function MatchingPairsActivity({
       (normalized.showImmediateFeedback || normalized.autoRemoveCorrectPairs) &&
       (getEvaluatedPairGroups(cards) > 0 || solvedPairs.size > 0) ? (
         <p className="editor-hint">
-          Сейчас собрано верных пар: {solvedPairs.size + countVisibleCorrectPairs(cards)}
+          {"\u0421\u0435\u0439\u0447\u0430\u0441 \u0441\u043e\u0431\u0440\u0430\u043d\u043e \u0432\u0435\u0440\u043d\u044b\u0445 \u043f\u0430\u0440: "}
+          {solvedPairs.size + countVisibleCorrectPairs(cards)}
           {" / "}
           {totalPairs}
         </p>
       ) : null}
       {!boardOnly ? (
         <ActionRow>
-          <PlayerButton onClick={handleCheck}>Проверить</PlayerButton>
+          <PlayerButton onClick={handleCheck}>{"\u041f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c"}</PlayerButton>
           <button
             className="ghost-button"
             type="button"
             onClick={resetBoard}
           >
-            Сбросить
+            {"\u0421\u0431\u0440\u043e\u0441\u0438\u0442\u044c"}
           </button>
         </ActionRow>
       ) : null}
@@ -3414,7 +3537,7 @@ function WordGridActivity({
     const word = placementMap.get(key);
 
     if (!word) {
-      setNote("Такого слова в сетке нет. Попробуйте снова.");
+      setNote("Такого слова в сетке неС‚. Попробуйте снова.");
       return;
     }
 
@@ -3497,7 +3620,7 @@ function WhereIsWhatActivity({
       setNote(done ? "Все точки отмечены верно." : "Верная точка. Продолжайте.");
       onReport(score, done);
     } else {
-      setNote("Пока не попали в нужную точку. Попробуйте еще раз.");
+      setNote("���� �� ������ � ������ �����. ���������� еще ���.");
     }
   };
 
@@ -3610,7 +3733,7 @@ function HorseRaceActivity({
       setFinished(true);
       const score = percentage(next[0], draft.data.trackLength);
       onReport(score, playerBest);
-      setNote(playerBest ? "Ваш конь пришел первым." : "Соперники были быстрее.");
+      setNote(playerBest ? "��� ���� ������ ������." : "��������� были �������.");
       return;
     }
 
@@ -3632,7 +3755,7 @@ function HorseRaceActivity({
       <div className="race-track">
         {positions.map((position, index) => (
           <div className="race-lane" key={`horse-${index}`}>
-            <strong>{index === 0 ? "Вы" : `Соперник ${index}`}</strong>
+            <strong>{index === 0 ? "Вы" : `�������� ${index}`}</strong>
             <div className="race-line">
               <span
                 className="race-horse"
@@ -4189,7 +4312,7 @@ export function ExercisePlayer({
       score: safeScore,
       solved,
       detail:
-        detail ?? (solved ? draft.successMessage : `Результат: ${safeScore}%`),
+        detail ?? (solved ? draft.successMessage : `\u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442: ${safeScore}%`),
     });
 
     if (typeof window !== "undefined" && window.parent) {
@@ -4201,7 +4324,6 @@ export function ExercisePlayer({
       );
     }
   };
-
   return (
     <section
       className={`exercise-player ${
@@ -4210,7 +4332,7 @@ export function ExercisePlayer({
       style={themeStyle}
     >
       {!boardOnly ? <div className="exercise-player__head">
-        {!compactHead ? <span className="eyebrow">Тип: {draft.type}</span> : null}
+        {!compactHead ? <span className="eyebrow">{"\u0422\u0438\u043f"}: {draft.type}</span> : null}
         <h1>{draft.title}</h1>
         <p>{draft.description}</p>
         {showInstructions ? (

@@ -101,12 +101,12 @@ export function StudioEditor({
     setDraft(next as AnyExerciseDraft);
     setDataText(JSON.stringify(next.data, null, 2));
     setDataError(null);
-    setNotice("Шаблон сброшен к начальному примеру.");
+    setNotice("Шаблон сброшен к начальному состоянию.");
   };
 
   const persistDraft = (
     endpoint: string,
-    action: "save" | "export",
+    action: "save" | "publish" | "export",
     variant: ExportVariant = "scorm1",
   ) => {
     const resolvedDraft = resolveCurrentDraft();
@@ -138,13 +138,21 @@ export function StudioEditor({
           return;
         }
 
-        if (action === "save") {
+        if (action === "save" || action === "publish") {
           const result = (await response.json()) as {
             app: { id: string; slug: string };
           };
           setCurrentId(result.app.id);
           setCurrentSlug(result.app.slug);
-          setNotice("Упражнение сохранено.");
+          setNotice(
+            action === "publish"
+              ? "Упражнение опубликовано."
+              : "Упражнение сохранено.",
+          );
+          if (action === "publish") {
+            router.push(`/play/${result.app.slug}`);
+            return;
+          }
           if (mode === "create") {
             router.replace(`/edit/${result.app.id}`);
           }
@@ -262,6 +270,17 @@ export function StudioEditor({
     persistDraft("/api/apps", "save");
   };
 
+  const handlePublish = () => {
+    if (!user) {
+      setNotice(
+        "Для публикации и дальнейшего редактирования войдите в аккаунт.",
+      );
+      return;
+    }
+
+    persistDraft("/api/apps", "publish");
+  };
+
   const handleExport = (variant: ExportVariant) => {
     persistDraft("/api/export", "export", variant);
   };
@@ -326,7 +345,7 @@ export function StudioEditor({
           type="button"
           onClick={() => handleExport("scorm2")}
         >
-          Скачать Автономный SCORM
+          Скачать автономный SCORM
         </button>
         <button
           className="ghost-button"
@@ -335,6 +354,14 @@ export function StudioEditor({
           onClick={handleSave}
         >
           Сохранить
+        </button>
+        <button
+          className="primary-button"
+          disabled={isPending}
+          type="button"
+          onClick={handlePublish}
+        >
+          Опубликовать
         </button>
         <button
           className="ghost-button"
@@ -379,7 +406,7 @@ export function StudioEditor({
       {notice ? <p className="editor-hint">{notice}</p> : null}
       <p className="editor-hint">
         &quot;Автономный SCORM&quot; создаёт полностью автономный пакет:
-        локальный iframe, локальный player и скачанные внутрь архива
+        локальный iframe, локальный плеер и скачанные внутрь архива
         медиафайлы.
       </p>
     </div>
@@ -391,7 +418,7 @@ export function StudioEditor({
         title: "Пары терминов",
         description: "Соедините элементы из левого и правого столбцов.",
         instructions:
-          "Перетаскивайте карточки по полю. Когда правильные элементы окажутся рядом, они склеятся и будут двигаться уже вместе. Карточку можно таскать за любую ее неинтерактивную область, а разъединение находится между скрепленными элементами.",
+          "Перетаскивайте карточки по полю. Когда правильные элементы окажутся рядом, они соединятся и будут двигаться уже вместе. Карточку можно таскать за любую ее неинтерактивную область, а разъединение находится между соединенными элементами.",
         successMessage: "Все пары собраны верно.",
       } as AnyExerciseDraft)
     : deferredDraft;

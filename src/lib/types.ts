@@ -77,6 +77,12 @@ export type MatchingContent =
 export type MatchingPairSide = string | MatchingContent;
 
 export type MatchingPairAlignment = "horizontal" | "vertical";
+export type MatchingConnectorStyle =
+  | "tape"
+  | "band"
+  | "dots"
+  | "clip"
+  | "circle";
 
 export type MatchingExtraSide = "left" | "right";
 
@@ -94,6 +100,7 @@ export interface MatchingPairsData {
   pairs: MatchingPairItem[];
   extras?: MatchingExtraItem[];
   pairAlignment?: MatchingPairAlignment;
+  connectorStyle?: MatchingConnectorStyle;
   showImmediateFeedback?: boolean;
   autoRemoveCorrectPairs?: boolean;
   colorByGroup?: boolean;

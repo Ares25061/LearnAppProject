@@ -29,6 +29,9 @@ interface AppRow {
   updated_at: string;
 }
 
+let preferFileStoreForPrimaryPersistence = false;
+let hasLoggedFileStoreFallback = false;
+
 function toPublicUser(row: Pick<UserRow, "id" | "email" | "name">): PublicUser {
   return {
     id: row.id,
@@ -78,14 +81,77 @@ function fileUserToAuthUser(row: StoredUserRecord | undefined) {
   };
 }
 
+function getErrorCode(error: unknown) {
+  if (!error || typeof error !== "object" || !("code" in error)) {
+    return "";
+  }
+
+  return typeof error.code === "string" ? error.code : "";
+}
+
+function getErrorMessage(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return "";
+  }
+
+  if ("sqlMessage" in error && typeof error.sqlMessage === "string") {
+    return error.sqlMessage;
+  }
+
+  if ("message" in error && typeof error.message === "string") {
+    return error.message;
+  }
+
+  return "";
+}
+
+function isUnsupportedDbAuthError(error: unknown) {
+  const directCode = getErrorCode(error);
+  const directMessage = getErrorMessage(error);
+  const nestedCause =
+    error && typeof error === "object" && "cause" in error ? error.cause : null;
+  const causeCode = getErrorCode(nestedCause);
+  const causeMessage = getErrorMessage(nestedCause);
+  const combinedMessage = `${directMessage}\n${causeMessage}`.toLowerCase();
+
+  return (
+    directCode === "ER_AUTHENTICATION_PLUGIN_NOT_SUPPORTED" ||
+    causeCode === "ER_AUTHENTICATION_PLUGIN_NOT_SUPPORTED" ||
+    combinedMessage.includes("auth_gssapi_client")
+  );
+}
+
 async function withPersistence<T>(
   dbAction: () => Promise<T>,
   fileAction: () => Promise<T>,
 ) {
+  if (preferFileStoreForPrimaryPersistence) {
+    return fileAction();
+  }
+
   try {
     return await dbAction();
   } catch (error) {
-    console.error("Primary database unavailable, using file store fallback.", error);
+    if (isUnsupportedDbAuthError(error)) {
+      preferFileStoreForPrimaryPersistence = true;
+    }
+
+    if (!hasLoggedFileStoreFallback) {
+      hasLoggedFileStoreFallback = true;
+      const nestedCause =
+        error && typeof error === "object" && "cause" in error ? error.cause : null;
+      const reason =
+        getErrorMessage(nestedCause) ||
+        getErrorMessage(error) ||
+        getErrorCode(nestedCause) ||
+        getErrorCode(error);
+      console.warn(
+        reason
+          ? `Primary database unavailable, using file store fallback: ${reason}`
+          : "Primary database unavailable, using file store fallback.",
+      );
+    }
+
     return fileAction();
   }
 }

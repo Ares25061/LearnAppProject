@@ -1,6 +1,6 @@
-"use client";
+﻿"use client";
 
-import { useEffect, useState, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import {
   MATCHING_AUDIO_VOLUME_DEFAULT,
   createMatchingContent,
@@ -11,6 +11,7 @@ import {
 } from "@/lib/matching-pairs";
 import type {
   MatchingContent,
+  MatchingConnectorStyle,
   MatchingExtraItem,
   MatchingExtraSide,
   MatchingPairsData,
@@ -18,6 +19,16 @@ import type {
 import { moveItem } from "@/lib/utils";
 
 const BULK_SEPARATORS = ["\t", ";", "|", "=>"];
+const matchingConnectorStyleOptions: Array<{
+  id: MatchingConnectorStyle;
+  label: string;
+}> = [
+  { id: "tape", label: "Скотч" },
+  { id: "band", label: "Лента" },
+  { id: "dots", label: "Пунктир" },
+  { id: "clip", label: "Скоба" },
+  { id: "circle", label: "Кружок" },
+];
 
 function MatchingTypeIcon({
   kind,
@@ -156,21 +167,6 @@ function ActionIcon({
   }
 }
 
-function MediaSettingsIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24">
-      <path
-        d="M4 7h10m-7 5h13M4 17h10m4-12v4m-7 1v4m4 1v4"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.8"
-      />
-    </svg>
-  );
-}
-
 function CloseIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24">
@@ -181,6 +177,21 @@ function CloseIcon() {
         strokeLinecap="round"
         strokeLinejoin="round"
         strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+
+function SettingsIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24">
+      <path
+        d="M12 8.75a3.25 3.25 0 1 1 0 6.5 3.25 3.25 0 0 1 0-6.5Zm7 3.25.95-.55a1 1 0 0 0 .37-1.37l-1.1-1.9a1 1 0 0 0-1.31-.42l-.97.43a7.95 7.95 0 0 0-1.64-.95l-.14-1.05A1 1 0 0 0 14.17 5h-2.2a1 1 0 0 0-.99.85l-.15 1.05c-.58.2-1.13.52-1.63.94l-.97-.42a1 1 0 0 0-1.31.42l-1.1 1.9a1 1 0 0 0 .36 1.37L7.13 12c-.03.32-.03.68 0 1l-.94.55a1 1 0 0 0-.36 1.37l1.1 1.9a1 1 0 0 0 1.31.42l.97-.42c.5.42 1.05.73 1.63.94l.15 1.05a1 1 0 0 0 .99.85h2.2a1 1 0 0 0 .99-.85l.14-1.05c.59-.21 1.15-.53 1.64-.95l.97.43a1 1 0 0 0 1.31-.42l1.1-1.9a1 1 0 0 0-.37-1.37l-.95-.55a7.78 7.78 0 0 0 0-1Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.6"
       />
     </svg>
   );
@@ -324,280 +335,116 @@ function isAcceptedMediaFile(
   );
 }
 
-function MatchingSideFields({
-  content,
-  label,
-  onChange,
-  onNotice,
-}: Readonly<{
-  content: MatchingContent;
-  label: string;
-  onChange: (next: MatchingContent) => void;
-  onNotice?: (message: string) => void;
-}>) {
-  const setField = (
-    field: "text" | "url" | "alt" | "label",
-    value: string,
-  ) => {
-    onChange({
-      ...content,
-      [field]: value,
-    } as MatchingContent);
-  };
-
-  const setNumberField = (
-    field: "size" | "startSeconds" | "volume",
-    value: number,
-  ) => {
-    onChange({
-      ...content,
-      [field]: value,
-    } as MatchingContent);
-  };
-
-  const handleMediaFile = async (
-    kind: "image" | "audio" | "video",
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-
-    if (!file) {
-      return;
-    }
-
-    if (!isAcceptedMediaFile(kind, file)) {
-      onNotice?.("Файл не подходит для выбранного типа карточки.");
-      return;
-    }
-
-    try {
-      const dataUrl = await readFileAsDataUrl(file);
-      const baseLabel = getBaseFileLabel(file.name);
-
-      if (kind === "image" && content.kind === "image") {
-        onChange({
-          ...content,
-          url: dataUrl,
-          alt: content.alt.trim() ? content.alt : baseLabel,
-        });
-        onNotice?.("Изображение встроено в карточку.");
-        return;
-      }
-
-      if (kind === "audio" && content.kind === "audio") {
-        onChange({
-          ...content,
-          url: dataUrl,
-          label: content.label.trim() ? content.label : baseLabel,
-        });
-        onNotice?.("Аудиофайл встроен в карточку.");
-        return;
-      }
-
-      if (kind === "video" && content.kind === "video") {
-        onChange({
-          ...content,
-          url: dataUrl,
-          label: content.label.trim() ? content.label : baseLabel,
-        });
-        onNotice?.("Видеофайл встроен в карточку.");
-      }
-    } catch (error) {
-      onNotice?.(
-        error instanceof Error
-          ? error.message
-          : "Не удалось загрузить файл в карточку.",
-      );
-    }
-  };
-
-  return (
-    <div className="matching-editor-side">
-      <div className="matching-editor-side__head">
-        <strong>{label}</strong>
-      </div>
-
-      <div className="matching-editor-types">
-        {matchingContentOptions.map((option) => (
-          <button
-            className={`matching-editor-type ${
-              option.id === content.kind ? "matching-editor-type--active" : ""
-            }`}
-            key={option.id}
-            title={option.label}
-            type="button"
-            onClick={() => onChange(createMatchingContent(option.id))}
-          >
-            <MatchingTypeIcon kind={option.id} />
-            <span className="sr-only">{option.label}</span>
-          </button>
-        ))}
-      </div>
-
-      {content.kind === "text" || content.kind === "spoken-text" ? (
-        <>
-          <label className="matching-editor-field">
-            <span className="field-label">
-              {content.kind === "spoken-text" ? "Текст" : "Текст"}
-            </span>
-            <textarea
-              className="editor-textarea"
-              rows={3}
-              value={content.text}
-              onChange={(event) => setField("text", event.target.value)}
-            />
-          </label>
-        </>
-      ) : null}
-
-      {content.kind === "image" ? (
-        <>
-          <label className="matching-editor-field">
-            <span className="field-label">URL изображения</span>
-            <input
-              className="editor-input"
-              placeholder="https://..."
-              value={content.url}
-              onChange={(event) => setField("url", event.target.value)}
-            />
-          </label>
-          <label className="matching-editor-field">
-            <span className="field-label">Файл изображения</span>
-            <input
-              accept="image/*"
-              className="editor-input"
-              type="file"
-              onChange={(event) => void handleMediaFile("image", event)}
-            />
-            <p className="editor-hint">
-              Можно вставить ссылку или выбрать файл из проводника. Файл будет
-              встроен в упражнение и попадет в JSON-экспорт.
-            </p>
-          </label>
-          <label className="matching-editor-field">
-            <span className="field-label">Подпись / alt</span>
-            <input
-              className="editor-input"
-              placeholder="Краткое описание изображения"
-              value={content.alt}
-              onChange={(event) => setField("alt", event.target.value)}
-            />
-          </label>
-        </>
-      ) : null}
-
-      {content.kind === "audio" || content.kind === "video" ? (
-        <>
-          <label className="matching-editor-field">
-            <span className="field-label">
-              {content.kind === "audio" ? "URL аудио / видео для звука" : "URL видео"}
-            </span>
-            <input
-              className="editor-input"
-              placeholder="https://..."
-              value={content.url}
-              onChange={(event) => setField("url", event.target.value)}
-            />
-            {content.kind === "video" ? (
-              <p className="editor-hint">
-                Поддерживаются прямые видеофайлы, Rutube и VK Видео.
-              </p>
-            ) : null}
-          </label>
-          <label className="matching-editor-field">
-            <span className="field-label">
-              {content.kind === "audio" ? "Файл аудио" : "Файл видео"}
-            </span>
-            <input
-              accept={
-                content.kind === "audio"
-                  ? "audio/*,video/mp4,.mp3,.mp4,.m4a,.wav,.ogg"
-                  : "video/*,.mp4,.webm,.ogv,.ogg"
-              }
-              className="editor-input"
-              type="file"
-              onChange={(event) =>
-                void handleMediaFile(content.kind, event)
-              }
-            />
-            <p className="editor-hint">
-              Файл из проводника будет встроен в упражнение и попадет в
-              JSON-экспорт.
-            </p>
-          </label>
-          {content.kind === "audio" ? (
-            <p className="editor-hint">
-              Можно использовать прямую ссылку на `.mp3`, `.mp4` или ссылку на
-              поддерживаемый видеосервис. В аудиокарточке будет открываться
-              именно аудиоплеер, без показа видео.
-            </p>
-          ) : null}
-          <label className="matching-editor-field">
-            <span className="field-label">Подпись карточки</span>
-            <input
-              className="editor-input"
-              placeholder="Что увидит ученик на карточке"
-              value={content.label}
-              onChange={(event) => setField("label", event.target.value)}
-            />
-          </label>
-          {content.kind === "video" ? (
-            <label className="matching-editor-field">
-              <span className="field-label">Громкость, %</span>
-              <input
-                className="editor-input"
-                max={100}
-                min={0}
-                step={5}
-                type="number"
-                value={content.volume}
-                onChange={(event) =>
-                  setNumberField(
-                    "volume",
-                    Number.isFinite(event.target.valueAsNumber)
-                      ? Math.min(100, Math.max(0, Math.round(event.target.valueAsNumber)))
-                      : MATCHING_AUDIO_VOLUME_DEFAULT,
-                  )
-                }
-              />
-              <p className="editor-hint">
-                Работает для видеофайлов. Для встроенных видеосервисов
-                громкость остается на стороне их плеера.
-              </p>
-            </label>
-          ) : null}
-          {content.kind === "video" ? (
-            <label className="matching-editor-field">
-              <span className="field-label">Начинать с секунды</span>
-              <input
-                className="editor-input"
-                min={0}
-                step={1}
-                type="number"
-                value={content.startSeconds}
-                onChange={(event) =>
-                  setNumberField(
-                    "startSeconds",
-                    Number.isFinite(event.target.valueAsNumber)
-                      ? Math.max(0, Math.round(event.target.valueAsNumber))
-                      : 0,
-                  )
-                }
-              />
-              <p className="editor-hint">
-                Для видеофайлов и поддерживаемых видеосервисов. `0` означает
-                старт с самого начала.
-              </p>
-            </label>
-          ) : null}
-        </>
-      ) : null}
-    </div>
-  );
+function getMatchingMediaUi(kind: "image" | "audio" | "video") {
+  switch (kind) {
+    case "image":
+      return {
+        accept: "image/*",
+        dialogLabel: "Настроить изображение",
+        urlLabel: "Ссылка на изображение",
+        detailLabel: "Подпись / alt",
+        detailPlaceholder: "Короткое описание изображения",
+        description: "Добавьте картинку ссылкой или файлом. Файл можно сразу перетащить в это окно.",
+        dropTitle: "Перетащите изображение сюда",
+        dropReplaceText: "Нажмите, чтобы заменить изображение, или перетащите новый файл",
+        formatsHint: "PNG, JPG, WEBP, GIF и другие изображения",
+        note: "",
+      };
+    case "audio":
+      return {
+        accept: "audio/*,video/mp4,.mp3,.mp4,.m4a,.wav,.ogg",
+        dialogLabel: "Настроить аудио",
+        urlLabel: "Ссылка на аудио или видео",
+        detailLabel: "Подпись карточки",
+        detailPlaceholder: "Что увидит ученик",
+        description: "Добавьте звук ссылкой или файлом. Можно использовать прямую ссылку или ролик, если нужен только звук.",
+        dropTitle: "Перетащите аудиофайл сюда",
+        dropReplaceText: "Нажмите, чтобы заменить аудио, или перетащите другой файл",
+        formatsHint: "MP3, M4A, WAV, OGG или MP4 со звуком",
+        note: "Можно использовать прямую ссылку или YouTube, если нужен только звук.",
+      };
+    case "video":
+    default:
+      return {
+        accept: "video/*,.mp4,.webm,.ogv,.ogg",
+        dialogLabel: "Настроить видео",
+        urlLabel: "Ссылка на видео",
+        detailLabel: "Подпись карточки",
+        detailPlaceholder: "Что увидит ученик",
+        description: "Добавьте видео ссылкой или файлом. Поддерживаются прямые ссылки и популярные видеосервисы.",
+        dropTitle: "Перетащите видеофайл сюда",
+        dropReplaceText: "Нажмите, чтобы заменить видео, или перетащите другой файл",
+        formatsHint: "MP4, WEBM, OGV, а также YouTube, RuTube и VK Видео",
+        note: "Поддерживаются прямые ссылки, YouTube, RuTube и VK Видео.",
+      };
+  }
 }
 
-void MatchingSideFields;
+function getMatchingMediaSourceHint(url: string) {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  if (trimmed.startsWith("data:")) {
+    return "Встроенный файл";
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    const lastSegment = parsed.pathname.split("/").filter(Boolean).at(-1);
+    return decodeURIComponent(lastSegment || parsed.hostname);
+  } catch {
+    return trimmed;
+  }
+}
+
+function getMatchingMediaSummary(content: MatchingContent) {
+  if (content.kind === "image") {
+    const title =
+      content.alt.trim() ||
+      content.fileName?.trim() ||
+      getMatchingMediaSourceHint(content.url) ||
+      "Изображение";
+    return {
+      title,
+      meta: content.url.trim() ? "Изображение прикреплено" : "Нажмите, чтобы добавить изображение",
+      hasMedia: Boolean(content.url.trim()),
+    };
+  }
+
+  if (content.kind === "audio") {
+    const title =
+      content.label.trim() ||
+      content.fileName?.trim() ||
+      getMatchingMediaSourceHint(content.url) ||
+      "Аудио";
+    return {
+      title,
+      meta: content.url.trim() ? "Аудио прикреплено" : "Нажмите, чтобы добавить аудио",
+      hasMedia: Boolean(content.url.trim()),
+    };
+  }
+
+  if (content.kind === "video") {
+    const title =
+      content.label.trim() ||
+      content.fileName?.trim() ||
+      getMatchingMediaSourceHint(content.url) ||
+      "Видео";
+    return {
+      title,
+      meta: content.url.trim() ? "Видео прикреплено" : "Нажмите, чтобы добавить видео",
+      hasMedia: Boolean(content.url.trim()),
+    };
+  }
+
+  return {
+    title: "",
+    meta: "",
+    hasMedia: false,
+  };
+}
 
 function MatchingSideFieldsCompact({
   content,
@@ -611,9 +458,13 @@ function MatchingSideFieldsCompact({
   onNotice?: (message: string) => void;
 }>) {
   const [isMediaDialogOpen, setIsMediaDialogOpen] = useState(false);
+  const [isMediaDropActive, setIsMediaDropActive] = useState(false);
+  const mediaInputRef = useRef<HTMLInputElement | null>(null);
   const activeOption =
     matchingContentOptions.find((option) => option.id === content.kind) ??
     matchingContentOptions[0];
+  const isTextContent =
+    content.kind === "text" || content.kind === "spoken-text";
   const isMediaContent =
     content.kind === "image" ||
     content.kind === "audio" ||
@@ -626,6 +477,8 @@ function MatchingSideFieldsCompact({
       ? content.fileName.trim()
       : "";
   const isFileVideo = content.kind === "video" && hasEmbeddedFile;
+  const mediaUi = isMediaContent ? getMatchingMediaUi(content.kind) : null;
+  const mediaUrlValue = isMediaContent && hasEmbeddedFile ? "" : content.url;
 
   const setField = (
     field: "text" | "url" | "alt" | "label",
@@ -660,17 +513,10 @@ function MatchingSideFieldsCompact({
     } as MatchingContent);
   };
 
-  const handleMediaFile = async (
+  const applyMediaFile = async (
     kind: "image" | "audio" | "video",
-    event: ChangeEvent<HTMLInputElement>,
+    file: File,
   ) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-
-    if (!file) {
-      return;
-    }
-
     if (!isAcceptedMediaFile(kind, file)) {
       onNotice?.("Файл не подходит для выбранного типа карточки.");
       return;
@@ -720,6 +566,75 @@ function MatchingSideFieldsCompact({
     }
   };
 
+  const handleMediaInputChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file || !isMediaContent) {
+      return;
+    }
+
+    void applyMediaFile(content.kind, file);
+  };
+
+  const openMediaFilePicker = () => {
+    mediaInputRef.current?.click();
+  };
+
+  const handleDropZoneDragOver = (event: DragEvent<HTMLButtonElement>) => {
+    if (!isMediaContent) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setIsMediaDropActive(true);
+  };
+
+  const handleDropZoneDragLeave = (event: DragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    setIsMediaDropActive(false);
+  };
+
+  const handleDropZoneDrop = (event: DragEvent<HTMLButtonElement>) => {
+    if (!isMediaContent) {
+      return;
+    }
+
+    event.preventDefault();
+    setIsMediaDropActive(false);
+
+    const file = event.dataTransfer.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    void applyMediaFile(content.kind, file);
+  };
+
+  const handleTypeSelect = (nextKind: MatchingContent["kind"]) => {
+    const nextIsMedia =
+      nextKind === "image" || nextKind === "audio" || nextKind === "video";
+
+    if (!nextIsMedia) {
+      setIsMediaDialogOpen(false);
+      setIsMediaDropActive(false);
+
+      if (content.kind !== nextKind) {
+        onChange(createMatchingContent(nextKind));
+      }
+      return;
+    }
+
+    setIsMediaDropActive(false);
+
+    if (content.kind !== nextKind) {
+      onChange(createMatchingContent(nextKind));
+    }
+
+    setIsMediaDialogOpen(true);
+  };
+
   useEffect(() => {
     if (!isMediaDialogVisible) {
       return;
@@ -737,20 +652,68 @@ function MatchingSideFieldsCompact({
     };
   }, [isMediaDialogVisible]);
 
-  const mediaButtonLabel =
-    content.kind === "image"
-      ? "Настроить изображение"
-      : content.kind === "audio"
-        ? "Настроить аудио"
-        : "Настроить видео";
+  useEffect(() => {
+    if (isMediaContent) {
+      return;
+    }
+
+    setIsMediaDialogOpen(false);
+    setIsMediaDropActive(false);
+  }, [isMediaContent]);
+
+  const mediaDialogLabel = mediaUi?.dialogLabel ?? activeOption.label;
+  const dropZoneTitle = selectedFileLabel || mediaUi?.dropTitle || "";
+  const dropZoneText = selectedFileLabel
+    ? mediaUi?.dropReplaceText || ""
+    : "Нажмите, чтобы выбрать файл в проводнике, или просто перетащите его сюда";
+  const mediaSummary = isMediaContent ? getMatchingMediaSummary(content) : null;
 
   return (
-    <div className="matching-editor-side">
-      <div className="matching-editor-side__head">
-        <strong>{label}</strong>
-      </div>
+    <div className="matching-editor-side matching-editor-side--compact">
+      <div className="matching-editor-side__surface">
+        <div className="matching-editor-side__content">
+          {isTextContent ? (
+            <textarea
+              aria-label={label}
+              className="editor-textarea matching-editor-side__textarea"
+              placeholder="Введите содержимое карточки"
+              rows={2}
+              value={content.text}
+              onChange={(event) => setField("text", event.target.value)}
+            />
+          ) : mediaSummary ? (
+            <button
+              className={`matching-editor-media-summary ${
+                mediaSummary.hasMedia ? "matching-editor-media-summary--filled" : ""
+              }`}
+              type="button"
+              onClick={() => setIsMediaDialogOpen(true)}
+            >
+              {content.kind === "image" && content.url.trim() ? (
+                <span className="matching-editor-media-summary__preview matching-editor-media-summary__preview--image">
+                  <img alt={mediaSummary.title} src={content.url} />
+                </span>
+              ) : (
+                <span className="matching-editor-media-summary__preview">
+                  <MatchingTypeIcon kind={content.kind} />
+                </span>
+              )}
+              <span className="matching-editor-media-summary__body">
+                <span
+                  className="matching-editor-media-summary__title"
+                  title={mediaSummary.title}
+                >
+                  {mediaSummary.title}
+                </span>
+                <span className="matching-editor-media-summary__meta">
+                  {mediaSummary.meta}
+                </span>
+              </span>
+            </button>
+          ) : null}
+        </div>
 
-      <div className="matching-editor-types">
+        <div className="matching-editor-types">
         {matchingContentOptions.map((option) => (
           <button
             aria-label={option.label}
@@ -761,43 +724,18 @@ function MatchingSideFieldsCompact({
             key={option.id}
             title={option.label}
             type="button"
-            onClick={() => {
-              setIsMediaDialogOpen(false);
-              onChange(createMatchingContent(option.id));
-            }}
+            onClick={() => handleTypeSelect(option.id)}
           >
             <MatchingTypeIcon kind={option.id} />
             <span className="sr-only">{option.label}</span>
           </button>
         ))}
+        </div>
       </div>
-
-      {content.kind === "text" || content.kind === "spoken-text" ? (
-        <textarea
-          aria-label={label}
-          className="editor-textarea"
-          placeholder="Введите содержимое карточки"
-          rows={3}
-          value={content.text}
-          onChange={(event) => setField("text", event.target.value)}
-        />
-      ) : null}
-
-      {isMediaContent ? (
-        <button
-          className="ghost-button matching-editor-media-button matching-editor-media-button--block"
-          title={mediaButtonLabel}
-          type="button"
-          onClick={() => setIsMediaDialogOpen(true)}
-        >
-          <MediaSettingsIcon />
-          Медиа
-        </button>
-      ) : null}
 
       {isMediaDialogVisible ? (
         <div
-          aria-label={mediaButtonLabel}
+          aria-label={mediaDialogLabel}
           aria-modal="true"
           className="matching-editor-modal"
           role="dialog"
@@ -815,7 +753,7 @@ function MatchingSideFieldsCompact({
             <div className="matching-editor-modal__head">
               <div>
                 <strong>{label}</strong>
-                <p className="editor-hint">{activeOption.label}</p>
+                <p className="editor-hint">{mediaUi?.description}</p>
               </div>
               <button
                 aria-label="Закрыть окно"
@@ -829,90 +767,93 @@ function MatchingSideFieldsCompact({
             </div>
 
             <div className="matching-editor-modal__body">
-              {content.kind === "image" ? (
-                <>
-                  <label className="matching-editor-field">
-                    <span className="field-label">URL изображения</span>
+              <div className="matching-editor-modal__kind">
+                <span className="matching-editor-modal__kind-icon">
+                  <MatchingTypeIcon kind={content.kind} />
+                </span>
+                <div>
+                  <strong>{activeOption.label}</strong>
+                  <p className="editor-hint">
+                    {selectedFileLabel
+                      ? "Файл уже прикреплен. Можно заменить его новым или вставить ссылку."
+                      : "Выберите источник контента: файл или ссылка."}
+                  </p>
+                </div>
+              </div>
+
+              <input
+                accept={mediaUi?.accept}
+                className="matching-editor-file-input"
+                ref={mediaInputRef}
+                type="file"
+                onChange={handleMediaInputChange}
+              />
+
+              <button
+                className={`matching-editor-dropzone ${
+                  isMediaDropActive ? "matching-editor-dropzone--active" : ""
+                }`}
+                type="button"
+                onClick={openMediaFilePicker}
+                onDragEnter={handleDropZoneDragOver}
+                onDragLeave={handleDropZoneDragLeave}
+                onDragOver={handleDropZoneDragOver}
+                onDrop={handleDropZoneDrop}
+              >
+                <span className="matching-editor-dropzone__icon">
+                  <MatchingTypeIcon kind={content.kind} />
+                </span>
+                <strong className="matching-editor-dropzone__title">
+                  {dropZoneTitle}
+                </strong>
+                <span className="matching-editor-dropzone__text">
+                  {dropZoneText}
+                </span>
+                <span className="matching-editor-dropzone__meta">
+                  {mediaUi?.formatsHint}
+                </span>
+              </button>
+
+              <div className="matching-editor-modal__grid">
+                <label className="matching-editor-field matching-editor-field--full">
+                  <span className="field-label">{mediaUi?.urlLabel}</span>
+                  <input
+                    className="editor-input"
+                    placeholder={
+                      hasEmbeddedFile
+                        ? "Вставьте ссылку, если хотите заменить встроенный файл"
+                        : "https://..."
+                    }
+                    value={mediaUrlValue}
+                    onChange={(event) => setField("url", event.target.value)}
+                  />
+                </label>
+
+                {content.kind === "image" ? (
+                  <label className="matching-editor-field matching-editor-field--full">
+                    <span className="field-label">{mediaUi?.detailLabel}</span>
                     <input
                       className="editor-input"
-                      placeholder="https://..."
-                      value={content.url}
-                      onChange={(event) => setField("url", event.target.value)}
-                    />
-                  </label>
-                  <label className="matching-editor-field">
-                    <span className="field-label">Файл изображения</span>
-                    <input
-                      accept="image/*"
-                      className="editor-input"
-                      type="file"
-                      onChange={(event) => void handleMediaFile("image", event)}
-                    />
-                    {selectedFileLabel ? (
-                      <span className="editor-hint">{selectedFileLabel}</span>
-                    ) : null}
-                  </label>
-                  <label className="matching-editor-field">
-                    <span className="field-label">Подпись / alt</span>
-                    <input
-                      className="editor-input"
-                      placeholder="Короткое описание"
+                      placeholder={mediaUi?.detailPlaceholder}
                       value={content.alt}
                       onChange={(event) => setField("alt", event.target.value)}
                     />
                   </label>
-                </>
-              ) : null}
+                ) : null}
 
-              {content.kind === "audio" || content.kind === "video" ? (
-                <>
-                  <label className="matching-editor-field">
-                    <span className="field-label">
-                      {content.kind === "audio"
-                        ? "URL аудио / видео для звука"
-                        : "URL видео"}
-                    </span>
+                {content.kind === "audio" || content.kind === "video" ? (
+                  <label className="matching-editor-field matching-editor-field--full">
+                    <span className="field-label">{mediaUi?.detailLabel}</span>
                     <input
                       className="editor-input"
-                      placeholder="https://..."
-                      value={content.url}
-                      onChange={(event) => setField("url", event.target.value)}
-                    />
-                  </label>
-                  <label className="matching-editor-field">
-                    <span className="field-label">
-                      {content.kind === "audio" ? "Файл аудио" : "Файл видео"}
-                    </span>
-                    <input
-                      accept={
-                        content.kind === "audio"
-                          ? "audio/*,video/mp4,.mp3,.mp4,.m4a,.wav,.ogg"
-                          : "video/*,.mp4,.webm,.ogv,.ogg"
-                      }
-                      className="editor-input"
-                      type="file"
-                      onChange={(event) =>
-                        void handleMediaFile(content.kind, event)
-                      }
-                    />
-                    {selectedFileLabel ? (
-                      <span className="editor-hint">{selectedFileLabel}</span>
-                    ) : null}
-                  </label>
-                  <label className="matching-editor-field">
-                    <span className="field-label">Подпись карточки</span>
-                    <input
-                      className="editor-input"
-                      placeholder="Что увидит ученик"
+                      placeholder={mediaUi?.detailPlaceholder}
                       value={content.label}
                       onChange={(event) => setField("label", event.target.value)}
                     />
                   </label>
-                </>
-              ) : null}
+                ) : null}
 
-              {content.kind === "video" ? (
-                <>
+                {content.kind === "video" ? (
                   <label className="matching-editor-field">
                     <span className="field-label">Начинать с секунды</span>
                     <input
@@ -931,7 +872,9 @@ function MatchingSideFieldsCompact({
                       }
                     />
                   </label>
-                  {isFileVideo ? (
+                ) : null}
+
+                {isFileVideo ? (
                   <label className="matching-editor-field">
                     <span className="field-label">Громкость, %</span>
                     <input
@@ -954,17 +897,12 @@ function MatchingSideFieldsCompact({
                       }
                     />
                   </label>
-                  ) : null}
-                  <p className="editor-hint">
-                    Поддерживаются прямые ссылки, YouTube, RuTube и VK Видео.
-                  </p>
-                </>
-              ) : null}
+                ) : null}
+              </div>
 
-              {content.kind === "audio" ? (
-                <p className="editor-hint">
-                  Можно использовать прямую ссылку или YouTube, если нужен
-                  только звук.
+              {mediaUi?.note ? (
+                <p className="editor-hint matching-editor-modal__note">
+                  {mediaUi.note}
                 </p>
               ) : null}
             </div>
@@ -1012,6 +950,7 @@ export function MatchingPairsEditor({
 }>) {
   const [bulkInput, setBulkInput] = useState("");
   const [bulkError, setBulkError] = useState<string | null>(null);
+  const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
   const normalized = normalizeMatchingPairsData(value);
 
   const updateData = (
@@ -1066,16 +1005,48 @@ export function MatchingPairsEditor({
     );
   };
 
+  useEffect(() => {
+    if (!isSettingsDialogOpen) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsSettingsDialogOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isSettingsDialogOpen]);
+
   return (
     <div className="matching-editor-root">
       <div className="editor-block">
-        <div className="editor-block__head">
-          <div>
-            <strong>Редактор пар</strong>
-            <p className="editor-hint">
-              Для каждой пары заполните левую и правую карточку. Тип содержимого
-              выбирается иконкой.
-            </p>
+        <div className="editor-block__head matching-editor-header">
+          <div className="matching-editor-header__lead">
+            <button
+              aria-label="Открыть параметры игры и быстрый импорт"
+              className="ghost-button matching-editor-settings-trigger"
+              title="Параметры игры и быстрый импорт"
+              type="button"
+              onClick={() => setIsSettingsDialogOpen(true)}
+            >
+              <SettingsIcon />
+              <span className="matching-editor-settings-trigger__text">
+                Настройки
+              </span>
+              <span className="sr-only">Параметры игры и быстрый импорт</span>
+            </button>
+            <div>
+              <strong>Редактор пар</strong>
+              <p className="editor-hint">
+                Для каждой пары заполните левую и правую карточку. Тип содержимого
+                выбирается иконкой.
+              </p>
+            </div>
           </div>
         </div>
 
@@ -1083,107 +1054,104 @@ export function MatchingPairsEditor({
 
         <div className="matching-editor-list">
           {normalized.pairs.map((pair, index) => (
-            <article className="matching-editor-row" key={`pair-${index}`}>
-              <div className="matching-editor-row__head">
-                <strong>{`Пара ${index + 1}`}</strong>
-                <div className="inline-actions">
-                  <button
-                    aria-label="Поднять выше"
-                    className="ghost-button matching-action-button"
-                    disabled={index === 0}
-                    title="Поднять выше"
-                    type="button"
-                    onClick={() =>
-                      updatePairs((current) => moveItem(current, index, index - 1))
-                    }
-                  >
-                    <ActionIcon kind="up" />
-                    Вверх
-                  </button>
-                  <button
-                    aria-label="Опустить ниже"
-                    className="ghost-button matching-action-button"
-                    disabled={index === normalized.pairs.length - 1}
-                    title="Опустить ниже"
-                    type="button"
-                    onClick={() =>
-                      updatePairs((current) => moveItem(current, index, index + 1))
-                    }
-                  >
-                    <ActionIcon kind="down" />
-                    Вниз
-                  </button>
-                  <button
-                    aria-label="Дублировать"
-                    className="ghost-button matching-action-button"
-                    title="Дублировать"
-                    type="button"
-                    onClick={() =>
-                      updatePairs((current) => {
-                        const next = [...current];
-                        next.splice(index + 1, 0, structuredClone(current[index]));
-                        return next;
-                      })
-                    }
-                  >
-                    <ActionIcon kind="duplicate" />
-                    Дублировать
-                  </button>
-                  <button
-                    aria-label="Удалить"
-                    className="ghost-button matching-action-button"
-                    title="Удалить"
-                    type="button"
-                    onClick={() =>
-                      updatePairs((current) => {
-                        if (current.length === 1) {
-                          return [createMatchingPair()];
-                        }
-                        return current.filter((_, pairIndex) => pairIndex !== index);
-                      })
-                    }
-                  >
-                    <ActionIcon kind="delete" />
-                    Удалить
-                  </button>
-                </div>
+            <article className="matching-editor-row matching-editor-row--pair" key={`pair-${index}`}>
+              <div className="matching-editor-row__index" aria-label={`Пара ${index + 1}`}>
+                {index + 1}
               </div>
-
-              <div className="matching-editor-grid">
-                <MatchingSideFieldsCompact
-                  content={pair.left}
-                  label="Левая карточка"
-                  onNotice={onNotice}
-                  onChange={(nextContent) =>
-                    updatePairs((current) =>
-                      current.map((currentPair, pairIndex) =>
-                        pairIndex === index
-                          ? {
-                              ...currentPair,
-                              left: nextContent,
-                            }
-                          : currentPair,
-                      ),
-                    )
+              <MatchingSideFieldsCompact
+                content={pair.left}
+                label="Слева"
+                onNotice={onNotice}
+                onChange={(nextContent) =>
+                  updatePairs((current) =>
+                    current.map((currentPair, pairIndex) =>
+                      pairIndex === index
+                        ? {
+                            ...currentPair,
+                            left: nextContent,
+                          }
+                        : currentPair,
+                    ),
+                  )
+                }
+              />
+              <MatchingSideFieldsCompact
+                content={pair.right}
+                label="Справа"
+                onNotice={onNotice}
+                onChange={(nextContent) =>
+                  updatePairs((current) =>
+                    current.map((currentPair, pairIndex) =>
+                      pairIndex === index
+                        ? {
+                            ...currentPair,
+                            right: nextContent,
+                          }
+                        : currentPair,
+                    ),
+                  )
+                }
+              />
+              <div className="inline-actions matching-editor-row__actions">
+                <button
+                  aria-label="Поднять выше"
+                  className="ghost-button matching-action-button"
+                  disabled={index === 0}
+                  title="Поднять выше"
+                  type="button"
+                  onClick={() =>
+                    updatePairs((current) => moveItem(current, index, index - 1))
                   }
-                />
-                <MatchingSideFieldsCompact
-                  content={pair.right}
-                  label="Правая карточка"
-                  onNotice={onNotice}
-                  onChange={(nextContent) =>
-                    updatePairs((current) =>
-                      current.map((currentPair, pairIndex) =>
-                        pairIndex === index
-                          ? {
-                              ...currentPair,
-                              right: nextContent,
-                            }
-                          : currentPair,
-                      ),
-                    )
+                >
+                  <ActionIcon kind="up" />
+                  <span className="sr-only">Поднять выше</span>
+                </button>
+                <button
+                  aria-label="Опустить ниже"
+                  className="ghost-button matching-action-button"
+                  disabled={index === normalized.pairs.length - 1}
+                  title="Опустить ниже"
+                  type="button"
+                  onClick={() =>
+                    updatePairs((current) => moveItem(current, index, index + 1))
                   }
-                />
+                >
+                  <ActionIcon kind="down" />
+                  <span className="sr-only">Опустить ниже</span>
+                </button>
+                <button
+                  aria-label="Дублировать"
+                  className="ghost-button matching-action-button"
+                  title="Дублировать"
+                  type="button"
+                  onClick={() =>
+                    updatePairs((current) => {
+                      const next = [...current];
+                      next.splice(index + 1, 0, structuredClone(current[index]));
+                      return next;
+                    })
+                  }
+                >
+                  <ActionIcon kind="duplicate" />
+                  <span className="sr-only">Дублировать</span>
+                </button>
+                <button
+                  aria-label="Удалить"
+                  className="ghost-button matching-action-button"
+                  title="Удалить"
+                  type="button"
+                  onClick={() =>
+                    updatePairs((current) => {
+                      if (current.length === 1) {
+                        return [createMatchingPair()];
+                      }
+                      return current.filter((_, pairIndex) => pairIndex !== index);
+                    })
+                  }
+                >
+                  <ActionIcon kind="delete" />
+                  <span className="sr-only">Удалить</span>
+                </button>
               </div>
             </article>
           ))}
@@ -1332,160 +1300,229 @@ export function MatchingPairsEditor({
         )}
       </div>
 
-      <details className="editor-block editor-details">
-        <summary className="editor-details__summary">Параметры игры</summary>
-        <p className="editor-hint">
-          Здесь задается поведение соединения, мгновенная проверка и вид
-          карточек в упражнении.
-        </p>
-
-        <div className="matching-settings-grid">
-          <label className="matching-setting-card">
-            <span className="field-label">Основной цвет фона и акцентов в игровом поле.</span>
-            <div className="matching-setting-color">
-              <input
-                className="editor-input editor-input--color"
-                id="themeColor"
-                type="color"
-                value={themeColor}
-                onChange={(event) => onThemeColorChange?.(event.target.value)}
-              />
-             
+      {isSettingsDialogOpen ? (
+        <div
+          aria-label="Параметры игры и быстрый импорт"
+          aria-modal="true"
+          className="matching-editor-modal matching-editor-modal--settings"
+          role="dialog"
+        >
+          <button
+            aria-label="Закрыть окно"
+            className="matching-editor-modal__backdrop"
+            type="button"
+            onClick={() => setIsSettingsDialogOpen(false)}
+          />
+          <div
+            className="matching-editor-modal__dialog matching-editor-modal__dialog--settings"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="matching-editor-modal__head">
+              <div>
+                <strong>Настройки упражнения</strong>
+                <p className="editor-hint">
+                  Здесь собраны параметры игры и быстрый импорт пар.
+                </p>
+              </div>
+              <button
+                aria-label="Закрыть окно"
+                className="ghost-button matching-editor-modal__close"
+                title="Закрыть"
+                type="button"
+                onClick={() => setIsSettingsDialogOpen(false)}
+              >
+                <CloseIcon />
+              </button>
             </div>
-          </label>
 
-          <div className="matching-setting-card">
-            <span className="field-label">Выравнивание при скреплении</span>
-            <div className="matching-setting-options">
-              <button
-                className={`matching-setting-chip ${
-                  normalized.pairAlignment === "horizontal"
-                    ? "matching-setting-chip--active"
-                    : ""
-                }`}
-                type="button"
-                onClick={() =>
-                  updateData((current) => ({
-                    ...current,
-                    pairAlignment: "horizontal",
-                  }))
-                }
-              >
-                Бок о бок
-              </button>
-              <button
-                className={`matching-setting-chip ${
-                  normalized.pairAlignment === "vertical"
-                    ? "matching-setting-chip--active"
-                    : ""
-                }`}
-                type="button"
-                onClick={() =>
-                  updateData((current) => ({
-                    ...current,
-                    pairAlignment: "vertical",
-                  }))
-                }
-              >
-                Сверху вниз
-              </button>
+            <div className="matching-editor-modal__body matching-editor-settings-modal__body">
+              <section className="matching-editor-settings-section">
+                <div className="matching-editor-settings-section__head">
+                  <strong>Параметры игры</strong>
+                  <p className="editor-hint">
+                    Цвет поля, выравнивание скрепления и поведение проверки.
+                  </p>
+                </div>
+
+                <div className="matching-settings-grid">
+                  <label className="matching-setting-card">
+                    <span className="field-label">
+                      Основной цвет фона и акцентов в игровом поле.
+                    </span>
+                    <div className="matching-setting-color">
+                      <input
+                        className="editor-input editor-input--color"
+                        id="themeColor"
+                        type="color"
+                        value={themeColor}
+                        onChange={(event) => onThemeColorChange?.(event.target.value)}
+                      />
+                    </div>
+                  </label>
+
+                  <div className="matching-setting-card">
+                    <span className="field-label">Выравнивание при скреплении</span>
+                    <div className="matching-setting-options">
+                      <button
+                        className={`matching-setting-chip ${
+                          normalized.pairAlignment === "horizontal"
+                            ? "matching-setting-chip--active"
+                            : ""
+                        }`}
+                        type="button"
+                        onClick={() =>
+                          updateData((current) => ({
+                            ...current,
+                            pairAlignment: "horizontal",
+                          }))
+                        }
+                      >
+                        Бок о бок
+                      </button>
+                      <button
+                        className={`matching-setting-chip ${
+                          normalized.pairAlignment === "vertical"
+                            ? "matching-setting-chip--active"
+                            : ""
+                        }`}
+                        type="button"
+                        onClick={() =>
+                          updateData((current) => ({
+                            ...current,
+                            pairAlignment: "vertical",
+                          }))
+                        }
+                      >
+                        Сверху вниз
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="matching-setting-card">
+                    <span className="field-label">Вид соединения</span>
+                    <div className="matching-setting-options">
+                      {matchingConnectorStyleOptions.map((option) => (
+                        <button
+                          className={`matching-setting-chip ${
+                            normalized.connectorStyle === option.id
+                              ? "matching-setting-chip--active"
+                              : ""
+                          }`}
+                          key={option.id}
+                          type="button"
+                          onClick={() =>
+                            updateData((current) => ({
+                              ...current,
+                              connectorStyle: option.id,
+                            }))
+                          }
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <label className="matching-setting-card matching-setting-card--toggle">
+                    <input
+                        checked={normalized.autoRemoveCorrectPairs}
+                        type="checkbox"
+                        onChange={(event) =>
+                            updateData((current) => ({
+                              ...current,
+                              autoRemoveCorrectPairs: event.target.checked,
+                            }))
+                        }
+                    />
+                    <div>
+                      <strong>Удалять правильно составленные пары</strong>
+                      <p className="editor-hint">
+                        Верно составленные пары автоматически исчезают с поля сразу после
+                        соединения.
+                      </p>
+                    </div>
+                  </label>
+                  <label className="matching-setting-card matching-setting-card--toggle">
+                    <input
+                      checked={normalized.showImmediateFeedback}
+                      type="checkbox"
+                      onChange={(event) =>
+                        updateData((current) => ({
+                          ...current,
+                          showImmediateFeedback: event.target.checked,
+                        }))
+                      }
+                    />
+                    <div>
+                      <strong>Показывать результат сразу</strong>
+                      <p className="editor-hint">
+                        Правильные связки будут зелеными, ошибочные красными еще до
+                        нажатия на кнопку проверки.
+                      </p>
+                    </div>
+                  </label>
+
+
+
+                  <label className="matching-setting-card matching-setting-card--toggle">
+                    <input
+                      checked={normalized.colorByGroup}
+                      type="checkbox"
+                      onChange={(event) =>
+                        updateData((current) => ({
+                          ...current,
+                          colorByGroup: event.target.checked,
+                        }))
+                      }
+                    />
+                    <div>
+                      <strong>Раскраска карточек по сторонам</strong>
+                      <p className="editor-hint">
+                        Левая и правая карточки отличаются цветом без дополнительных меток.
+                      </p>
+                    </div>
+                  </label>
+                </div>
+              </section>
+
+              <section className="matching-editor-settings-section">
+                <div className="matching-editor-settings-section__head">
+                  <strong>Быстрый импорт</strong>
+                  <p className="editor-hint">
+                    Вставьте пары построчно в формате `лево	tab	право`, `лево ; право`,
+                    `лево | право` или `лево - право`.
+                  </p>
+                </div>
+
+                <textarea
+                  className="editor-code editor-code--compact"
+                  rows={8}
+                  spellCheck={false}
+                  value={bulkInput}
+                  onChange={(event) => setBulkInput(event.target.value)}
+                  placeholder={"HTML\tСтруктура страницы\nCSS\tОформление страницы"}
+                />
+                {bulkError ? <p className="error-text">{bulkError}</p> : null}
+                <div className="inline-actions">
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    onClick={() => handleBulkImport("append")}
+                  >
+                    Добавить к списку
+                  </button>
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={() => handleBulkImport("replace")}
+                  >
+                    Заменить пары
+                  </button>
+                </div>
+              </section>
             </div>
           </div>
-
-          <label className="matching-setting-card matching-setting-card--toggle">
-            <input
-              checked={normalized.showImmediateFeedback}
-              type="checkbox"
-              onChange={(event) =>
-                updateData((current) => ({
-                  ...current,
-                  showImmediateFeedback: event.target.checked,
-                }))
-              }
-            />
-            <div>
-              <strong>Показывать результат сразу</strong>
-              <p className="editor-hint">
-                Правильные связки будут зелеными, ошибочные красными еще до
-                нажатия на кнопку проверки.
-              </p>
-            </div>
-          </label>
-
-          <label className="matching-setting-card matching-setting-card--toggle">
-            <input
-              checked={normalized.autoRemoveCorrectPairs}
-              type="checkbox"
-              onChange={(event) =>
-                updateData((current) => ({
-                  ...current,
-                  autoRemoveCorrectPairs: event.target.checked,
-                }))
-              }
-            />
-            <div>
-              <strong>Удалять правильно составленные пары</strong>
-              <p className="editor-hint">
-                Верно составленные пары автоматически исчезают с поля сразу после
-                соединения.
-              </p>
-            </div>
-          </label>
-
-          <label className="matching-setting-card matching-setting-card--toggle">
-            <input
-              checked={normalized.colorByGroup}
-              type="checkbox"
-              onChange={(event) =>
-                updateData((current) => ({
-                  ...current,
-                  colorByGroup: event.target.checked,
-                }))
-              }
-            />
-            <div>
-              <strong>Раскраска карточек по группам</strong>
-              <p className="editor-hint">
-                Левая и правая колонка получают разные цвета: синий и оранжевый.
-              </p>
-            </div>
-          </label>
         </div>
-      </details>
-
-      <details className="editor-block editor-details">
-        <summary className="editor-details__summary">Быстрый импорт</summary>
-        <p className="editor-hint">
-          Вставьте пары построчно в формате `лево	tab	право`, `лево ; право`,
-          `лево | право` или `лево - право`.
-        </p>
-
-        <textarea
-          className="editor-code editor-code--compact"
-          rows={8}
-          spellCheck={false}
-          value={bulkInput}
-          onChange={(event) => setBulkInput(event.target.value)}
-          placeholder={"HTML\tСтруктура страницы\nCSS\tОформление страницы"}
-        />
-        {bulkError ? <p className="error-text">{bulkError}</p> : null}
-        <div className="inline-actions">
-          <button
-            className="ghost-button"
-            type="button"
-            onClick={() => handleBulkImport("append")}
-          >
-            Добавить к списку
-          </button>
-          <button
-            className="primary-button"
-            type="button"
-            onClick={() => handleBulkImport("replace")}
-          >
-            Заменить пары
-          </button>
-        </div>
-      </details>
+      ) : null}
     </div>
   );
 }
