@@ -465,33 +465,32 @@ function MatchingSideFieldsCompact({
     matchingContentOptions[0];
   const isTextContent =
     content.kind === "text" || content.kind === "spoken-text";
-  const isMediaContent =
-    content.kind === "image" ||
-    content.kind === "audio" ||
-    content.kind === "video";
+  const mediaContent =
+    content.kind === "image" || content.kind === "audio" || content.kind === "video"
+      ? content
+      : null;
+  const imageContent = content.kind === "image" ? content : null;
+  const labeledMediaContent =
+    content.kind === "audio" || content.kind === "video" ? content : null;
+  const videoContent = content.kind === "video" ? content : null;
+  const isMediaContent = mediaContent !== null;
   const isMediaDialogVisible = isMediaContent && isMediaDialogOpen;
-  const hasEmbeddedFile =
-    isMediaContent && content.url.trim().startsWith("data:");
-  const selectedFileLabel =
-    isMediaContent && "fileName" in content && typeof content.fileName === "string"
-      ? content.fileName.trim()
-      : "";
-  const isFileVideo = content.kind === "video" && hasEmbeddedFile;
-  const mediaUi = isMediaContent ? getMatchingMediaUi(content.kind) : null;
-  const mediaUrlValue = isMediaContent && hasEmbeddedFile ? "" : content.url;
+  const hasEmbeddedFile = Boolean(mediaContent?.url.trim().startsWith("data:"));
+  const selectedFileLabel = mediaContent?.fileName?.trim() ?? "";
+  const isFileVideo = videoContent !== null && hasEmbeddedFile;
+  const mediaUi = mediaContent ? getMatchingMediaUi(mediaContent.kind) : null;
+  const mediaUrlValue = hasEmbeddedFile ? "" : mediaContent?.url ?? "";
 
   const setField = (
     field: "text" | "url" | "alt" | "label",
     value: string,
   ) => {
-    if (field === "url" && isMediaContent) {
+    if (field === "url" && mediaContent) {
       onChange({
-        ...content,
+        ...mediaContent,
         url: value,
         fileName: value.trim().startsWith("data:")
-          ? "fileName" in content && typeof content.fileName === "string"
-            ? content.fileName
-            : ""
+          ? mediaContent.fileName ?? ""
           : "",
       } as MatchingContent);
       return;
@@ -570,11 +569,11 @@ function MatchingSideFieldsCompact({
     const file = event.target.files?.[0];
     event.target.value = "";
 
-    if (!file || !isMediaContent) {
+    if (!file || !mediaContent) {
       return;
     }
 
-    void applyMediaFile(content.kind, file);
+    void applyMediaFile(mediaContent.kind, file);
   };
 
   const openMediaFilePicker = () => {
@@ -582,7 +581,7 @@ function MatchingSideFieldsCompact({
   };
 
   const handleDropZoneDragOver = (event: DragEvent<HTMLButtonElement>) => {
-    if (!isMediaContent) {
+    if (!mediaContent) {
       return;
     }
 
@@ -597,7 +596,7 @@ function MatchingSideFieldsCompact({
   };
 
   const handleDropZoneDrop = (event: DragEvent<HTMLButtonElement>) => {
-    if (!isMediaContent) {
+    if (!mediaContent) {
       return;
     }
 
@@ -609,7 +608,7 @@ function MatchingSideFieldsCompact({
       return;
     }
 
-    void applyMediaFile(content.kind, file);
+    void applyMediaFile(mediaContent.kind, file);
   };
 
   const handleTypeSelect = (nextKind: MatchingContent["kind"]) => {
@@ -666,7 +665,7 @@ function MatchingSideFieldsCompact({
   const dropZoneText = selectedFileLabel
     ? mediaUi?.dropReplaceText || ""
     : "Нажмите, чтобы выбрать файл в проводнике, или просто перетащите его сюда";
-  const mediaSummary = isMediaContent ? getMatchingMediaSummary(content) : null;
+  const mediaSummary = mediaContent ? getMatchingMediaSummary(mediaContent) : null;
 
   return (
     <div className="matching-editor-side matching-editor-side--compact">
@@ -689,9 +688,9 @@ function MatchingSideFieldsCompact({
               type="button"
               onClick={() => setIsMediaDialogOpen(true)}
             >
-              {content.kind === "image" && content.url.trim() ? (
+              {imageContent && imageContent.url.trim() ? (
                 <span className="matching-editor-media-summary__preview matching-editor-media-summary__preview--image">
-                  <img alt={mediaSummary.title} src={content.url} />
+                  <img alt={mediaSummary.title} src={imageContent.url} />
                 </span>
               ) : (
                 <span className="matching-editor-media-summary__preview">
@@ -841,19 +840,19 @@ function MatchingSideFieldsCompact({
                   </label>
                 ) : null}
 
-                {content.kind === "audio" || content.kind === "video" ? (
+                {labeledMediaContent ? (
                   <label className="matching-editor-field matching-editor-field--full">
                     <span className="field-label">{mediaUi?.detailLabel}</span>
                     <input
                       className="editor-input"
                       placeholder={mediaUi?.detailPlaceholder}
-                      value={content.label}
+                      value={labeledMediaContent.label}
                       onChange={(event) => setField("label", event.target.value)}
                     />
                   </label>
                 ) : null}
 
-                {content.kind === "video" ? (
+                {videoContent ? (
                   <label className="matching-editor-field">
                     <span className="field-label">Начинать с секунды</span>
                     <input
@@ -861,7 +860,7 @@ function MatchingSideFieldsCompact({
                       min={0}
                       step={1}
                       type="number"
-                      value={content.startSeconds}
+                      value={videoContent.startSeconds}
                       onChange={(event) =>
                         setNumberField(
                           "startSeconds",
@@ -874,7 +873,7 @@ function MatchingSideFieldsCompact({
                   </label>
                 ) : null}
 
-                {isFileVideo ? (
+                {isFileVideo && videoContent ? (
                   <label className="matching-editor-field">
                     <span className="field-label">Громкость, %</span>
                     <input
@@ -883,7 +882,7 @@ function MatchingSideFieldsCompact({
                       min={0}
                       step={5}
                       type="number"
-                      value={content.volume}
+                      value={videoContent.volume}
                       onChange={(event) =>
                         setNumberField(
                           "volume",
