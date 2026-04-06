@@ -9,12 +9,14 @@
     "dev": "next dev",
     "build": "npm run build:scorm-player && next build",
     "build:scorm-player": "node scripts/build-scorm-player.mjs",
+    "setup:media-tools": "node scripts/setup-media-tools.mjs",
     "start": "next start --hostname 0.0.0.0",
     "lint": "eslint",
     "migrate:mysql": "node scripts/migrate-mysql.mjs"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
+    "ffmpeg-static": "^5.3.0",
     "jose": "^6.2.2",
     "jszip": "^3.10.1",
     "mariadb": "^3.5.2",

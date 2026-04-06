@@ -28,6 +28,10 @@ import {
   normalizeMatchingSide,
 } from "@/lib/matching-pairs";
 import {
+  buildConvertedAudioPath,
+  getConvertibleAudioProvider,
+} from "@/lib/media-audio";
+import {
   clamp,
   moveItem,
   normalizeText,
@@ -329,15 +333,16 @@ function getMatchingCardHeight(
   if (normalized.kind === "video") {
     const title = normalized.label || "\u0412\u0438\u0434\u0435\u043e";
     const source = normalized.url ? getMatchingPlayableSourceLabel(normalized) : "";
+    const normalizedVideoSize = clamp(getMatchingVideoSize(normalized), 90, 320);
     const previewHeight = Math.round(
-      clamp(getMatchingVideoSize(normalized), 120, 220) *
+      normalizedVideoSize *
         clamp(width / MATCHING_CARD_WIDTH, 0.66, 1) *
-        0.54,
+        0.56,
     );
     return (
       estimateMatchingTextHeight(title, innerWidth, 30) +
       previewHeight +
-      (source ? estimateMatchingTextHeight(source, innerWidth, 18) + 6 : 0) +
+      (source ? estimateMatchingTextHeight(source, innerWidth, 22) + 8 : 0) +
       18
     );
   }
@@ -371,7 +376,10 @@ function getMatchingCardBaseWidth(content: MatchingContent, columnWidth: number)
   const maxWidth = Math.max(MATCHING_CARD_MIN_WIDTH, Math.floor(columnWidth));
 
   if (normalized.kind === "video") {
-    return clamp(Math.round(maxWidth * 0.96), Math.min(236, maxWidth), maxWidth);
+    const preferredWidth = Math.round(
+      152 + clamp(getMatchingVideoSize(normalized), 90, 320) * 0.48,
+    );
+    return clamp(preferredWidth, Math.min(208, maxWidth), Math.min(320, maxWidth));
   }
 
   if (normalized.kind === "audio") {
@@ -397,6 +405,7 @@ function getMatchingCardBaseWidth(content: MatchingContent, columnWidth: number)
   const normalizedText = normalized.text.trim();
   const longestLine = getMatchingLongestLineLength(normalizedText);
   const lineCount = Math.max(normalizedText.split(/\r?\n/).filter(Boolean).length, 1);
+  const isPlaceholderText = normalizedText.length === 0;
   const preferredWidth = Math.round(
     84 +
       Math.min(longestLine, 34) * 8.8 +
@@ -404,7 +413,13 @@ function getMatchingCardBaseWidth(content: MatchingContent, columnWidth: number)
       Math.min(lineCount, 5) * 4,
   );
   const minWidth = normalized.kind === "spoken-text" ? 148 : 78;
-  return clamp(preferredWidth, minWidth, maxWidth);
+  const placeholderWidth =
+    normalized.kind === "spoken-text" ? 172 : 118;
+  return clamp(
+    isPlaceholderText ? placeholderWidth : preferredWidth,
+    minWidth,
+    maxWidth,
+  );
 }
 function getMatchingCardMinimumHeight(content: MatchingContent) {
   const normalized = normalizeMatchingSide(content);
@@ -422,7 +437,11 @@ function getMatchingCardMinimumHeight(content: MatchingContent) {
   }
 
   if (normalized.kind === "spoken-text") {
-    return 92;
+    return normalized.text.trim() ? 92 : 110;
+  }
+
+  if (normalized.kind === "text") {
+    return normalized.text.trim() ? 44 : 72;
   }
 
   return 44;
@@ -927,7 +946,7 @@ function getMatchingYouTubeMeta(url: string): MatchingEmbeddedVideoMeta | null {
     provider: "youtube",
     videoId,
     startSeconds,
-    thumbnailUrl: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+    thumbnailUrl: buildMatchingYouTubeThumbnailUrl(videoId),
   };
 }
 
@@ -945,6 +964,10 @@ function buildMatchingYouTubeEmbedUrl(videoId: string, startSeconds = 0) {
   }
 
   return `https://www.youtube-nocookie.com/embed/${videoId}?${params.toString()}`;
+}
+
+function buildMatchingYouTubeThumbnailUrl(videoId: string) {
+  return `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`;
 }
 
 function getMatchingRutubeMeta(url: string): MatchingEmbeddedVideoMeta | null {
@@ -988,6 +1011,7 @@ function getMatchingRutubeMeta(url: string): MatchingEmbeddedVideoMeta | null {
   return {
     embedUrl: embedUrl.toString(),
     provider: "rutube",
+    thumbnailUrl: buildMatchingVideoThumbnailPath(url),
     startSeconds,
   };
 }
@@ -1049,6 +1073,7 @@ function getMatchingVkVideoMeta(url: string): MatchingEmbeddedVideoMeta | null {
   return {
     embedUrl: embedUrl.toString(),
     provider: "vk",
+    thumbnailUrl: buildMatchingVideoThumbnailPath(url),
     startSeconds,
   };
 }
@@ -1068,10 +1093,11 @@ function getMatchingEmbeddedVideoLabel(
     case "rutube":
       return "Rutube";
     case "vk":
-      return "VK \u0412\u0438\u0434\u0435\u043e";
+      return "VK Видео";
     case "youtube":
+      return "YouTube";
     default:
-      return "\u0432\u0438\u0434\u0435\u043e\u0441\u0435\u0440\u0432\u0438\u0441";
+      return "видеосервис";
   }
 }
 
@@ -1111,6 +1137,14 @@ function formatMatchingMediaTime(value: number) {
 
 function getMatchingAudioVolume(content: MatchingAudioContent) {
   return clamp(Math.round(content.volume), 0, 100);
+}
+
+function getMatchingConvertedAudioUrl(url: string) {
+  return getConvertibleAudioProvider(url) ? buildConvertedAudioPath(url) : null;
+}
+
+function buildMatchingVideoThumbnailPath(url: string) {
+  return `/api/media/thumbnail?source=${encodeURIComponent(url)}`;
 }
 
 function loadMatchingYouTubeApi() {
@@ -1168,7 +1202,8 @@ function isMatchingAudioPlayable(url: string) {
   return Boolean(
     getMatchingMediaType("audio", url) ||
       getMatchingMediaType("video", url) ||
-      getMatchingYouTubeMeta(url),
+      getMatchingYouTubeMeta(url) ||
+      getMatchingConvertedAudioUrl(url),
   );
 }
 
@@ -1183,10 +1218,12 @@ function MatchingInlineAudioPlayer({
   src,
   title,
   initialVolume,
+  autoPlay = false,
 }: Readonly<{
   src: string;
   title: string;
   initialVolume: number;
+  autoPlay?: boolean;
 }>) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -1241,6 +1278,19 @@ function MatchingInlineAudioPlayer({
       audio.removeEventListener("ended", syncState);
     };
   }, [src, volume]);
+
+  useEffect(() => {
+    if (!autoPlay) {
+      return;
+    }
+
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    void audio.play().catch(() => {});
+  }, [autoPlay, src]);
 
   const handleTogglePlayback = () => {
     const audio = audioRef.current;
@@ -1303,7 +1353,7 @@ function MatchingInlineAudioPlayer({
           {formatMatchingMediaTime(position)} / {formatMatchingMediaTime(duration)}
         </span>
         <label className="matching-inline-audio__volume" title={"\u0413\u0440\u043e\u043c\u043a\u043e\u0441\u0442\u044c"}>
-          <span>VOL</span>
+          <span>Громкость</span>
           <input
             aria-label={"\u0413\u0440\u043e\u043c\u043a\u043e\u0441\u0442\u044c"}
             max={100}
@@ -1669,6 +1719,8 @@ function MatchingCardContent({
       );
     }
     case "audio": {
+      const audioServiceMeta = getMatchingEmbeddedVideoMeta(normalized.url);
+      const convertedAudioUrl = getMatchingConvertedAudioUrl(normalized.url);
       const canPlayAudio = isMatchingAudioPlayable(normalized.url);
       const inlineAudioType =
         getMatchingMediaType("audio", normalized.url) ??
@@ -1703,7 +1755,9 @@ function MatchingCardContent({
             ) : normalized.url ? (
               <div className="matching-card-placeholder">
                 {
-                  "\u0414\u043b\u044f \u0430\u0443\u0434\u0438\u043e \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0439\u0442\u0435 mp3/mp4 \u0438\u043b\u0438 \u0441\u0441\u044b\u043b\u043a\u0443 \u043d\u0430 \u043f\u043e\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u043c\u044b\u0439 \u0432\u0438\u0434\u0435\u043e\u0441\u0435\u0440\u0432\u0438\u0441"
+                  convertedAudioUrl || audioServiceMeta?.provider === "youtube"
+                    ? "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0442\u043a\u0440\u044b\u0442\u044c \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u0437\u0432\u0443\u043a\u0430."
+                    : "\u0414\u043b\u044f \u0430\u0443\u0434\u0438\u043e \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0439\u0442\u0435 mp3/mp4, YouTube, VK \u0412\u0438\u0434\u0435\u043e \u0438\u043b\u0438 Rutube"
                 }
               </div>
             ) : (
@@ -1717,19 +1771,29 @@ function MatchingCardContent({
     }
     case "video": {
       const embeddedVideoMeta = getMatchingEmbeddedVideoMeta(normalized.url);
+      const videoTitle = normalized.label.trim();
       const startSeconds =
         getMatchingVideoStartSeconds(normalized) ||
         embeddedVideoMeta?.startSeconds ||
         0;
+      const normalizedVideoSize = clamp(getMatchingVideoSize(normalized), 90, 320);
       const videoSize = Math.max(
-        92,
-        Math.min(cardHeight - 66, Math.round(cardWidth * 0.62)),
+        96,
+        Math.min(
+          cardHeight - 58,
+          Math.round(cardWidth * 0.68),
+          Math.round(
+            normalizedVideoSize *
+              clamp(cardWidth / MATCHING_CARD_WIDTH, 0.74, 1) *
+              0.58,
+          ),
+        ),
       );
       const videoSourceLabel = getMatchingPlayableSourceLabel(normalized);
 
       return (
         <div className={contentClassName}>
-          <strong>{normalized.label || "\u0412\u0438\u0434\u0435\u043e"}</strong>
+          {videoTitle ? <strong>{videoTitle}</strong> : null}
           {normalized.url ? (
             <button
               className="matching-media-preview"
@@ -1753,7 +1817,11 @@ function MatchingCardContent({
                       normalized.label ||
                       "\u041f\u0440\u0435\u0432\u044c\u044e \u0432\u0438\u0434\u0435\u043e"
                     }
-                    className="matching-card-thumbnail"
+                    className={
+                      embeddedVideoMeta.provider === "youtube"
+                        ? "matching-card-thumbnail matching-card-thumbnail--youtube"
+                        : "matching-card-thumbnail"
+                    }
                     src={embeddedVideoMeta.thumbnailUrl}
                   />
                 ) : getMatchingMediaType("video", normalized.url) ? (
@@ -1772,8 +1840,14 @@ function MatchingCardContent({
                   </div>
                 )}
               </div>
-              <span className="matching-media-preview__label">
-                {"\u041e\u0442\u043a\u0440\u044b\u0442\u044c \u0432\u0438\u0434\u0435\u043e"}
+              <span className="matching-media-preview__meta">
+                <span className="matching-media-preview__label">
+                  {"\u25b6 \u041e\u0442\u043a\u0440\u044b\u0442\u044c \u0432\u0438\u0434\u0435\u043e"}
+                </span>
+                <span className="matching-media-preview__source">
+                  {videoSourceLabel}
+                  {startSeconds > 0 ? ` \u00b7 \u0441 ${startSeconds} \u0441` : ""}
+                </span>
               </span>
             </button>
           ) : (
@@ -1781,12 +1855,6 @@ function MatchingCardContent({
               {"URL \u0432\u0438\u0434\u0435\u043e \u043d\u0435 \u0437\u0430\u0434\u0430\u043d"}
             </div>
           )}
-          {normalized.url ? (
-            <span className="matching-card-url">
-              {videoSourceLabel}
-              {startSeconds > 0 ? ` \u00b7 \u0441 ${startSeconds} \u0441` : ""}
-            </span>
-          ) : null}
         </div>
       );
     }
@@ -1820,13 +1888,23 @@ function MatchingYouTubeAudioPlayer({
   const hostRef = useRef<HTMLDivElement | null>(null);
   const playerRef = useRef<MatchingYouTubePlayer | null>(null);
   const intervalRef = useRef<number | null>(null);
+  const currentVolumeRef = useRef(volume);
   const [ready, setReady] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [position, setPosition] = useState(startSeconds);
+  const [currentVolume, setCurrentVolume] = useState(volume);
+
+  useEffect(() => {
+    setCurrentVolume(volume);
+  }, [volume]);
 
   useEffect(() => {
     let cancelled = false;
+    setReady(false);
+    setPlaying(false);
+    setDuration(0);
+    setPosition(startSeconds);
 
     const syncPlayerState = () => {
       const player = playerRef.current;
@@ -1876,7 +1954,7 @@ function MatchingYouTubeAudioPlayer({
               if (startSeconds > 0) {
                 target.seekTo(startSeconds, true);
               }
-              target.setVolume?.(volume);
+              target.setVolume?.(currentVolumeRef.current);
               target.playVideo();
               setReady(true);
               syncPlayerState();
@@ -1905,7 +1983,12 @@ function MatchingYouTubeAudioPlayer({
       playerRef.current?.destroy();
       playerRef.current = null;
     };
-  }, [startSeconds, videoId, volume]);
+  }, [startSeconds, videoId]);
+
+  useEffect(() => {
+    currentVolumeRef.current = currentVolume;
+    playerRef.current?.setVolume?.(currentVolume);
+  }, [currentVolume]);
 
   const handleToggle = () => {
     const player = playerRef.current;
@@ -1955,9 +2038,33 @@ function MatchingYouTubeAudioPlayer({
             playerRef.current?.seekTo(next, true);
           }}
         />
-        <span className="matching-youtube-audio__time">
-          {formatMatchingMediaTime(position)} / {formatMatchingMediaTime(duration)}
-        </span>
+        <div className="matching-youtube-audio__footer">
+          <label className="matching-youtube-audio__volume" title="Громкость">
+            <span>Громкость</span>
+            <input
+              aria-label="Громкость"
+              max={100}
+              min={0}
+              step={5}
+              type="range"
+              value={currentVolume}
+              onChange={(event) =>
+                setCurrentVolume(
+                  Math.max(
+                    0,
+                    Math.min(
+                      100,
+                      Number.parseInt(event.currentTarget.value, 10) || 0,
+                    ),
+                  ),
+                )
+              }
+            />
+          </label>
+          <span className="matching-youtube-audio__time">
+            {formatMatchingMediaTime(position)} / {formatMatchingMediaTime(duration)}
+          </span>
+        </div>
       </div>
     </div>
   );
@@ -1988,10 +2095,14 @@ function MatchingMediaDialog({
     return null;
   }
 
-  const audioServiceMeta =
+  const audioEmbeddedMeta =
     media.kind === "audio" ? getMatchingYouTubeMeta(media.url) : null;
+  const convertedAudioUrl =
+    media.kind === "audio" ? getMatchingConvertedAudioUrl(media.url) : null;
   const embeddedVideoMeta =
-    media.kind === "video" ? getMatchingEmbeddedVideoMeta(media.url) : null;
+    media.kind === "video"
+      ? getMatchingEmbeddedVideoMeta(media.url)
+      : null;
   const canPlayAudio = media.kind === "audio" ? isMatchingAudioPlayable(media.url) : false;
   const audioVolume =
     media.kind === "audio" ? getMatchingAudioVolume(media) : 100;
@@ -2002,7 +2113,7 @@ function MatchingMediaDialog({
   const startSeconds =
     media.kind === "video"
       ? getMatchingVideoStartSeconds(media) || embeddedVideoMeta?.startSeconds || 0
-      : audioServiceMeta?.startSeconds || 0;
+      : audioEmbeddedMeta?.startSeconds || 0;
   const sourceLabel =
     media.fileName?.trim() || getMatchingMediaSourceLabel(media.url);
   const displayTitle =
@@ -2069,12 +2180,31 @@ function MatchingMediaDialog({
             <div className="matching-card-placeholder">
               {"\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u043d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0442\u043a\u0440\u044b\u0442\u044c \u043a\u0430\u043a \u0430\u0443\u0434\u0438\u043e."}
             </div>
-          ) : media.kind === "audio" && audioServiceMeta?.videoId ? (
-            <MatchingYouTubeAudioPlayer
-              startSeconds={startSeconds}
-              videoId={audioServiceMeta.videoId}
-              volume={audioVolume}
-            />
+          ) : media.kind === "audio" && audioEmbeddedMeta?.videoId ? (
+            <>
+              <p className="editor-hint">
+                Преобразование и загрузка звука могут занять около 10 секунд.
+              </p>
+              <MatchingYouTubeAudioPlayer
+                startSeconds={startSeconds}
+                videoId={audioEmbeddedMeta.videoId}
+                volume={audioVolume}
+              />
+            </>
+          ) : media.kind === "audio" ? (
+            <>
+              {convertedAudioUrl ? (
+                <p className="editor-hint">
+                  Преобразование и загрузка звука могут занять около 10 секунд.
+                </p>
+              ) : null}
+              <MatchingInlineAudioPlayer
+                autoPlay
+                initialVolume={audioVolume}
+                src={convertedAudioUrl ?? media.url}
+                title={title}
+              />
+            </>
           ) : embeddedVideoMeta ? (
             <>
               <div className="matching-media-modal__frame-wrap">
@@ -2087,58 +2217,37 @@ function MatchingMediaDialog({
                   title={title}
                 />
               </div>
-              {media.kind === "audio" ? (
-                <p className="editor-hint">
-                  {
-                    "\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u043e\u0442\u043a\u0440\u044b\u0442 \u0432\u0441\u0442\u0440\u043e\u0435\u043d\u043d\u044b\u043c \u043f\u043b\u0435\u0435\u0440\u043e\u043c \u0432\u0438\u0434\u0435\u043e\u0441\u0435\u0440\u0432\u0438\u0441\u0430, \u043f\u043e\u0442\u043e\u043c\u0443 \u0447\u0442\u043e \u0441\u0430\u043c\u0430 \u0441\u0441\u044b\u043b\u043a\u0430 \u0432\u0435\u0434\u0435\u0442 \u043d\u0430 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0443 \u0441 \u0432\u0438\u0434\u0435\u043e."
-                  }
-                </p>
-              ) : null}
             </>
-          ) : media.kind === "audio" ? (
-            <audio
-              autoPlay
-              className="matching-media-modal__audio"
-              controls
-              key={`${media.kind}:${media.url}`}
-              preload="auto"
-              src={media.url}
-              onLoadedMetadata={(event) => {
-                event.currentTarget.volume = audioVolume / 100;
-              }}
-            >
-              {
-                "\u0412\u0430\u0448 \u0431\u0440\u0430\u0443\u0437\u0435\u0440 \u043d\u0435 \u043f\u043e\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442 \u0432\u043e\u0441\u043f\u0440\u043e\u0438\u0437\u0432\u0435\u0434\u0435\u043d\u0438\u0435 \u0430\u0443\u0434\u0438\u043e."
-              }
-            </audio>
           ) : (
-            <video
-              autoPlay
-              className="matching-media-modal__video"
-              controls
-              key={`${media.kind}:${media.url}:${startSeconds}`}
-              playsInline
-              preload="auto"
-              onLoadedMetadata={(event) => {
-                const element = event.currentTarget;
-                element.volume = videoVolume / 100;
-                if (startSeconds > 0) {
-                  const maxStart = Number.isFinite(element.duration)
-                    ? Math.max(element.duration - 0.1, 0)
-                    : startSeconds;
-                  element.currentTime = Math.min(startSeconds, maxStart);
+            <div className="matching-media-modal__frame-wrap">
+              <video
+                autoPlay
+                className="matching-media-modal__video"
+                controls
+                key={`${media.kind}:${media.url}:${startSeconds}`}
+                playsInline
+                preload="auto"
+                onLoadedMetadata={(event) => {
+                  const element = event.currentTarget;
+                  element.volume = videoVolume / 100;
+                  if (startSeconds > 0) {
+                    const maxStart = Number.isFinite(element.duration)
+                      ? Math.max(element.duration - 0.1, 0)
+                      : startSeconds;
+                    element.currentTime = Math.min(startSeconds, maxStart);
+                  }
+                  void element.play().catch(() => {});
+                }}
+              >
+                <source
+                  src={media.url}
+                  type={getMatchingMediaType("video", media.url)}
+                />
+                {
+                  "\u0412\u0430\u0448 \u0431\u0440\u0430\u0443\u0437\u0435\u0440 \u043d\u0435 \u043f\u043e\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442 \u0432\u043e\u0441\u043f\u0440\u043e\u0438\u0437\u0432\u0435\u0434\u0435\u043d\u0438\u0435 \u0432\u0438\u0434\u0435\u043e."
                 }
-                void element.play().catch(() => {});
-              }}
-            >
-              <source
-                src={media.url}
-                type={getMatchingMediaType("video", media.url)}
-              />
-              {
-                "\u0412\u0430\u0448 \u0431\u0440\u0430\u0443\u0437\u0435\u0440 \u043d\u0435 \u043f\u043e\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442 \u0432\u043e\u0441\u043f\u0440\u043e\u0438\u0437\u0432\u0435\u0434\u0435\u043d\u0438\u0435 \u0432\u0438\u0434\u0435\u043e."
-              }
-            </video>
+              </video>
+            </div>
           )}
         </div>
       </div>

@@ -1,6 +1,14 @@
 ﻿"use client";
 
-import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type DragEvent,
+  type ReactNode,
+} from "react";
+import { createPortal } from "react-dom";
 import {
   MATCHING_AUDIO_VOLUME_DEFAULT,
   createMatchingContent,
@@ -197,6 +205,18 @@ function SettingsIcon() {
   );
 }
 
+function MatchingEditorPortal({
+  children,
+}: Readonly<{
+  children: ReactNode;
+}>) {
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(children, document.body);
+}
+
 function parseBulkLine(line: string) {
   const trimmed = line.trim();
   if (!trimmed) {
@@ -357,11 +377,12 @@ function getMatchingMediaUi(kind: "image" | "audio" | "video") {
         urlLabel: "Ссылка на аудио или видео",
         detailLabel: "Подпись карточки",
         detailPlaceholder: "Что увидит ученик",
-        description: "Добавьте звук ссылкой или файлом. Можно использовать прямую ссылку или ролик, если нужен только звук.",
+        description:
+          "Добавьте звук ссылкой или файлом. Поддерживаются прямые ссылки и ссылки на видеосервисы, а также VK Видео и Rutube с серверной конвертацией в mp3.",
         dropTitle: "Перетащите аудиофайл сюда",
         dropReplaceText: "Нажмите, чтобы заменить аудио, или перетащите другой файл",
         formatsHint: "MP3, M4A, WAV, OGG или MP4 со звуком",
-        note: "Можно использовать прямую ссылку или YouTube, если нужен только звук.",
+        note: "Подходят прямые ссылки, MP4 со звуком и ссылки на поддерживаемые видеосервисы. Для VK/Rutube звук извлекается сервером в mp3, поэтому ожидание может занять около 10 секунд.",
       };
     case "video":
     default:
@@ -374,8 +395,8 @@ function getMatchingMediaUi(kind: "image" | "audio" | "video") {
         description: "Добавьте видео ссылкой или файлом. Поддерживаются прямые ссылки и популярные видеосервисы.",
         dropTitle: "Перетащите видеофайл сюда",
         dropReplaceText: "Нажмите, чтобы заменить видео, или перетащите другой файл",
-        formatsHint: "MP4, WEBM, OGV, а также YouTube, RuTube и VK Видео",
-        note: "Поддерживаются прямые ссылки, YouTube, RuTube и VK Видео.",
+        formatsHint: "MP4, WEBM, OGV, а также ссылки на поддерживаемые видеосервисы",
+        note: "Поддерживаются прямые ссылки и ссылки на поддерживаемые видеосервисы.",
       };
   }
 }
@@ -651,15 +672,6 @@ function MatchingSideFieldsCompact({
     };
   }, [isMediaDialogVisible]);
 
-  useEffect(() => {
-    if (isMediaContent) {
-      return;
-    }
-
-    setIsMediaDialogOpen(false);
-    setIsMediaDropActive(false);
-  }, [isMediaContent]);
-
   const mediaDialogLabel = mediaUi?.dialogLabel ?? activeOption.label;
   const dropZoneTitle = selectedFileLabel || mediaUi?.dropTitle || "";
   const dropZoneText = selectedFileLabel
@@ -733,180 +745,182 @@ function MatchingSideFieldsCompact({
       </div>
 
       {isMediaDialogVisible ? (
-        <div
-          aria-label={mediaDialogLabel}
-          aria-modal="true"
-          className="matching-editor-modal"
-          role="dialog"
-        >
-          <button
-            aria-label="Закрыть окно"
-            className="matching-editor-modal__backdrop"
-            type="button"
-            onClick={() => setIsMediaDialogOpen(false)}
-          />
+        <MatchingEditorPortal>
           <div
-            className="matching-editor-modal__dialog"
-            onClick={(event) => event.stopPropagation()}
+            aria-label={mediaDialogLabel}
+            aria-modal="true"
+            className="matching-editor-modal"
+            role="dialog"
           >
-            <div className="matching-editor-modal__head">
-              <div>
-                <strong>{label}</strong>
-                <p className="editor-hint">{mediaUi?.description}</p>
-              </div>
-              <button
-                aria-label="Закрыть окно"
-                className="ghost-button matching-editor-modal__close"
-                title="Закрыть"
-                type="button"
-                onClick={() => setIsMediaDialogOpen(false)}
-              >
-                <CloseIcon />
-              </button>
-            </div>
-
-            <div className="matching-editor-modal__body">
-              <div className="matching-editor-modal__kind">
-                <span className="matching-editor-modal__kind-icon">
-                  <MatchingTypeIcon kind={content.kind} />
-                </span>
+            <button
+              aria-label="Закрыть окно"
+              className="matching-editor-modal__backdrop"
+              type="button"
+              onClick={() => setIsMediaDialogOpen(false)}
+            />
+            <div
+              className="matching-editor-modal__dialog"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="matching-editor-modal__head">
                 <div>
-                  <strong>{activeOption.label}</strong>
-                  <p className="editor-hint">
-                    {selectedFileLabel
-                      ? "Файл уже прикреплен. Можно заменить его новым или вставить ссылку."
-                      : "Выберите источник контента: файл или ссылка."}
-                  </p>
+                  <strong>{label}</strong>
+                  <p className="editor-hint">{mediaUi?.description}</p>
                 </div>
+                <button
+                  aria-label="Закрыть окно"
+                  className="ghost-button matching-editor-modal__close"
+                  title="Закрыть"
+                  type="button"
+                  onClick={() => setIsMediaDialogOpen(false)}
+                >
+                  <CloseIcon />
+                </button>
               </div>
 
-              <input
-                accept={mediaUi?.accept}
-                className="matching-editor-file-input"
-                ref={mediaInputRef}
-                type="file"
-                onChange={handleMediaInputChange}
-              />
+              <div className="matching-editor-modal__body">
+                <div className="matching-editor-modal__kind">
+                  <span className="matching-editor-modal__kind-icon">
+                    <MatchingTypeIcon kind={content.kind} />
+                  </span>
+                  <div>
+                    <strong>{activeOption.label}</strong>
+                    <p className="editor-hint">
+                      {selectedFileLabel
+                        ? "Файл уже прикреплен. Можно заменить его новым или вставить ссылку."
+                        : "Выберите источник контента: файл или ссылка."}
+                    </p>
+                  </div>
+                </div>
 
-              <button
-                className={`matching-editor-dropzone ${
-                  isMediaDropActive ? "matching-editor-dropzone--active" : ""
-                }`}
-                type="button"
-                onClick={openMediaFilePicker}
-                onDragEnter={handleDropZoneDragOver}
-                onDragLeave={handleDropZoneDragLeave}
-                onDragOver={handleDropZoneDragOver}
-                onDrop={handleDropZoneDrop}
-              >
-                <span className="matching-editor-dropzone__icon">
-                  <MatchingTypeIcon kind={content.kind} />
-                </span>
-                <strong className="matching-editor-dropzone__title">
-                  {dropZoneTitle}
-                </strong>
-                <span className="matching-editor-dropzone__text">
-                  {dropZoneText}
-                </span>
-                <span className="matching-editor-dropzone__meta">
-                  {mediaUi?.formatsHint}
-                </span>
-              </button>
+                <input
+                  accept={mediaUi?.accept}
+                  className="matching-editor-file-input"
+                  ref={mediaInputRef}
+                  type="file"
+                  onChange={handleMediaInputChange}
+                />
 
-              <div className="matching-editor-modal__grid">
-                <label className="matching-editor-field matching-editor-field--full">
-                  <span className="field-label">{mediaUi?.urlLabel}</span>
-                  <input
-                    className="editor-input"
-                    placeholder={
-                      hasEmbeddedFile
-                        ? "Вставьте ссылку, если хотите заменить встроенный файл"
-                        : "https://..."
-                    }
-                    value={mediaUrlValue}
-                    onChange={(event) => setField("url", event.target.value)}
-                  />
-                </label>
+                <button
+                  className={`matching-editor-dropzone ${
+                    isMediaDropActive ? "matching-editor-dropzone--active" : ""
+                  }`}
+                  type="button"
+                  onClick={openMediaFilePicker}
+                  onDragEnter={handleDropZoneDragOver}
+                  onDragLeave={handleDropZoneDragLeave}
+                  onDragOver={handleDropZoneDragOver}
+                  onDrop={handleDropZoneDrop}
+                >
+                  <span className="matching-editor-dropzone__icon">
+                    <MatchingTypeIcon kind={content.kind} />
+                  </span>
+                  <strong className="matching-editor-dropzone__title">
+                    {dropZoneTitle}
+                  </strong>
+                  <span className="matching-editor-dropzone__text">
+                    {dropZoneText}
+                  </span>
+                  <span className="matching-editor-dropzone__meta">
+                    {mediaUi?.formatsHint}
+                  </span>
+                </button>
 
-                {content.kind === "image" ? (
+                <div className="matching-editor-modal__grid">
                   <label className="matching-editor-field matching-editor-field--full">
-                    <span className="field-label">{mediaUi?.detailLabel}</span>
+                    <span className="field-label">{mediaUi?.urlLabel}</span>
                     <input
                       className="editor-input"
-                      placeholder={mediaUi?.detailPlaceholder}
-                      value={content.alt}
-                      onChange={(event) => setField("alt", event.target.value)}
-                    />
-                  </label>
-                ) : null}
-
-                {labeledMediaContent ? (
-                  <label className="matching-editor-field matching-editor-field--full">
-                    <span className="field-label">{mediaUi?.detailLabel}</span>
-                    <input
-                      className="editor-input"
-                      placeholder={mediaUi?.detailPlaceholder}
-                      value={labeledMediaContent.label}
-                      onChange={(event) => setField("label", event.target.value)}
-                    />
-                  </label>
-                ) : null}
-
-                {videoContent ? (
-                  <label className="matching-editor-field">
-                    <span className="field-label">Начинать с секунды</span>
-                    <input
-                      className="editor-input"
-                      min={0}
-                      step={1}
-                      type="number"
-                      value={videoContent.startSeconds}
-                      onChange={(event) =>
-                        setNumberField(
-                          "startSeconds",
-                          Number.isFinite(event.target.valueAsNumber)
-                            ? Math.max(0, Math.round(event.target.valueAsNumber))
-                            : 0,
-                        )
+                      placeholder={
+                        hasEmbeddedFile
+                          ? "Вставьте ссылку, если хотите заменить встроенный файл"
+                          : "https://..."
                       }
+                      value={mediaUrlValue}
+                      onChange={(event) => setField("url", event.target.value)}
                     />
                   </label>
-                ) : null}
 
-                {isFileVideo && videoContent ? (
-                  <label className="matching-editor-field">
-                    <span className="field-label">Громкость, %</span>
-                    <input
-                      className="editor-input"
-                      max={100}
-                      min={0}
-                      step={5}
-                      type="number"
-                      value={videoContent.volume}
-                      onChange={(event) =>
-                        setNumberField(
-                          "volume",
-                          Number.isFinite(event.target.valueAsNumber)
-                            ? Math.min(
-                                100,
-                                Math.max(0, Math.round(event.target.valueAsNumber)),
-                              )
-                            : MATCHING_AUDIO_VOLUME_DEFAULT,
-                        )
-                      }
-                    />
-                  </label>
+                  {content.kind === "image" ? (
+                    <label className="matching-editor-field matching-editor-field--full">
+                      <span className="field-label">{mediaUi?.detailLabel}</span>
+                      <input
+                        className="editor-input"
+                        placeholder={mediaUi?.detailPlaceholder}
+                        value={content.alt}
+                        onChange={(event) => setField("alt", event.target.value)}
+                      />
+                    </label>
+                  ) : null}
+
+                  {labeledMediaContent ? (
+                    <label className="matching-editor-field matching-editor-field--full">
+                      <span className="field-label">{mediaUi?.detailLabel}</span>
+                      <input
+                        className="editor-input"
+                        placeholder={mediaUi?.detailPlaceholder}
+                        value={labeledMediaContent.label}
+                        onChange={(event) => setField("label", event.target.value)}
+                      />
+                    </label>
+                  ) : null}
+
+                  {videoContent ? (
+                    <label className="matching-editor-field">
+                      <span className="field-label">Начинать с секунды</span>
+                      <input
+                        className="editor-input"
+                        min={0}
+                        step={1}
+                        type="number"
+                        value={videoContent.startSeconds}
+                        onChange={(event) =>
+                          setNumberField(
+                            "startSeconds",
+                            Number.isFinite(event.target.valueAsNumber)
+                              ? Math.max(0, Math.round(event.target.valueAsNumber))
+                              : 0,
+                          )
+                        }
+                      />
+                    </label>
+                  ) : null}
+
+                  {isFileVideo && videoContent ? (
+                    <label className="matching-editor-field">
+                      <span className="field-label">Громкость, %</span>
+                      <input
+                        className="editor-input"
+                        max={100}
+                        min={0}
+                        step={5}
+                        type="number"
+                        value={videoContent.volume}
+                        onChange={(event) =>
+                          setNumberField(
+                            "volume",
+                            Number.isFinite(event.target.valueAsNumber)
+                              ? Math.min(
+                                  100,
+                                  Math.max(0, Math.round(event.target.valueAsNumber)),
+                                )
+                              : MATCHING_AUDIO_VOLUME_DEFAULT,
+                          )
+                        }
+                      />
+                    </label>
+                  ) : null}
+                </div>
+
+                {mediaUi?.note ? (
+                  <p className="editor-hint matching-editor-modal__note">
+                    {mediaUi.note}
+                  </p>
                 ) : null}
               </div>
-
-              {mediaUi?.note ? (
-                <p className="editor-hint matching-editor-modal__note">
-                  {mediaUi.note}
-                </p>
-              ) : null}
             </div>
           </div>
-        </div>
+        </MatchingEditorPortal>
       ) : null}
     </div>
   );
@@ -1300,41 +1314,42 @@ export function MatchingPairsEditor({
       </div>
 
       {isSettingsDialogOpen ? (
-        <div
-          aria-label="Параметры игры и быстрый импорт"
-          aria-modal="true"
-          className="matching-editor-modal matching-editor-modal--settings"
-          role="dialog"
-        >
-          <button
-            aria-label="Закрыть окно"
-            className="matching-editor-modal__backdrop"
-            type="button"
-            onClick={() => setIsSettingsDialogOpen(false)}
-          />
+        <MatchingEditorPortal>
           <div
-            className="matching-editor-modal__dialog matching-editor-modal__dialog--settings"
-            onClick={(event) => event.stopPropagation()}
+            aria-label="Параметры игры и быстрый импорт"
+            aria-modal="true"
+            className="matching-editor-modal matching-editor-modal--settings"
+            role="dialog"
           >
-            <div className="matching-editor-modal__head">
-              <div>
-                <strong>Настройки упражнения</strong>
-                <p className="editor-hint">
-                  Здесь собраны параметры игры и быстрый импорт пар.
-                </p>
+            <button
+              aria-label="Закрыть окно"
+              className="matching-editor-modal__backdrop"
+              type="button"
+              onClick={() => setIsSettingsDialogOpen(false)}
+            />
+            <div
+              className="matching-editor-modal__dialog matching-editor-modal__dialog--settings"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="matching-editor-modal__head">
+                <div>
+                  <strong>Настройки упражнения</strong>
+                  <p className="editor-hint">
+                    Здесь собраны параметры игры и быстрый импорт пар.
+                  </p>
+                </div>
+                <button
+                  aria-label="Закрыть окно"
+                  className="ghost-button matching-editor-modal__close"
+                  title="Закрыть"
+                  type="button"
+                  onClick={() => setIsSettingsDialogOpen(false)}
+                >
+                  <CloseIcon />
+                </button>
               </div>
-              <button
-                aria-label="Закрыть окно"
-                className="ghost-button matching-editor-modal__close"
-                title="Закрыть"
-                type="button"
-                onClick={() => setIsSettingsDialogOpen(false)}
-              >
-                <CloseIcon />
-              </button>
-            </div>
 
-            <div className="matching-editor-modal__body matching-editor-settings-modal__body">
+              <div className="matching-editor-modal__body matching-editor-settings-modal__body">
               <section className="matching-editor-settings-section">
                 <div className="matching-editor-settings-section__head">
                   <strong>Параметры игры</strong>
@@ -1518,9 +1533,10 @@ export function MatchingPairsEditor({
                   </button>
                 </div>
               </section>
+              </div>
             </div>
           </div>
-        </div>
+        </MatchingEditorPortal>
       ) : null}
     </div>
   );
