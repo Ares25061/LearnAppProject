@@ -1318,10 +1318,28 @@ function getMatchingConvertedAudioUrl(url: string) {
 }
 
 const MATCHING_AUDIO_LOADING_HINT =
-  "Преобразование и загрузка звука могут занять около 20 секунд.";
+  "Подготовка и загрузка звука могут занять около 20 секунд.";
 const MATCHING_SESSION_AUDIO_CACHE_MAX_ENTRIES = 8;
 const matchingSessionAudioUrlCache = new Map<string, string>();
 const matchingSessionAudioFetches = new Map<string, Promise<string>>();
+
+type MatchingAudioFetchError = Error & {
+  code?: string;
+  fallback?: "youtube_embed";
+};
+
+function createMatchingAudioFetchError(
+  message: string,
+  options?: {
+    code?: string;
+    fallback?: "youtube_embed";
+  },
+) {
+  const error = new Error(message) as MatchingAudioFetchError;
+  error.code = options?.code;
+  error.fallback = options?.fallback;
+  return error;
+}
 
 function isMatchingSessionCachedAudioUrl(url: string) {
   const trimmed = url.trim();
@@ -1388,7 +1406,34 @@ async function resolveMatchingSessionAudioUrl(url: string) {
   const fetchPromise = fetch(url, { cache: "force-cache" })
     .then(async (response) => {
       if (!response.ok) {
-        throw new Error("Не удалось загрузить аудио.");
+        let payload:
+          | {
+              code?: string;
+              error?: string;
+              fallback?: "youtube_embed";
+            }
+          | null = null;
+
+        try {
+          payload = (await response.json()) as {
+            code?: string;
+            error?: string;
+            fallback?: "youtube_embed";
+          };
+        } catch {
+          payload = null;
+        }
+
+        throw createMatchingAudioFetchError(
+          payload?.error?.trim() || "Не удалось загрузить аудио.",
+          {
+            code: payload?.code?.trim() || undefined,
+            fallback:
+              payload?.fallback === "youtube_embed"
+                ? "youtube_embed"
+                : undefined,
+          },
+        );
       }
 
       const audioBlob = await response.blob();
@@ -1953,11 +1998,7 @@ function MatchingModalAudioPlayerShell({
           type="button"
           onClick={onToggle}
         >
-          {!isReady || isLoading
-            ? "Загрузка..."
-            : playing
-              ? "Пауза"
-              : "Слушать"}
+          {!isReady || isLoading ? "Загрузка..." : playing ? "Пауза" : "Слушать"}
         </button>
         <input
           aria-label="Перемотка"
@@ -2009,12 +2050,15 @@ function MatchingModalAudioPlayer({
   src,
   initialVolume,
   autoPlay = false,
+  onPlaybackError,
 }: Readonly<{
   src: string;
   initialVolume: number;
   autoPlay?: boolean;
+  onPlaybackError?: (error: MatchingAudioFetchError) => void;
 }>) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const hasReportedErrorRef = useRef(false);
   const initialAudioSourceState = getMatchingModalAudioSourceState(src);
   const [playbackSrc, setPlaybackSrc] = useState(
     initialAudioSourceState.playbackSrc,
@@ -2030,6 +2074,7 @@ function MatchingModalAudioPlayer({
   const [volume, setVolume] = useState(initialVolume);
 
   useEffect(() => {
+    hasReportedErrorRef.current = false;
     setVolume(initialVolume);
     setPosition(0);
     setDuration(0);
@@ -2037,6 +2082,15 @@ function MatchingModalAudioPlayer({
     setIsReady(false);
     setIsLoading(Boolean(src.trim()));
   }, [initialVolume, src]);
+
+  const reportPlaybackError = (error: MatchingAudioFetchError) => {
+    if (hasReportedErrorRef.current) {
+      return;
+    }
+
+    hasReportedErrorRef.current = true;
+    onPlaybackError?.(error);
+  };
 
   useEffect(() => {
     const nextSourceState = getMatchingModalAudioSourceState(src);
@@ -2057,12 +2111,22 @@ function MatchingModalAudioPlayer({
 
         setPlaybackSrc(nextPlaybackSrc);
       })
-      .catch(() => {
+      .catch((error) => {
         if (isCancelled) {
           return;
         }
 
-        setPlaybackSrc(src.trim());
+        setPlaybackSrc("");
+        setIsReady(false);
+        setIsLoading(false);
+        setPlaying(false);
+        setDuration(0);
+        setPosition(0);
+        reportPlaybackError(
+          error instanceof Error
+            ? (error as MatchingAudioFetchError)
+            : createMatchingAudioFetchError("Не удалось загрузить аудио."),
+        );
       })
       .finally(() => {
         if (isCancelled) {
@@ -2128,6 +2192,9 @@ function MatchingModalAudioPlayer({
       setIsReady(false);
       setIsLoading(false);
       syncState();
+      reportPlaybackError(
+        createMatchingAudioFetchError("Не удалось воспроизвести аудио."),
+      );
     };
 
     audio.addEventListener("loadstart", handleLoadStart);
@@ -2844,6 +2911,10 @@ function MatchingMediaDialog({
   media: MatchingOpenableContent | null;
   onClose: () => void;
 }>) {
+  const [audioFallbackMode, setAudioFallbackMode] = useState<
+    "none" | "youtube-iframe"
+  >("none");
+
   useEffect(() => {
     if (!media) {
       return;
@@ -2858,6 +2929,10 @@ function MatchingMediaDialog({
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
   }, [media, onClose]);
+
+  useEffect(() => {
+    setAudioFallbackMode("none");
+  }, [media?.kind, media?.url]);
 
   if (!media) {
     return null;
@@ -2892,6 +2967,10 @@ function MatchingMediaDialog({
             ? "\u0410\u0443\u0434\u0438\u043e"
             : "\u0412\u0438\u0434\u0435\u043e");
   const title = displayTitle;
+  const showYouTubeIframeFallback =
+    media.kind === "audio" &&
+    audioFallbackMode === "youtube-iframe" &&
+    Boolean(audioEmbeddedMeta?.videoId);
 
   return (
     <div
@@ -2954,6 +3033,25 @@ function MatchingMediaDialog({
             <div className="matching-card-placeholder">
               {"\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u043d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0442\u043a\u0440\u044b\u0442\u044c \u043a\u0430\u043a \u0430\u0443\u0434\u0438\u043e."}
             </div>
+          ) : showYouTubeIframeFallback && audioEmbeddedMeta?.videoId ? (
+            <>
+              <p className="editor-hint">
+                {"YouTube не дал отдельный аудиопоток, поэтому открыт встроенный плеер."}
+              </p>
+              <div className="matching-media-modal__frame-wrap">
+                <iframe
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                  className="matching-media-modal__frame"
+                  referrerPolicy="strict-origin-when-cross-origin"
+                  src={buildMatchingYouTubeEmbedUrl(
+                    audioEmbeddedMeta.videoId,
+                    startSeconds,
+                  )}
+                  title={title}
+                />
+              </div>
+            </>
           ) : media.kind === "audio" && convertedAudioUrl ? (
             <>
               <p className="editor-hint">
@@ -2962,19 +3060,32 @@ function MatchingMediaDialog({
               <MatchingModalAudioPlayer
                 autoPlay
                 initialVolume={audioVolume}
+                onPlaybackError={() => {
+                  if (audioEmbeddedMeta?.videoId) {
+                    setAudioFallbackMode("youtube-iframe");
+                  }
+                }}
                 src={convertedAudioUrl}
               />
             </>
           ) : media.kind === "audio" && audioEmbeddedMeta?.videoId ? (
             <>
               <p className="editor-hint">
-                {MATCHING_AUDIO_LOADING_HINT}
+                {"Открыт встроенный плеер YouTube."}
               </p>
-              <MatchingModalYouTubeAudioPlayer
-                startSeconds={startSeconds}
-                videoId={audioEmbeddedMeta.videoId}
-                volume={audioVolume}
-              />
+              <div className="matching-media-modal__frame-wrap">
+                <iframe
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                  className="matching-media-modal__frame"
+                  referrerPolicy="strict-origin-when-cross-origin"
+                  src={buildMatchingYouTubeEmbedUrl(
+                    audioEmbeddedMeta.videoId,
+                    startSeconds,
+                  )}
+                  title={title}
+                />
+              </div>
             </>
           ) : media.kind === "audio" ? (
             <MatchingModalAudioPlayer

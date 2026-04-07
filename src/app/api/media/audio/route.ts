@@ -17,6 +17,12 @@ type CachedAudioEntry = {
   expiresAt: number;
 };
 
+type AudioErrorPayload = {
+  code: string;
+  error: string;
+  fallback?: "youtube_embed";
+};
+
 const audioCache = new Map<string, CachedAudioEntry>();
 const pendingConversions = new Map<string, Promise<ConvertedAudioAsset>>();
 
@@ -77,6 +83,42 @@ function setCachedAudioBuffer(sourceUrl: string, asset: ConvertedAudioAsset) {
     }
     audioCache.delete(oldestKey);
   }
+}
+
+function getAudioFailurePayload(
+  provider: string | null,
+  error: unknown,
+): AudioErrorPayload {
+  const rawMessage =
+    error instanceof Error ? error.message : "Не удалось подготовить аудио.";
+
+  if (
+    provider === "youtube" &&
+    /sign in to confirm you.?re not a bot|cookies-from-browser|cookies for the authentication/i.test(
+      rawMessage,
+    )
+  ) {
+    return {
+      code: "youtube_bot_check",
+      error:
+        "YouTube временно не дал подготовить отдельный аудиопоток. Открываем встроенный плеер YouTube.",
+      fallback: "youtube_embed",
+    };
+  }
+
+  if (provider === "youtube") {
+    return {
+      code: "youtube_audio_prepare_failed",
+      error:
+        "Не удалось подготовить отдельный аудиопоток YouTube. Открываем встроенный плеер YouTube.",
+      fallback: "youtube_embed",
+    };
+  }
+
+  return {
+    code: "audio_prepare_failed",
+    error: "Не удалось подготовить аудио для воспроизведения.",
+  };
 }
 
 async function getAudioBufferForSource(
@@ -151,9 +193,10 @@ export async function GET(request: Request) {
 
     return Response.json(
       {
+        code: "invalid_audio_source",
         error:
-          "Нужна корректная ссылка на VK Видео или Rutube для конвертации в mp3.",
-      },
+          "Нужна корректная ссылка на YouTube, VK Видео или Rutube для подготовки аудио.",
+      } satisfies AudioErrorPayload,
       { status: 400 },
     );
   }
@@ -191,20 +234,20 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Не удалось открыть источник для конвертации.";
+    const payload = getAudioFailurePayload(provider, error);
 
     logAudioRequest("error", requestId, "Audio request failed", {
-      message,
+      errorCode: payload.code,
+      fallback: payload.fallback ?? null,
+      message: payload.error,
       provider,
+      rawMessage: error instanceof Error ? error.message : String(error),
       sourceHost,
       sourceUrl,
       stack: error instanceof Error ? error.stack ?? null : null,
       tookMs: Date.now() - startedAt,
     });
 
-    return Response.json({ error: message }, { status: 502 });
+    return Response.json(payload, { status: 502 });
   }
 }
