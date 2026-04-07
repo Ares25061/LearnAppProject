@@ -17,6 +17,14 @@ const THUMBNAIL_PROBE_TIMEOUT_MS = 20_000;
 const THUMBNAIL_CACHE_TTL_MS = 1000 * 60 * 60 * 6;
 const require = createRequire(import.meta.url);
 const ffmpegStatic = require("ffmpeg-static") as string | null;
+const RUTUBE_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
+const RUTUBE_REQUEST_HEADERS = {
+  Accept: "application/json",
+  Origin: "https://rutube.ru",
+  Referer: "https://rutube.ru/",
+  "User-Agent": RUTUBE_USER_AGENT,
+} satisfies Record<string, string>;
 const thumbnailCache = new Map<
   string,
   { expiresAt: number; thumbnailUrl: string | null }
@@ -37,6 +45,14 @@ type YtDlpThumbnailInfo = {
 type YtDlpMetadata = {
   thumbnail?: string;
   thumbnails?: YtDlpThumbnailInfo[];
+};
+
+type RutubePlayOptions = {
+  referer?: string;
+  video_balancer?: {
+    default?: string;
+    m3u8?: string;
+  };
 };
 
 function isExecutableFile(filePath: string | null | undefined) {
@@ -127,11 +143,16 @@ function stopProcess(process: ChildProcess | null) {
 
 export async function verifyConvertibleAudioSource(sourceUrl: string) {
   const provider = getConvertibleAudioProvider(sourceUrl);
-  const ytDlpBin = resolveYtDlpBin();
 
   if (!provider) {
     throw new Error("Ссылка не относится к поддерживаемым сервисам VK Видео или Rutube.");
   }
+
+  if (provider === "rutube") {
+    return resolveRutubeAudioSource(sourceUrl);
+  }
+
+  const ytDlpBin = resolveYtDlpBin();
 
   try {
     const { stdout } = await execFileAsync(
@@ -229,6 +250,44 @@ function getRutubeVideoId(sourceUrl: string) {
   return null;
 }
 
+async function resolveRutubeAudioSource(sourceUrl: string) {
+  const videoId = getRutubeVideoId(sourceUrl);
+  if (!videoId) {
+    throw new Error("Не удалось определить идентификатор видео Rutube.");
+  }
+
+  const response = await fetch(
+    `https://rutube.ru/api/play/options/${videoId}/`,
+    {
+      headers: RUTUBE_REQUEST_HEADERS,
+      signal: AbortSignal.timeout(AUDIO_PROBE_TIMEOUT_MS),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Rutube вернул статус ${response.status} при запросе потока.`);
+  }
+
+  const parsed = (await response.json()) as RutubePlayOptions;
+  const resolvedUrl =
+    parsed.video_balancer?.m3u8?.trim() ||
+    parsed.video_balancer?.default?.trim() ||
+    "";
+
+  if (!resolvedUrl) {
+    throw new Error("Rutube не вернул ссылку на HLS-поток.");
+  }
+
+  return {
+    headers: {
+      Origin: "https://rutube.ru",
+      Referer: parsed.referer?.trim() || "https://rutube.ru/",
+      "User-Agent": RUTUBE_USER_AGENT,
+    },
+    url: resolvedUrl,
+  } satisfies ResolvedAudioSource;
+}
+
 function pickBestThumbnail(thumbnails: YtDlpThumbnailInfo[] | undefined) {
   return (
     thumbnails
@@ -254,9 +313,7 @@ async function resolveRutubeThumbnailUrl(sourceUrl: string) {
   const response = await fetch(
     `https://rutube.ru/api/play/options/${videoId}/`,
     {
-      headers: {
-        Accept: "application/json",
-      },
+      headers: RUTUBE_REQUEST_HEADERS,
       signal: AbortSignal.timeout(THUMBNAIL_PROBE_TIMEOUT_MS),
     },
   );
