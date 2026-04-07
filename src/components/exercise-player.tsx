@@ -135,6 +135,7 @@ type MatchingBoardSize = {
   width: number;
   height: number;
 };
+type MatchingImageAspectRatioMap = Record<string, number>;
 type MatchingBoardMetrics = {
   width: number;
   height: number;
@@ -233,6 +234,88 @@ function getMatchingImageHeight(input: MatchingContent | MatchingImageContent) {
   );
 }
 
+function clampMatchingImageAspectRatio(value: number) {
+  return clamp(value, 0.72, 1.85);
+}
+
+function getMatchingImageDisplayRatio(
+  content: MatchingImageContent,
+  imageAspectRatios: MatchingImageAspectRatioMap = {},
+) {
+  const ratio = imageAspectRatios[content.url.trim()];
+  if (typeof ratio !== "number" || !Number.isFinite(ratio) || ratio <= 0) {
+    return 1;
+  }
+
+  return clampMatchingImageAspectRatio(ratio);
+}
+
+function getMatchingImageFrameSize(
+  content: MatchingImageContent,
+  maxWidth: number,
+  imageAspectRatios: MatchingImageAspectRatioMap = {},
+) {
+  const ratio = getMatchingImageDisplayRatio(content, imageAspectRatios);
+  const targetEdge = clamp(getMatchingImageHeight(content), 112, 220);
+  const frameWidth = clamp(
+    Math.round(targetEdge * ratio),
+    92,
+    Math.max(92, maxWidth - 24),
+  );
+  const frameHeight = clamp(Math.round(frameWidth / ratio), 72, 280);
+
+  return {
+    ratio,
+    frameWidth,
+    frameHeight,
+  };
+}
+
+function loadMatchingImageAspectRatio(url: string) {
+  return new Promise<number | null>((resolve) => {
+    if (typeof window === "undefined" || !url.trim()) {
+      resolve(null);
+      return;
+    }
+
+    const image = new Image();
+    image.decoding = "async";
+    image.loading = "eager";
+    image.onload = () => {
+      if (!image.naturalWidth || !image.naturalHeight) {
+        resolve(null);
+        return;
+      }
+
+      resolve(image.naturalWidth / image.naturalHeight);
+    };
+    image.onerror = () => resolve(null);
+    image.src = url;
+  });
+}
+
+function collectMatchingImageUrls(
+  data: Extract<AnyExerciseDraft, { type: "matching-pairs" }>["data"],
+) {
+  const normalized = normalizeMatchingPairsData(data);
+  const imageUrls = new Set<string>();
+
+  [...normalized.pairs.flatMap((pair) => [pair.left, pair.right]), ...normalized.extras.map((item) => item.content)]
+    .map((item) => normalizeMatchingSide(item))
+    .forEach((content) => {
+      if (content.kind !== "image") {
+        return;
+      }
+
+      const url = content.url.trim();
+      if (url) {
+        imageUrls.add(url);
+      }
+    });
+
+  return Array.from(imageUrls);
+}
+
 function getMatchingAudioSize(input: MatchingAudioContent) {
   return clamp(
     Math.round(input.size),
@@ -325,6 +408,7 @@ function getMatchingLongestLineLength(text: string) {
 function getMatchingCardHeight(
   content: MatchingContent,
   width = MATCHING_CARD_WIDTH,
+  imageAspectRatios: MatchingImageAspectRatioMap = {},
 ) {
   const normalized = normalizeMatchingSide(content);
   const widthScale = clamp(width / MATCHING_CARD_WIDTH, 0.64, 1);
@@ -354,7 +438,7 @@ function getMatchingCardHeight(
   }
 
   if (normalized.kind === "spoken-text") {
-    return estimateMatchingTextHeight(normalized.text, innerWidth, 54) + 18;
+    return clamp(Math.round(Math.max(104, width * 0.64)), 104, 132);
   }
 
   if (normalized.kind === "text") {
@@ -365,13 +449,26 @@ function getMatchingCardHeight(
     return MATCHING_DEFAULT_CARD_HEIGHT;
   }
 
+  const imageFrame = getMatchingImageFrameSize(
+    normalized,
+    width,
+    imageAspectRatios,
+  );
+  const captionHeight = normalized.alt.trim()
+    ? estimateMatchingTextHeight(normalized.alt, innerWidth, 18) + 8
+    : 0;
+
   return (
-    28 +
-    Math.round(clamp(getMatchingImageHeight(normalized), 110, 220) * widthScale * 0.58) +
-    (normalized.alt.trim() ? 34 : 0)
+    14 +
+    imageFrame.frameHeight +
+    captionHeight
   );
 }
-function getMatchingCardBaseWidth(content: MatchingContent, columnWidth: number) {
+function getMatchingCardBaseWidth(
+  content: MatchingContent,
+  columnWidth: number,
+  imageAspectRatios: MatchingImageAspectRatioMap = {},
+) {
   const normalized = normalizeMatchingSide(content);
   const maxWidth = Math.max(MATCHING_CARD_MIN_WIDTH, Math.floor(columnWidth));
 
@@ -395,11 +492,20 @@ function getMatchingCardBaseWidth(content: MatchingContent, columnWidth: number)
   }
 
   if (normalized.kind === "image") {
+    const imageFrame = getMatchingImageFrameSize(
+      normalized,
+      maxWidth,
+      imageAspectRatios,
+    );
     return clamp(
-      Math.round(176 + clamp(getMatchingImageHeight(normalized), 110, 220) * 0.92),
-      182,
+      imageFrame.frameWidth + 24,
+      116,
       maxWidth,
     );
+  }
+
+  if (normalized.kind === "spoken-text") {
+    return clamp(Math.round(164 + Math.min(normalized.size, 260) * 0.08), 152, 220);
   }
 
   const normalizedText = normalized.text.trim();
@@ -437,7 +543,7 @@ function getMatchingCardMinimumHeight(content: MatchingContent) {
   }
 
   if (normalized.kind === "spoken-text") {
-    return normalized.text.trim() ? 92 : 110;
+    return 104;
   }
 
   if (normalized.kind === "text") {
@@ -451,23 +557,30 @@ function getMatchingCardSize(
   content: MatchingContent,
   columnWidth: number,
   scale: number,
+  imageAspectRatios: MatchingImageAspectRatioMap = {},
 ) {
   const normalized = normalizeMatchingSide(content);
   const maxWidth = Math.max(MATCHING_CARD_MIN_WIDTH, Math.floor(columnWidth));
-  const baseWidth = getMatchingCardBaseWidth(content, columnWidth);
+  const baseWidth = getMatchingCardBaseWidth(
+    content,
+    columnWidth,
+    imageAspectRatios,
+  );
   const minimumWidthFloor =
     normalized.kind === "text"
       ? 78
         : normalized.kind === "spoken-text"
-          ? 132
-          : normalized.kind === "audio"
-            ? 224
-            : 148;
+          ? 148
+            : normalized.kind === "audio"
+              ? 224
+            : normalized.kind === "image"
+              ? 116
+              : 148;
   const minimumHeightFloor =
     normalized.kind === "text"
       ? 38
       : normalized.kind === "spoken-text"
-        ? 84
+        ? 96
         : normalized.kind === "audio"
           ? 88
           : 72;
@@ -480,10 +593,12 @@ function getMatchingCardSize(
     Math.round(getMatchingCardMinimumHeight(content) * Math.max(scale, 0.74)),
   );
   const widthBias =
-    normalized.kind === "text" || normalized.kind === "spoken-text"
+    normalized.kind === "text"
       ? 0.34
-      : normalized.kind === "image"
-        ? 0.24
+      : normalized.kind === "spoken-text"
+        ? 0.16
+        : normalized.kind === "image"
+        ? 0.08
         : normalized.kind === "audio"
           ? 0.18
           : 0.14;
@@ -493,11 +608,14 @@ function getMatchingCardSize(
     minimumWidth,
     maxWidth,
   );
-  const height = Math.max(minimumHeight, getMatchingCardHeight(content, width));
+  const sizedHeight = Math.max(
+    minimumHeight,
+    getMatchingCardHeight(content, width, imageAspectRatios),
+  );
 
   return {
     width,
-    height,
+    height: sizedHeight,
   };
 }
 
@@ -505,6 +623,7 @@ function getMatchingStackScale(
   cards: ReadonlyArray<Pick<MatchingDragCard, "content">>,
   columnWidth: number,
   availableHeight: number,
+  imageAspectRatios: MatchingImageAspectRatioMap = {},
 ) {
   if (cards.length === 0) {
     return 1;
@@ -515,7 +634,13 @@ function getMatchingStackScale(
     const totalHeight =
       cards.reduce(
         (total, card) =>
-          total + getMatchingCardSize(card.content, columnWidth, scale).height,
+          total +
+          getMatchingCardSize(
+            card.content,
+            columnWidth,
+            scale,
+            imageAspectRatios,
+          ).height,
         0,
       ) +
       gap * Math.max(cards.length - 1, 0);
@@ -537,11 +662,17 @@ function positionMatchingColumn(
   columnX: number,
   metrics: MatchingBoardMetrics,
   scale: number,
+  imageAspectRatios: MatchingImageAspectRatioMap = {},
 ): MatchingDragCard[] {
   const gap = Math.max(10, Math.round(MATCHING_CARD_STEP * scale));
   const sizedCards = cards.map((card) => ({
     ...card,
-    ...getMatchingCardSize(card.content, metrics.columnWidth, scale),
+    ...getMatchingCardSize(
+      card.content,
+      metrics.columnWidth,
+      scale,
+      imageAspectRatios,
+    ),
   }));
   const totalHeight =
     sizedCards.reduce((sum, card) => sum + card.height, 0) +
@@ -710,6 +841,7 @@ function deterministicShuffle<T>(items: T[], seedSource: string) {
 function createMatchingCards(
   data: Extract<AnyExerciseDraft, { type: "matching-pairs" }>["data"],
   boardSize: Partial<MatchingBoardSize> = {},
+  imageAspectRatios: MatchingImageAspectRatioMap = {},
 ): MatchingDragCard[] {
   const normalized = normalizeMatchingPairsData(data);
   const { extras, pairs } = normalized;
@@ -764,20 +896,32 @@ function createMatchingCards(
   );
   const scale = Math.min(
     1,
-    getMatchingStackScale(leftCards, metrics.columnWidth, metrics.availableHeight),
-    getMatchingStackScale(rightCards, metrics.columnWidth, metrics.availableHeight),
+    getMatchingStackScale(
+      leftCards,
+      metrics.columnWidth,
+      metrics.availableHeight,
+      imageAspectRatios,
+    ),
+    getMatchingStackScale(
+      rightCards,
+      metrics.columnWidth,
+      metrics.availableHeight,
+      imageAspectRatios,
+    ),
   );
   const positionedLeftCards = positionMatchingColumn(
     leftCards,
     metrics.leftColumnX,
     metrics,
     scale,
+    imageAspectRatios,
   );
   const positionedRightCards = positionMatchingColumn(
     rightCards,
     metrics.rightColumnX,
     metrics,
     scale,
+    imageAspectRatios,
   );
 
   return [...positionedLeftCards, ...positionedRightCards];
@@ -1634,6 +1778,25 @@ function MatchingNativeAudioPlayer({
   );
 }
 
+function MatchingSpokenCardIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="matching-spoken-card__icon"
+      viewBox="0 0 24 24"
+    >
+      <path
+        d="M4 13.5V10a2 2 0 0 1 2-2h1.2A2.8 2.8 0 0 1 10 10.8v5.4A2.8 2.8 0 0 1 7.2 19H6a2 2 0 0 1-2-2v-3.5Zm10 0V10a2 2 0 0 1 2-2h1.2a2.8 2.8 0 0 1 2.8 2.8v5.4a2.8 2.8 0 0 1-2.8 2.8H16a2 2 0 0 1-2-2v-3.5ZM9 9.5a3 3 0 0 1 6 0"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+
 function MatchingCardContent({
   cardHeight,
   cardWidth,
@@ -1650,17 +1813,11 @@ function MatchingCardContent({
 
   switch (normalized.kind) {
     case "spoken-text": {
-      const spokenTextSize = Math.max(cardHeight - 74, 0);
       return (
-        <div
-          className={contentClassName}
-          style={{
-            minHeight: `${spokenTextSize}px`,
-          }}
-        >
-          <p className="matching-card-copy">
-            {normalized.text || "\u0422\u0435\u043a\u0441\u0442 \u043d\u0435 \u0437\u0430\u0434\u0430\u043d"}
-          </p>
+        <div className={`${contentClassName} matching-card-content--spoken`}>
+          <span className="matching-spoken-card">
+            <MatchingSpokenCardIcon />
+          </span>
           <button
             className="ghost-button matching-card-action"
             data-card-interactive="true"
@@ -1678,11 +1835,8 @@ function MatchingCardContent({
       );
     }
     case "image": {
-      const captionSpace = normalized.alt ? 44 : 14;
-      const imageHeight = Math.max(
-        72,
-        Math.min(cardHeight - captionSpace, Math.round(cardWidth * 0.82)),
-      );
+      const captionSpace = normalized.alt ? 34 : 10;
+      const imageHeight = Math.max(72, cardHeight - captionSpace);
       return (
         <div className={contentClassName}>
           <div
@@ -1729,7 +1883,10 @@ function MatchingCardContent({
       const audioVolume = getMatchingAudioVolume(normalized);
       const audioSourceLabel = getMatchingPlayableSourceLabel(normalized);
       const audioTitle =
-        normalized.label || audioSourceLabel || "\u0410\u0443\u0434\u0438\u043e";
+        normalized.fileName?.trim() ||
+        normalized.label ||
+        audioSourceLabel ||
+        "\u0410\u0443\u0434\u0438\u043e";
       return (
         <div className={contentClassName}>
           <div className="matching-card-media-frame matching-card-media-frame--audio">
@@ -1771,6 +1928,7 @@ function MatchingCardContent({
     }
     case "video": {
       const embeddedVideoMeta = getMatchingEmbeddedVideoMeta(normalized.url);
+      const isEmbeddedFileVideo = isMatchingEmbeddedFileUrl(normalized.url);
       const videoTitle = normalized.label.trim();
       const startSeconds =
         getMatchingVideoStartSeconds(normalized) ||
@@ -1824,19 +1982,20 @@ function MatchingCardContent({
                     }
                     src={embeddedVideoMeta.thumbnailUrl}
                   />
-                ) : getMatchingMediaType("video", normalized.url) ? (
-                  <video
-                    aria-hidden="true"
-                    className="matching-card-thumbnail"
-                    muted
-                    playsInline
-                    preload="metadata"
-                    src={normalized.url}
-                    tabIndex={-1}
-                  />
                 ) : (
-                  <div className="matching-card-thumbnail matching-card-thumbnail--placeholder">
-                    {"\u0412\u0438\u0434\u0435\u043e"}
+                  <div
+                    className={`matching-card-thumbnail matching-card-thumbnail--placeholder ${
+                      isEmbeddedFileVideo
+                        ? "matching-card-thumbnail--file"
+                        : ""
+                    }`}
+                  >
+                    <span className="matching-card-thumbnail__icon">
+                      {"\u25b6"}
+                    </span>
+                    <span className="matching-card-thumbnail__title">
+                      {videoTitle || videoSourceLabel || "\u0412\u0438\u0434\u0435\u043e"}
+                    </span>
                   </div>
                 )}
               </div>
@@ -2135,6 +2294,8 @@ function MatchingMediaDialog({
       <div
         className={`matching-media-modal__dialog ${
           media.kind === "audio" ? "matching-media-modal__dialog--audio" : ""
+        } ${
+          media.kind === "image" ? "matching-media-modal__dialog--image" : ""
         }`}
         role="dialog"
         aria-modal="true"
@@ -2161,7 +2322,11 @@ function MatchingMediaDialog({
           </button>
         </div>
 
-        <div className="matching-media-modal__body">
+        <div
+          className={`matching-media-modal__body ${
+            media.kind === "image" ? "matching-media-modal__body--image" : ""
+          }`}
+        >
           {media.kind === "image" ? (
             <div className="matching-media-modal__image-wrap">
               {media.url ? (
@@ -2273,6 +2438,8 @@ function MatchingPairsActivity({
   const [activeMedia, setActiveMedia] = useState<MatchingOpenableContent | null>(
     null,
   );
+  const [imageAspectRatios, setImageAspectRatios] =
+    useState<MatchingImageAspectRatioMap>({});
   const [boardScale, setBoardScale] = useState(1);
   const [boardResultVisible, setBoardResultVisible] = useState(false);
   const dragRef = useRef<{
@@ -2319,14 +2486,58 @@ function MatchingPairsActivity({
   }, []);
 
   useEffect(() => {
-    setCards(createMatchingCards(draft.data, boardSize));
+    setCards(createMatchingCards(draft.data, boardSize, imageAspectRatios));
     setSolvedPairs(new Set());
     setHasChecked(false);
     setBoardResultVisible(false);
     setDraggingGroupId(null);
     setActiveMedia(null);
     dragRef.current = null;
-  }, [boardSize, draft.data]);
+  }, [boardSize, draft.data, imageAspectRatios]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const urls = collectMatchingImageUrls(draft.data).filter(
+      (url) => !(url in imageAspectRatios),
+    );
+
+    if (urls.length === 0) {
+      return;
+    }
+
+    void Promise.all(
+      urls.map(async (url) => [url, await loadMatchingImageAspectRatio(url)] as const),
+    ).then((entries) => {
+      if (cancelled) {
+        return;
+      }
+
+      setImageAspectRatios((current) => {
+        const next = { ...current };
+        let hasChanges = false;
+
+        entries.forEach(([url, ratio]) => {
+          if (typeof ratio !== "number" || !Number.isFinite(ratio) || ratio <= 0) {
+            return;
+          }
+
+          const clampedRatio = clampMatchingImageAspectRatio(ratio);
+          if (next[url] === clampedRatio) {
+            return;
+          }
+
+          next[url] = clampedRatio;
+          hasChanges = true;
+        });
+
+        return hasChanges ? next : current;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [draft.data, imageAspectRatios]);
 
   useEffect(() => {
     if (!normalized.autoRemoveCorrectPairs) {

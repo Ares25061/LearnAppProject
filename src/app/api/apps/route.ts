@@ -1,19 +1,15 @@
 import { getSession, unauthorized } from "@/lib/auth";
 import { parseDraft } from "@/lib/exercise-definitions";
-import { saveOwnedApp } from "@/lib/apps";
+import { publishAnonymousApp, saveOwnedApp } from "@/lib/apps";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   const session = await getSession();
-
-  if (!session) {
-    return unauthorized();
-  }
-
   const body = (await request.json().catch(() => null)) as
-    | { id?: string | null; draft?: unknown }
+    | { id?: string | null; draft?: unknown; action?: string | null }
     | null;
+  const action = body?.action === "publish" ? "publish" : "save";
   const draft = parseDraft(body?.draft);
 
   if (!draft) {
@@ -23,11 +19,17 @@ export async function POST(request: Request) {
     );
   }
 
-  const app = await saveOwnedApp({
-    id: body?.id ?? null,
-    ownerId: session.userId,
-    draft,
-  });
+  if (!session && action !== "publish") {
+    return unauthorized();
+  }
+
+  const app = session
+    ? await saveOwnedApp({
+        id: body?.id ?? null,
+        ownerId: session.userId,
+        draft,
+      })
+    : await publishAnonymousApp(draft);
 
   if (!app) {
     return Response.json(

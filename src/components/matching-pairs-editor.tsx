@@ -1358,143 +1358,147 @@ export function MatchingPairsEditor({
                   </p>
                 </div>
 
-                <div className="matching-settings-grid">
-                  <label className="matching-setting-card">
-                    <span className="field-label">
-                      Основной цвет фона и акцентов в игровом поле.
-                    </span>
-                    <div className="matching-setting-color">
-                      <input
-                        className="editor-input editor-input--color"
-                        id="themeColor"
-                        type="color"
-                        value={themeColor}
-                        onChange={(event) => onThemeColorChange?.(event.target.value)}
-                      />
-                    </div>
-                  </label>
+                <div className="matching-settings-grid matching-settings-grid--split">
+                  <div className="matching-settings-column">
+                    <label className="matching-setting-card">
+                      <span className="field-label">
+                        Основной цвет фона и акцентов в игровом поле.
+                      </span>
+                      <div className="matching-setting-color">
+                        <input
+                          className="editor-input editor-input--color"
+                          id="themeColor"
+                          type="color"
+                          value={themeColor}
+                          onChange={(event) => onThemeColorChange?.(event.target.value)}
+                        />
+                      </div>
+                    </label>
 
-                  <div className="matching-setting-card">
-                    <span className="field-label">Выравнивание при скреплении</span>
-                    <div className="matching-setting-options">
-                      <button
-                        className={`matching-setting-chip ${
-                          normalized.pairAlignment === "horizontal"
-                            ? "matching-setting-chip--active"
-                            : ""
-                        }`}
-                        type="button"
-                        onClick={() =>
-                          updateData((current) => ({
-                            ...current,
-                            pairAlignment: "horizontal",
-                          }))
-                        }
-                      >
-                        Бок о бок
-                      </button>
-                      <button
-                        className={`matching-setting-chip ${
-                          normalized.pairAlignment === "vertical"
-                            ? "matching-setting-chip--active"
-                            : ""
-                        }`}
-                        type="button"
-                        onClick={() =>
-                          updateData((current) => ({
-                            ...current,
-                            pairAlignment: "vertical",
-                          }))
-                        }
-                      >
-                        Сверху вниз
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="matching-setting-card">
-                    <span className="field-label">Вид соединения</span>
-                    <div className="matching-setting-options">
-                      {matchingConnectorStyleOptions.map((option) => (
+                    <div className="matching-setting-card">
+                      <span className="field-label">Выравнивание при скреплении</span>
+                      <div className="matching-setting-options">
                         <button
                           className={`matching-setting-chip ${
-                            normalized.connectorStyle === option.id
+                            normalized.pairAlignment === "horizontal"
                               ? "matching-setting-chip--active"
                               : ""
                           }`}
-                          key={option.id}
                           type="button"
                           onClick={() =>
                             updateData((current) => ({
                               ...current,
-                              connectorStyle: option.id,
+                              pairAlignment: "horizontal",
                             }))
                           }
                         >
-                          {option.label}
+                          Бок о бок
                         </button>
-                      ))}
+                        <button
+                          className={`matching-setting-chip ${
+                            normalized.pairAlignment === "vertical"
+                              ? "matching-setting-chip--active"
+                              : ""
+                          }`}
+                          type="button"
+                          onClick={() =>
+                            updateData((current) => ({
+                              ...current,
+                              pairAlignment: "vertical",
+                            }))
+                          }
+                        >
+                          Сверху вниз
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="matching-setting-card">
+                      <span className="field-label">Вид соединения</span>
+                      <div className="matching-setting-options">
+                        {matchingConnectorStyleOptions.map((option) => (
+                          <button
+                            className={`matching-setting-chip ${
+                              normalized.connectorStyle === option.id
+                                ? "matching-setting-chip--active"
+                                : ""
+                            }`}
+                            key={option.id}
+                            type="button"
+                            onClick={() =>
+                              updateData((current) => ({
+                                ...current,
+                                connectorStyle: option.id,
+                              }))
+                            }
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
-                  <label className="matching-setting-card matching-setting-card--toggle">
-                    <input
+
+                  <div className="matching-settings-column">
+                    <label className="matching-setting-card matching-setting-card--toggle">
+                      <input
                         checked={normalized.autoRemoveCorrectPairs}
                         type="checkbox"
                         onChange={(event) =>
-                            updateData((current) => ({
-                              ...current,
-                              autoRemoveCorrectPairs: event.target.checked,
-                            }))
+                          updateData((current) => ({
+                            ...current,
+                            autoRemoveCorrectPairs: event.target.checked,
+                          }))
                         }
-                    />
-                    <div>
-                      <strong>Удалять правильно составленные пары</strong>
-                      <p className="editor-hint">
-                        Верно составленные пары автоматически исчезают с поля сразу после
-                        соединения.
-                      </p>
-                    </div>
-                  </label>
-                  <label className="matching-setting-card matching-setting-card--toggle">
-                    <input
-                      checked={normalized.showImmediateFeedback}
-                      type="checkbox"
-                      onChange={(event) =>
-                        updateData((current) => ({
-                          ...current,
-                          showImmediateFeedback: event.target.checked,
-                        }))
-                      }
-                    />
-                    <div>
-                      <strong>Показывать результат сразу</strong>
-                      <p className="editor-hint">
-                        Правильные связки будут зелеными, ошибочные красными еще до
-                        нажатия на кнопку проверки.
-                      </p>
-                    </div>
-                  </label>
+                      />
+                      <div>
+                        <strong>Удалять правильно составленные пары</strong>
+                        <p className="editor-hint">
+                          Верно составленные пары автоматически исчезают с поля сразу после
+                          соединения.
+                        </p>
+                      </div>
+                    </label>
 
+                    <label className="matching-setting-card matching-setting-card--toggle">
+                      <input
+                        checked={normalized.showImmediateFeedback}
+                        type="checkbox"
+                        onChange={(event) =>
+                          updateData((current) => ({
+                            ...current,
+                            showImmediateFeedback: event.target.checked,
+                          }))
+                        }
+                      />
+                      <div>
+                        <strong>Показывать результат сразу</strong>
+                        <p className="editor-hint">
+                          Правильные связки будут зелеными, ошибочные красными еще до
+                          нажатия на кнопку проверки.
+                        </p>
+                      </div>
+                    </label>
 
-
-                  <label className="matching-setting-card matching-setting-card--toggle">
-                    <input
-                      checked={normalized.colorByGroup}
-                      type="checkbox"
-                      onChange={(event) =>
-                        updateData((current) => ({
-                          ...current,
-                          colorByGroup: event.target.checked,
-                        }))
-                      }
-                    />
-                    <div>
-                      <strong>Раскраска карточек по сторонам</strong>
-                      <p className="editor-hint">
-                        Левая и правая карточки отличаются цветом без дополнительных меток.
-                      </p>
-                    </div>
-                  </label>
+                    <label className="matching-setting-card matching-setting-card--toggle">
+                      <input
+                        checked={normalized.colorByGroup}
+                        type="checkbox"
+                        onChange={(event) =>
+                          updateData((current) => ({
+                            ...current,
+                            colorByGroup: event.target.checked,
+                          }))
+                        }
+                      />
+                      <div>
+                        <strong>Раскраска карточек по сторонам</strong>
+                        <p className="editor-hint">
+                          Левая и правая карточки отличаются цветом без дополнительных меток.
+                        </p>
+                      </div>
+                    </label>
+                  </div>
                 </div>
               </section>
 

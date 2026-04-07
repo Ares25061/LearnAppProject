@@ -20,4 +20,8 @@ if (!draft) {
   throw new Error("Autonomous SCORM exercise draft is missing.");
 }
 
-createRoot(container).render(<ExercisePlayer draft={draft} fullscreen />);
+createRoot(container).render(
+  <main className="play-page play-page--board">
+    <ExercisePlayer boardOnly draft={draft} fullscreen />
+  </main>,
+);

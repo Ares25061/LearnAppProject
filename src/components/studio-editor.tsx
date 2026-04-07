@@ -132,6 +132,7 @@ export function StudioEditor({
     const payload = {
       id: currentId,
       draft: resolvedDraft,
+      action,
       variant: action === "export" ? variant : undefined,
     };
 
@@ -291,13 +292,6 @@ export function StudioEditor({
   };
 
   const handlePublish = () => {
-    if (!user) {
-      showNotice(
-        "Для публикации и дальнейшего редактирования войдите в аккаунт.",
-      );
-      return;
-    }
-
     persistDraft("/api/apps", "publish");
   };
 
