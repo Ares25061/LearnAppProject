@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   convertAudioSourceToPlayableAsset,
   type ConvertedAudioAsset,
@@ -18,6 +19,29 @@ type CachedAudioEntry = {
 
 const audioCache = new Map<string, CachedAudioEntry>();
 const pendingConversions = new Map<string, Promise<ConvertedAudioAsset>>();
+
+function logAudioRequest(
+  level: "info" | "warn" | "error",
+  requestId: string,
+  message: string,
+  details?: Record<string, unknown>,
+) {
+  const prefix = `[media/audio:${requestId}] ${message}`;
+  if (details) {
+    console[level](prefix, details);
+    return;
+  }
+
+  console[level](prefix);
+}
+
+function getSourceHost(sourceUrl: string) {
+  try {
+    return new URL(sourceUrl).hostname;
+  } catch {
+    return null;
+  }
+}
 
 function pruneExpiredAudioEntries(now = Date.now()) {
   for (const [cacheKey, entry] of audioCache.entries()) {
@@ -55,19 +79,47 @@ function setCachedAudioBuffer(sourceUrl: string, asset: ConvertedAudioAsset) {
   }
 }
 
-async function getAudioBufferForSource(sourceUrl: string) {
+async function getAudioBufferForSource(
+  requestId: string,
+  provider: string,
+  sourceUrl: string,
+  sourceHost: string | null,
+) {
   const cachedAsset = getCachedAudioBuffer(sourceUrl);
   if (cachedAsset) {
+    logAudioRequest("info", requestId, "Serving audio from in-memory cache", {
+      contentType: cachedAsset.contentType,
+      extension: cachedAsset.extension,
+      provider,
+      size: cachedAsset.buffer.byteLength,
+      sourceHost,
+    });
     return cachedAsset;
   }
 
   const pendingConversion = pendingConversions.get(sourceUrl);
   if (pendingConversion) {
+    logAudioRequest("info", requestId, "Joining pending audio conversion", {
+      provider,
+      sourceHost,
+    });
     return pendingConversion;
   }
 
   const conversionPromise = (async () => {
     const resolvedSource = await verifyConvertibleAudioSource(sourceUrl);
+    logAudioRequest("info", requestId, "Resolved audio source", {
+      directAsset: resolvedSource.directAsset?.extension ?? null,
+      headers: Object.keys(resolvedSource.headers ?? {}),
+      mode: resolvedSource.debug?.mode ?? null,
+      provider,
+      resolvedContainer: resolvedSource.debug?.container ?? null,
+      resolvedFormatId: resolvedSource.debug?.formatId ?? null,
+      resolvedHost: resolvedSource.debug?.host ?? null,
+      resolvedProtocol: resolvedSource.debug?.protocol ?? null,
+      sourceHost,
+    });
+
     const asset = await convertAudioSourceToPlayableAsset(resolvedSource);
     setCachedAudioBuffer(sourceUrl, asset);
     return asset;
@@ -83,11 +135,20 @@ async function getAudioBufferForSource(sourceUrl: string) {
 }
 
 export async function GET(request: Request) {
+  const requestId = randomUUID().slice(0, 8);
+  const startedAt = Date.now();
   const requestUrl = new URL(request.url);
   const sourceUrl = requestUrl.searchParams.get("source")?.trim() ?? "";
   const provider = getConvertibleAudioProvider(sourceUrl);
+  const sourceHost = getSourceHost(sourceUrl);
 
   if (!provider || !sourceUrl) {
+    logAudioRequest("warn", requestId, "Rejected invalid audio request", {
+      provider,
+      sourceHost,
+      sourceUrl,
+    });
+
     return Response.json(
       {
         error:
@@ -98,7 +159,27 @@ export async function GET(request: Request) {
   }
 
   try {
-    const audioAsset = await getAudioBufferForSource(sourceUrl);
+    logAudioRequest("info", requestId, "Started audio request", {
+      provider,
+      sourceHost,
+      sourceUrl,
+    });
+
+    const audioAsset = await getAudioBufferForSource(
+      requestId,
+      provider,
+      sourceUrl,
+      sourceHost,
+    );
+    logAudioRequest("info", requestId, "Prepared audio asset", {
+      contentType: audioAsset.contentType,
+      extension: audioAsset.extension,
+      provider,
+      size: audioAsset.buffer.byteLength,
+      sourceHost,
+      tookMs: Date.now() - startedAt,
+    });
+
     const responseBody = new Uint8Array(audioAsset.buffer);
 
     return new Response(responseBody, {
@@ -114,6 +195,15 @@ export async function GET(request: Request) {
       error instanceof Error
         ? error.message
         : "Не удалось открыть источник для конвертации.";
+
+    logAudioRequest("error", requestId, "Audio request failed", {
+      message,
+      provider,
+      sourceHost,
+      sourceUrl,
+      stack: error instanceof Error ? error.stack ?? null : null,
+      tookMs: Date.now() - startedAt,
+    });
 
     return Response.json({ error: message }, { status: 502 });
   }

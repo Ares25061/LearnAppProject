@@ -2,7 +2,7 @@ import "server-only";
 
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { accessSync, constants } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -13,6 +13,7 @@ import { getConvertibleAudioProvider } from "@/lib/media-audio";
 
 const execFileAsync = promisify(execFile);
 const AUDIO_PROBE_TIMEOUT_MS = 45_000;
+const AUDIO_DOWNLOAD_TIMEOUT_MS = 120_000;
 const THUMBNAIL_PROBE_TIMEOUT_MS = 20_000;
 const THUMBNAIL_SUCCESS_CACHE_TTL_MS = 1000 * 60 * 60 * 6;
 const THUMBNAIL_FAILURE_CACHE_TTL_MS = 1000 * 30;
@@ -31,6 +32,13 @@ const RUTUBE_STREAM_HEADERS = {
   Referer: "https://rutube.ru/",
   "User-Agent": RUTUBE_USER_AGENT,
 } satisfies Record<string, string>;
+const VK_REQUEST_HEADERS = {
+  Origin: "https://vkvideo.ru",
+  Referer: "https://vkvideo.ru/",
+} satisfies Record<string, string>;
+const ytDlpDownloadState = {
+  promise: null as Promise<string> | null,
+};
 const thumbnailCache = new Map<
   string,
   { expiresAt: number; thumbnailUrl: string | null }
@@ -38,6 +46,18 @@ const thumbnailCache = new Map<
 
 type ResolvedAudioSource = {
   cookies?: string;
+  directAsset?: {
+    contentType: string;
+    extension: string;
+  };
+  debug?: {
+    container?: string;
+    formatId?: string;
+    host?: string;
+    mode?: "direct" | "hls" | "transcode";
+    protocol?: string;
+    provider?: string;
+  };
   headers?: Record<string, string>;
   url: string;
 };
@@ -62,13 +82,18 @@ type YtDlpResolvedAudioMetadata = {
 
 type YtDlpResolvedAudioFormat = {
   acodec?: string;
+  abr?: number;
+  audio_ext?: string;
   cookies?: string;
+  ext?: string;
   format_id?: string;
   height?: number;
   http_headers?: Record<string, string>;
   protocol?: string;
+  source_preference?: number;
   tbr?: number;
   url?: string;
+  vcodec?: string;
   width?: number;
 };
 
@@ -145,6 +170,83 @@ function resolveYtDlpBin(): string {
   return "yt-dlp";
 }
 
+function getDownloadedYtDlpPath() {
+  const fileName = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
+  return path.join(tmpdir(), "learnapp-media-tools", fileName);
+}
+
+function getYtDlpDownloadUrl() {
+  if (process.env.YT_DLP_DOWNLOAD_URL?.trim()) {
+    return process.env.YT_DLP_DOWNLOAD_URL.trim();
+  }
+
+  return process.platform === "win32"
+    ? "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+    : "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp";
+}
+
+async function ensureYtDlpBin() {
+  const resolvedPath = resolveYtDlpBin();
+  if (resolvedPath !== "yt-dlp") {
+    return resolvedPath;
+  }
+
+  try {
+    await execFileAsync("yt-dlp", ["--version"], {
+      timeout: 10_000,
+      windowsHide: true,
+    });
+    return "yt-dlp";
+  } catch {
+    // Fall through to an on-demand download for environments like Railway.
+  }
+
+  const downloadedPath = getDownloadedYtDlpPath();
+  if (isExecutableFile(downloadedPath)) {
+    return downloadedPath;
+  }
+
+  if (!ytDlpDownloadState.promise) {
+    ytDlpDownloadState.promise = (async () => {
+      const downloadUrl = getYtDlpDownloadUrl();
+      console.info("[media/yt-dlp] Downloading yt-dlp binary", {
+        downloadUrl,
+        targetPath: downloadedPath,
+      });
+
+      const response = await fetch(downloadUrl, {
+        redirect: "follow",
+        signal: AbortSignal.timeout(AUDIO_DOWNLOAD_TIMEOUT_MS),
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          `Не удалось скачать yt-dlp. HTTP ${response.status} ${response.statusText}.`,
+        );
+      }
+
+      const binary = Buffer.from(await response.arrayBuffer());
+      await mkdir(path.dirname(downloadedPath), { recursive: true });
+      await writeFile(downloadedPath, binary);
+
+      if (process.platform !== "win32") {
+        await chmod(downloadedPath, 0o755);
+      }
+
+      console.info("[media/yt-dlp] yt-dlp binary is ready", {
+        targetPath: downloadedPath,
+        size: binary.byteLength,
+      });
+
+      return downloadedPath;
+    })().finally(() => {
+      ytDlpDownloadState.promise = null;
+    });
+  }
+
+  return ytDlpDownloadState.promise;
+}
+
 function resolveFfmpegBin(): string {
   const envPath = process.env.FFMPEG_BIN?.trim();
   if (typeof envPath === "string" && isExecutableFile(envPath)) {
@@ -185,7 +287,9 @@ function stopProcess(process: ChildProcess | null) {
 }
 
 
-export async function verifyConvertibleAudioSource(sourceUrl: string) {
+export async function verifyConvertibleAudioSource(
+  sourceUrl: string,
+): Promise<ResolvedAudioSource> {
   const provider = getConvertibleAudioProvider(sourceUrl);
 
   if (!provider) {
@@ -196,7 +300,11 @@ export async function verifyConvertibleAudioSource(sourceUrl: string) {
     return resolveRutubeAudioSource(sourceUrl);
   }
 
-  const ytDlpBin = resolveYtDlpBin();
+  if (provider === "vk") {
+    return resolveVkAudioSource(sourceUrl);
+  }
+
+  const ytDlpBin = await ensureYtDlpBin();
 
   try {
     const { stdout } = await execFileAsync(
@@ -374,6 +482,24 @@ function getYtDlpNumericValue(value: number | undefined) {
     : Number.MAX_SAFE_INTEGER;
 }
 
+function getYtDlpBitrateDistance(
+  primary: number | undefined,
+  fallback: number | undefined,
+  target = 128,
+) {
+  const bitrate = typeof primary === "number" && Number.isFinite(primary)
+    ? primary
+    : typeof fallback === "number" && Number.isFinite(fallback)
+      ? fallback
+      : Number.MAX_SAFE_INTEGER;
+
+  if (!Number.isFinite(bitrate)) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+
+  return Math.abs(bitrate - target);
+}
+
 function pickRutubeYtDlpFormat(
   formats: YtDlpResolvedAudioFormat[] | undefined,
 ) {
@@ -414,8 +540,69 @@ function pickRutubeYtDlpFormat(
     })[0];
 }
 
-async function resolveRutubeAudioSourceWithYtDlp(sourceUrl: string) {
-  const ytDlpBin = resolveYtDlpBin();
+function pickVkYtDlpFormat(
+  formats: YtDlpResolvedAudioFormat[] | undefined,
+) {
+  return formats
+    ?.filter(
+      (format): format is YtDlpResolvedAudioFormat & { url: string } =>
+        typeof format.url === "string" &&
+        format.url.trim().length > 0 &&
+        typeof format.acodec === "string" &&
+        format.acodec.trim().length > 0 &&
+        format.acodec !== "none",
+    )
+    .sort((left, right) => {
+      const leftAudioOnly = left.vcodec === "none" ? 0 : 1;
+      const rightAudioOnly = right.vcodec === "none" ? 0 : 1;
+      if (leftAudioOnly !== rightAudioOnly) {
+        return leftAudioOnly - rightAudioOnly;
+      }
+
+      const leftDirect = left.protocol === "https" ? 0 : 1;
+      const rightDirect = right.protocol === "https" ? 0 : 1;
+      if (leftDirect !== rightDirect) {
+        return leftDirect - rightDirect;
+      }
+
+      const leftContainer =
+        left.ext === "m4a" || left.audio_ext === "m4a"
+          ? 0
+          : left.ext === "webm" || left.audio_ext === "webm"
+            ? 1
+            : 2;
+      const rightContainer =
+        right.ext === "m4a" || right.audio_ext === "m4a"
+          ? 0
+          : right.ext === "webm" || right.audio_ext === "webm"
+            ? 1
+            : 2;
+      if (leftContainer !== rightContainer) {
+        return leftContainer - rightContainer;
+      }
+
+      const leftBitrateDistance = getYtDlpBitrateDistance(left.abr, left.tbr);
+      const rightBitrateDistance = getYtDlpBitrateDistance(right.abr, right.tbr);
+      if (leftBitrateDistance !== rightBitrateDistance) {
+        return leftBitrateDistance - rightBitrateDistance;
+      }
+
+      const leftSourcePreference =
+        typeof left.source_preference === "number" ? -left.source_preference : 0;
+      const rightSourcePreference =
+        typeof right.source_preference === "number" ? -right.source_preference : 0;
+      if (leftSourcePreference !== rightSourcePreference) {
+        return leftSourcePreference - rightSourcePreference;
+      }
+
+      return getYtDlpNumericValue(left.tbr) - getYtDlpNumericValue(right.tbr);
+    })[0];
+}
+
+async function resolveRutubeAudioSourceWithYtDlp(
+  sourceUrl: string,
+): Promise<ResolvedAudioSource | null> {
+  const ytDlpBin = await ensureYtDlpBin();
 
   try {
     const { stdout } = await execFileAsync(
@@ -442,6 +629,20 @@ async function resolveRutubeAudioSourceWithYtDlp(sourceUrl: string) {
     if (selectedFormat?.url?.trim()) {
       return {
         cookies: selectedFormat.cookies ?? parsed.cookies,
+        debug: {
+          container: selectedFormat.audio_ext ?? selectedFormat.ext,
+          formatId: selectedFormat.format_id,
+          host: (() => {
+            try {
+              return new URL(selectedFormat.url.trim()).hostname;
+            } catch {
+              return undefined;
+            }
+          })(),
+          mode: isHlsSourceUrl(selectedFormat.url) ? "hls" : "transcode",
+          protocol: selectedFormat.protocol,
+          provider: "rutube",
+        },
         headers: {
           ...RUTUBE_STREAM_HEADERS,
           ...(selectedFormat.http_headers ?? parsed.http_headers ?? {}),
@@ -458,6 +659,17 @@ async function resolveRutubeAudioSourceWithYtDlp(sourceUrl: string) {
 
     return {
       cookies: selectedDownload?.cookies ?? parsed.cookies,
+      debug: {
+        host: (() => {
+          try {
+            return new URL(fallbackUrl).hostname;
+          } catch {
+            return undefined;
+          }
+        })(),
+        mode: isHlsSourceUrl(fallbackUrl) ? "hls" : "transcode",
+        provider: "rutube",
+      },
       headers: {
         ...RUTUBE_STREAM_HEADERS,
         ...(selectedDownload?.http_headers ?? parsed.http_headers ?? {}),
@@ -469,7 +681,95 @@ async function resolveRutubeAudioSourceWithYtDlp(sourceUrl: string) {
   }
 }
 
-async function resolveRutubeAudioSource(sourceUrl: string) {
+async function resolveVkAudioSource(
+  sourceUrl: string,
+): Promise<ResolvedAudioSource> {
+  const ytDlpBin = await ensureYtDlpBin();
+
+  try {
+    const { stdout } = await execFileAsync(
+      ytDlpBin,
+      [
+        "--ignore-config",
+        "--no-playlist",
+        "--no-warnings",
+        "-f",
+        "bestaudio/best",
+        "--dump-single-json",
+        sourceUrl,
+      ],
+      {
+        timeout: AUDIO_PROBE_TIMEOUT_MS,
+        windowsHide: true,
+        maxBuffer: 16 * 1024 * 1024,
+      },
+    );
+
+    const parsed = JSON.parse(stdout) as YtDlpResolvedAudioMetadata;
+    const selectedFormat = pickVkYtDlpFormat(parsed.formats);
+    const selected = selectedFormat ?? parsed.requested_downloads?.[0] ?? parsed;
+    const resolvedUrl = selected.url?.trim() || parsed.url?.trim() || "";
+
+    if (!resolvedUrl) {
+      throw new Error("yt-dlp не вернул рабочую ссылку на аудиопоток VK.");
+    }
+
+    const directAsset =
+      selectedFormat?.protocol === "https" &&
+      (selectedFormat.ext === "m4a" || selectedFormat.audio_ext === "m4a")
+        ? {
+            contentType: "audio/mp4",
+            extension: "m4a",
+          }
+        : selectedFormat?.protocol === "https" &&
+            (selectedFormat.ext === "webm" || selectedFormat.audio_ext === "webm")
+          ? {
+              contentType: "audio/webm",
+              extension: "webm",
+            }
+          : undefined;
+
+    return {
+      cookies: selected.cookies ?? parsed.cookies,
+      directAsset,
+      debug: {
+        container:
+          selectedFormat?.audio_ext ??
+          selectedFormat?.ext ??
+          directAsset?.extension,
+        formatId: selectedFormat?.format_id,
+        host: (() => {
+          try {
+            return new URL(resolvedUrl).hostname;
+          } catch {
+            return undefined;
+          }
+        })(),
+        mode: directAsset ? "direct" : isHlsSourceUrl(resolvedUrl) ? "hls" : "transcode",
+        protocol: selectedFormat?.protocol,
+        provider: "vk",
+      },
+      headers: {
+        ...VK_REQUEST_HEADERS,
+        ...(selected.http_headers ?? parsed.http_headers ?? {}),
+        Referer: sourceUrl,
+      },
+      url: resolvedUrl,
+    } satisfies ResolvedAudioSource;
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(
+        `Не удалось подготовить аудиопоток VK через yt-dlp (${ytDlpBin}): ${error.message}`,
+      );
+    }
+
+    throw error;
+  }
+}
+
+async function resolveRutubeAudioSource(
+  sourceUrl: string,
+): Promise<ResolvedAudioSource> {
   const videoId = getRutubeVideoId(sourceUrl);
   if (!videoId) {
     throw new Error("РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂ РІРёРґРµРѕ Rutube.");
@@ -503,6 +803,17 @@ async function resolveRutubeAudioSource(sourceUrl: string) {
   }
 
   return {
+    debug: {
+      host: (() => {
+        try {
+          return new URL(resolvedUrl).hostname;
+        } catch {
+          return undefined;
+        }
+      })(),
+      mode: "hls",
+      provider: "rutube",
+    },
     headers: {
       ...RUTUBE_STREAM_HEADERS,
       Referer: parsed.referer?.trim() || RUTUBE_STREAM_HEADERS.Referer,
@@ -633,7 +944,7 @@ async function resolveVkThumbnailFromHtml(sourceUrl: string) {
 }
 
 async function resolveVkThumbnailUrl(sourceUrl: string) {
-  const ytDlpBin = resolveYtDlpBin();
+  const ytDlpBin = await ensureYtDlpBin();
   const candidates = buildVkThumbnailProbeCandidates(sourceUrl);
 
   for (const candidate of candidates) {
@@ -726,6 +1037,22 @@ function buildFfmpegHeaderString(resolvedSource: ResolvedAudioSource) {
   return `${Array.from(headers.entries())
     .map(([key, value]) => `${key}: ${value}`)
     .join("\r\n")}\r\n`;
+}
+
+function buildResolvedSourceHeaders(resolvedSource: ResolvedAudioSource) {
+  const headers = new Headers();
+
+  Object.entries(resolvedSource.headers ?? {}).forEach(([key, value]) => {
+    if (value) {
+      headers.set(key, value);
+    }
+  });
+
+  if (resolvedSource.cookies?.trim()) {
+    headers.set("Cookie", resolvedSource.cookies.trim());
+  }
+
+  return headers;
 }
 
 function isHlsSourceUrl(sourceUrl: string) {
@@ -938,6 +1265,27 @@ async function convertAudioSourceToM4aBuffer(
   }
 }
 
+async function downloadAudioSourceBuffer(resolvedSource: ResolvedAudioSource) {
+  const response = await fetch(resolvedSource.url, {
+    headers: buildResolvedSourceHeaders(resolvedSource),
+    signal: AbortSignal.timeout(AUDIO_DOWNLOAD_TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Не удалось скачать аудиоисточник (${response.status} ${response.statusText}).`,
+    );
+  }
+
+  const contentType = response.headers.get("content-type")?.trim() || null;
+  const arrayBuffer = await response.arrayBuffer();
+
+  return {
+    buffer: Buffer.from(arrayBuffer),
+    contentType,
+  };
+}
+
 export async function convertAudioSourceToMp3Buffer(
   resolvedSource: ResolvedAudioSource,
 ) {
@@ -1010,6 +1358,16 @@ export async function convertAudioSourceToMp3Buffer(
 export async function convertAudioSourceToPlayableAsset(
   resolvedSource: ResolvedAudioSource,
 ): Promise<ConvertedAudioAsset> {
+  if (resolvedSource.directAsset) {
+    const downloadedAsset = await downloadAudioSourceBuffer(resolvedSource);
+    return {
+      buffer: downloadedAsset.buffer,
+      contentType:
+        downloadedAsset.contentType || resolvedSource.directAsset.contentType,
+      extension: resolvedSource.directAsset.extension,
+    };
+  }
+
   if (isHlsSourceUrl(resolvedSource.url)) {
     try {
       const buffer = await convertAudioSourceToM4aBuffer(resolvedSource);
