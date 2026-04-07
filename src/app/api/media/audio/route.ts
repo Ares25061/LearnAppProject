@@ -1,5 +1,6 @@
 import {
-  convertAudioSourceToMp3Buffer,
+  convertAudioSourceToPlayableAsset,
+  type ConvertedAudioAsset,
   verifyConvertibleAudioSource,
 } from "@/lib/media-conversion";
 import { getConvertibleAudioProvider } from "@/lib/media-audio";
@@ -11,12 +12,12 @@ const AUDIO_CACHE_TTL_MS = 30 * 60 * 1000;
 const AUDIO_CACHE_MAX_ENTRIES = 6;
 
 type CachedAudioEntry = {
-  buffer: Buffer;
+  asset: ConvertedAudioAsset;
   expiresAt: number;
 };
 
 const audioCache = new Map<string, CachedAudioEntry>();
-const pendingConversions = new Map<string, Promise<Buffer>>();
+const pendingConversions = new Map<string, Promise<ConvertedAudioAsset>>();
 
 function pruneExpiredAudioEntries(now = Date.now()) {
   for (const [cacheKey, entry] of audioCache.entries()) {
@@ -35,13 +36,13 @@ function getCachedAudioBuffer(sourceUrl: string) {
 
   audioCache.delete(sourceUrl);
   audioCache.set(sourceUrl, entry);
-  return entry.buffer;
+  return entry.asset;
 }
 
-function setCachedAudioBuffer(sourceUrl: string, buffer: Buffer) {
+function setCachedAudioBuffer(sourceUrl: string, asset: ConvertedAudioAsset) {
   pruneExpiredAudioEntries();
   audioCache.set(sourceUrl, {
-    buffer,
+    asset,
     expiresAt: Date.now() + AUDIO_CACHE_TTL_MS,
   });
 
@@ -55,9 +56,9 @@ function setCachedAudioBuffer(sourceUrl: string, buffer: Buffer) {
 }
 
 async function getAudioBufferForSource(sourceUrl: string) {
-  const cachedBuffer = getCachedAudioBuffer(sourceUrl);
-  if (cachedBuffer) {
-    return cachedBuffer;
+  const cachedAsset = getCachedAudioBuffer(sourceUrl);
+  if (cachedAsset) {
+    return cachedAsset;
   }
 
   const pendingConversion = pendingConversions.get(sourceUrl);
@@ -67,9 +68,9 @@ async function getAudioBufferForSource(sourceUrl: string) {
 
   const conversionPromise = (async () => {
     const resolvedSource = await verifyConvertibleAudioSource(sourceUrl);
-    const buffer = await convertAudioSourceToMp3Buffer(resolvedSource);
-    setCachedAudioBuffer(sourceUrl, buffer);
-    return buffer;
+    const asset = await convertAudioSourceToPlayableAsset(resolvedSource);
+    setCachedAudioBuffer(sourceUrl, asset);
+    return asset;
   })();
 
   pendingConversions.set(sourceUrl, conversionPromise);
@@ -97,15 +98,15 @@ export async function GET(request: Request) {
   }
 
   try {
-    const audioBuffer = await getAudioBufferForSource(sourceUrl);
-    const responseBody = new Uint8Array(audioBuffer);
+    const audioAsset = await getAudioBufferForSource(sourceUrl);
+    const responseBody = new Uint8Array(audioAsset.buffer);
 
     return new Response(responseBody, {
       headers: {
-        "Content-Type": "audio/mpeg",
+        "Content-Type": audioAsset.contentType,
         "Cache-Control": "private, max-age=1800",
-        "Content-Disposition": `inline; filename="${provider}-audio.mp3"`,
-        "Content-Length": String(audioBuffer.byteLength),
+        "Content-Disposition": `inline; filename="${provider}-audio.${audioAsset.extension}"`,
+        "Content-Length": String(audioAsset.buffer.byteLength),
       },
     });
   } catch (error) {

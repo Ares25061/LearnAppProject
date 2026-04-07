@@ -42,6 +42,12 @@ type ResolvedAudioSource = {
   url: string;
 };
 
+export type ConvertedAudioAsset = {
+  buffer: Buffer;
+  contentType: string;
+  extension: string;
+};
+
 type YtDlpResolvedAudioMetadata = {
   cookies?: string;
   formats?: YtDlpResolvedAudioFormat[];
@@ -757,6 +763,23 @@ function buildFfmpegInputArgs(resolvedSource: ResolvedAudioSource) {
   ];
 }
 
+function buildFfmpegExitErrorMessage(
+  ffmpegErrors: string,
+  code: number | null,
+  signal?: NodeJS.Signals | null,
+) {
+  const normalizedErrors = ffmpegErrors.trim();
+  if (normalizedErrors) {
+    return normalizedErrors;
+  }
+
+  if (signal) {
+    return `ffmpeg завершился по сигналу ${signal}.`;
+  }
+
+  return `ffmpeg завершился с кодом ${code ?? "unknown"}.`;
+}
+
 export function createConvertedAudioStream(resolvedSource: ResolvedAudioSource) {
   const output = new PassThrough();
   const ffmpegBin = resolveFfmpegBin();
@@ -820,7 +843,7 @@ export function createConvertedAudioStream(resolvedSource: ResolvedAudioSource) 
 
   ffmpeg.stdout?.pipe(output);
 
-  ffmpeg.on("close", (code) => {
+  ffmpeg.on("close", (code, signal) => {
     if (closed) {
       return;
     }
@@ -830,6 +853,10 @@ export function createConvertedAudioStream(resolvedSource: ResolvedAudioSource) 
       output.end();
       return;
     }
+
+    return finishWithError(
+      buildFfmpegExitErrorMessage(ffmpegErrors, code, signal),
+    );
 
     finishWithError(
       ffmpegErrors.trim() ||
@@ -849,6 +876,66 @@ export function createConvertedAudioStream(resolvedSource: ResolvedAudioSource) 
       output.destroy();
     },
   };
+}
+
+async function convertAudioSourceToM4aBuffer(
+  resolvedSource: ResolvedAudioSource,
+) {
+  const ffmpegBin = resolveFfmpegBin();
+  const tempDir = await mkdtemp(path.join(tmpdir(), "learnapp-audio-"));
+  const outputPath = path.join(tempDir, `${randomUUID()}.m4a`);
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const ffmpeg = spawn(
+        ffmpegBin,
+        [
+          ...buildFfmpegInputArgs(resolvedSource),
+          "-map",
+          "0:a:0",
+          "-vn",
+          "-sn",
+          "-dn",
+          "-c:a",
+          "copy",
+          "-movflags",
+          "+faststart",
+          "-f",
+          "mp4",
+          outputPath,
+        ],
+        {
+          windowsHide: true,
+        },
+      );
+
+      let ffmpegErrors = "";
+
+      ffmpeg.stderr?.on("data", (chunk) => {
+        ffmpegErrors = appendLogChunk(ffmpegErrors, chunk);
+      });
+
+      ffmpeg.on("error", (error) => {
+        reject(new Error(`ffmpeg: ${error.message}`));
+      });
+
+      ffmpeg.on("close", (code, signal) => {
+        if (code === 0) {
+          resolve();
+          return;
+        }
+
+        reject(new Error(buildFfmpegExitErrorMessage(ffmpegErrors, code, signal)));
+      });
+    });
+
+    return await readFile(outputPath);
+  } finally {
+    await rm(tempDir, {
+      force: true,
+      recursive: true,
+    }).catch(() => undefined);
+  }
 }
 
 export async function convertAudioSourceToMp3Buffer(
@@ -892,11 +979,15 @@ export async function convertAudioSourceToMp3Buffer(
         reject(new Error(`ffmpeg: ${error.message}`));
       });
 
-      ffmpeg.on("close", (code) => {
+      ffmpeg.on("close", (code, signal) => {
         if (code === 0) {
           resolve();
           return;
         }
+
+        return reject(
+          new Error(buildFfmpegExitErrorMessage(ffmpegErrors, code, signal)),
+        );
 
         reject(
           new Error(
@@ -914,4 +1005,28 @@ export async function convertAudioSourceToMp3Buffer(
       recursive: true,
     }).catch(() => undefined);
   }
+}
+
+export async function convertAudioSourceToPlayableAsset(
+  resolvedSource: ResolvedAudioSource,
+): Promise<ConvertedAudioAsset> {
+  if (isHlsSourceUrl(resolvedSource.url)) {
+    try {
+      const buffer = await convertAudioSourceToM4aBuffer(resolvedSource);
+      return {
+        buffer,
+        contentType: "audio/mp4",
+        extension: "m4a",
+      };
+    } catch {
+      // Fall back to mp3 transcoding when the source cannot be remuxed cleanly.
+    }
+  }
+
+  const buffer = await convertAudioSourceToMp3Buffer(resolvedSource);
+  return {
+    buffer,
+    contentType: "audio/mpeg",
+    extension: "mp3",
+  };
 }
