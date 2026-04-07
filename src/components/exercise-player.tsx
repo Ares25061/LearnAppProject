@@ -1317,6 +1317,116 @@ function getMatchingConvertedAudioUrl(url: string) {
   return getConvertibleAudioProvider(url) ? buildConvertedAudioPath(url) : null;
 }
 
+const MATCHING_AUDIO_LOADING_HINT =
+  "Преобразование и загрузка звука могут занять около 20 секунд.";
+const MATCHING_SESSION_AUDIO_CACHE_MAX_ENTRIES = 8;
+const matchingSessionAudioUrlCache = new Map<string, string>();
+const matchingSessionAudioFetches = new Map<string, Promise<string>>();
+
+function isMatchingSessionCachedAudioUrl(url: string) {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  if (trimmed.startsWith("/api/media/audio")) {
+    return true;
+  }
+
+  const pathIndex = trimmed.indexOf("/api/media/audio");
+  if (pathIndex <= 0) {
+    return false;
+  }
+
+  return trimmed.slice(0, pathIndex).includes("://");
+}
+
+function getMatchingCachedSessionAudioUrl(url: string) {
+  const cachedUrl = matchingSessionAudioUrlCache.get(url);
+  if (!cachedUrl) {
+    return null;
+  }
+
+  matchingSessionAudioUrlCache.delete(url);
+  matchingSessionAudioUrlCache.set(url, cachedUrl);
+  return cachedUrl;
+}
+
+function setMatchingCachedSessionAudioUrl(url: string, objectUrl: string) {
+  const previousObjectUrl = matchingSessionAudioUrlCache.get(url);
+  if (previousObjectUrl && previousObjectUrl !== objectUrl) {
+    URL.revokeObjectURL(previousObjectUrl);
+  }
+
+  matchingSessionAudioUrlCache.delete(url);
+  matchingSessionAudioUrlCache.set(url, objectUrl);
+
+  while (matchingSessionAudioUrlCache.size > MATCHING_SESSION_AUDIO_CACHE_MAX_ENTRIES) {
+    const oldestEntry = matchingSessionAudioUrlCache.entries().next().value as
+      | [string, string]
+      | undefined;
+    if (!oldestEntry) {
+      break;
+    }
+
+    matchingSessionAudioUrlCache.delete(oldestEntry[0]);
+    URL.revokeObjectURL(oldestEntry[1]);
+  }
+}
+
+async function resolveMatchingSessionAudioUrl(url: string) {
+  const cachedUrl = getMatchingCachedSessionAudioUrl(url);
+  if (cachedUrl) {
+    return cachedUrl;
+  }
+
+  const pendingRequest = matchingSessionAudioFetches.get(url);
+  if (pendingRequest) {
+    return pendingRequest;
+  }
+
+  const fetchPromise = fetch(url, { cache: "force-cache" })
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error("Не удалось загрузить аудио.");
+      }
+
+      const audioBlob = await response.blob();
+      const objectUrl = URL.createObjectURL(audioBlob);
+      setMatchingCachedSessionAudioUrl(url, objectUrl);
+      return objectUrl;
+    })
+    .finally(() => {
+      matchingSessionAudioFetches.delete(url);
+    });
+
+  matchingSessionAudioFetches.set(url, fetchPromise);
+  return fetchPromise;
+}
+
+function getMatchingModalAudioSourceState(url: string) {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return {
+      playbackSrc: "",
+      isResolvingSrc: false,
+    };
+  }
+
+  if (!isMatchingSessionCachedAudioUrl(trimmed)) {
+    return {
+      playbackSrc: trimmed,
+      isResolvingSrc: false,
+    };
+  }
+
+  const cachedUrl = getMatchingCachedSessionAudioUrl(trimmed);
+  return {
+    playbackSrc: cachedUrl ?? "",
+    isResolvingSrc: !cachedUrl,
+  };
+}
+
 function buildMatchingVideoThumbnailPath(url: string) {
   return `/api/media/thumbnail?source=${encodeURIComponent(url)}`;
 }
@@ -1805,6 +1915,475 @@ function MatchingNativeAudioPlayer({
         }}
       />
     </div>
+  );
+}
+
+function MatchingModalAudioPlayerShell({
+  duration,
+  isLoading,
+  isReady,
+  mediaHost = null,
+  onSeek,
+  onToggle,
+  onVolumeChange,
+  playing,
+  position,
+  volume,
+}: Readonly<{
+  duration: number;
+  isLoading: boolean;
+  isReady: boolean;
+  mediaHost?: ReactNode;
+  onSeek: (nextValue: number) => void;
+  onToggle: () => void;
+  onVolumeChange: (nextValue: number) => void;
+  playing: boolean;
+  position: number;
+  volume: number;
+}>) {
+  const rangeMax = Math.max(duration, position, 1);
+
+  return (
+    <div className="matching-audio-player" data-card-interactive="true">
+      {mediaHost}
+      <div className="matching-audio-player__controls">
+        <button
+          className="player-button matching-audio-player__toggle"
+          disabled={!isReady || isLoading}
+          type="button"
+          onClick={onToggle}
+        >
+          {!isReady || isLoading
+            ? "Загрузка..."
+            : playing
+              ? "Пауза"
+              : "Слушать"}
+        </button>
+        <input
+          aria-label="Перемотка"
+          className="matching-audio-player__range"
+          disabled={!isReady || isLoading || duration <= 0}
+          max={rangeMax}
+          min={0}
+          step={0.1}
+          type="range"
+          value={Math.min(position, rangeMax)}
+          onChange={(event) =>
+            onSeek(Number.parseFloat(event.currentTarget.value) || 0)
+          }
+        />
+        <div className="matching-audio-player__footer">
+          <label className="matching-audio-player__volume" title="Громкость">
+            <span>Громкость</span>
+            <input
+              aria-label="Громкость"
+              disabled={!isReady || isLoading}
+              max={100}
+              min={0}
+              step={5}
+              type="range"
+              value={volume}
+              onChange={(event) =>
+                onVolumeChange(
+                  Math.max(
+                    0,
+                    Math.min(
+                      100,
+                      Number.parseInt(event.currentTarget.value, 10) || 0,
+                    ),
+                  ),
+                )
+              }
+            />
+          </label>
+          <span className="matching-audio-player__time">
+            {formatMatchingMediaTime(position)} / {formatMatchingMediaTime(duration)}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MatchingModalAudioPlayer({
+  src,
+  initialVolume,
+  autoPlay = false,
+}: Readonly<{
+  src: string;
+  initialVolume: number;
+  autoPlay?: boolean;
+}>) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const initialAudioSourceState = getMatchingModalAudioSourceState(src);
+  const [playbackSrc, setPlaybackSrc] = useState(
+    initialAudioSourceState.playbackSrc,
+  );
+  const [isResolvingSrc, setIsResolvingSrc] = useState(
+    initialAudioSourceState.isResolvingSrc,
+  );
+  const [isLoading, setIsLoading] = useState(Boolean(src.trim()));
+  const [isReady, setIsReady] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [position, setPosition] = useState(0);
+  const [volume, setVolume] = useState(initialVolume);
+
+  useEffect(() => {
+    setVolume(initialVolume);
+    setPosition(0);
+    setDuration(0);
+    setPlaying(false);
+    setIsReady(false);
+    setIsLoading(Boolean(src.trim()));
+  }, [initialVolume, src]);
+
+  useEffect(() => {
+    const nextSourceState = getMatchingModalAudioSourceState(src);
+    setPlaybackSrc(nextSourceState.playbackSrc);
+    setIsResolvingSrc(nextSourceState.isResolvingSrc);
+
+    if (!src.trim() || !isMatchingSessionCachedAudioUrl(src) || nextSourceState.playbackSrc) {
+      return;
+    }
+
+    let isCancelled = false;
+
+    void resolveMatchingSessionAudioUrl(src.trim())
+      .then((nextPlaybackSrc) => {
+        if (isCancelled) {
+          return;
+        }
+
+        setPlaybackSrc(nextPlaybackSrc);
+      })
+      .catch(() => {
+        if (isCancelled) {
+          return;
+        }
+
+        setPlaybackSrc(src.trim());
+      })
+      .finally(() => {
+        if (isCancelled) {
+          return;
+        }
+
+        setIsResolvingSrc(false);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [src]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    audio.volume = volume / 100;
+  }, [volume]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    const syncState = () => {
+      setDuration(Number.isFinite(audio.duration) ? Math.max(audio.duration, 0) : 0);
+      setPosition(Math.max(audio.currentTime || 0, 0));
+      setPlaying(!audio.paused && !audio.ended);
+    };
+
+    const handleCanPlay = () => {
+      setIsReady(true);
+      setIsLoading(false);
+      syncState();
+    };
+
+    const handleLoadStart = () => {
+      setIsLoading(true);
+    };
+
+    const handleWaiting = () => {
+      setIsLoading(true);
+      syncState();
+    };
+
+    const handlePlaying = () => {
+      setIsReady(true);
+      setIsLoading(false);
+      syncState();
+    };
+
+    const handlePause = () => {
+      setIsLoading(false);
+      syncState();
+    };
+
+    const handleError = () => {
+      setIsReady(false);
+      setIsLoading(false);
+      syncState();
+    };
+
+    audio.addEventListener("loadstart", handleLoadStart);
+    audio.addEventListener("loadedmetadata", syncState);
+    audio.addEventListener("canplay", handleCanPlay);
+    audio.addEventListener("playing", handlePlaying);
+    audio.addEventListener("waiting", handleWaiting);
+    audio.addEventListener("stalled", handleWaiting);
+    audio.addEventListener("timeupdate", syncState);
+    audio.addEventListener("play", syncState);
+    audio.addEventListener("pause", handlePause);
+    audio.addEventListener("ended", handlePause);
+    audio.addEventListener("error", handleError);
+
+    return () => {
+      audio.removeEventListener("loadstart", handleLoadStart);
+      audio.removeEventListener("loadedmetadata", syncState);
+      audio.removeEventListener("canplay", handleCanPlay);
+      audio.removeEventListener("playing", handlePlaying);
+      audio.removeEventListener("waiting", handleWaiting);
+      audio.removeEventListener("stalled", handleWaiting);
+      audio.removeEventListener("timeupdate", syncState);
+      audio.removeEventListener("play", syncState);
+      audio.removeEventListener("pause", handlePause);
+      audio.removeEventListener("ended", handlePause);
+      audio.removeEventListener("error", handleError);
+    };
+  }, [playbackSrc, volume]);
+
+  useEffect(() => {
+    if (!autoPlay || !playbackSrc) {
+      return;
+    }
+
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    setIsLoading(true);
+    void audio.play().catch(() => {
+      setIsLoading(false);
+    });
+  }, [autoPlay, playbackSrc]);
+
+  const handleTogglePlayback = () => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    if (audio.paused || audio.ended) {
+      setIsLoading(true);
+      void audio.play().catch(() => {
+        setIsLoading(false);
+      });
+      return;
+    }
+
+    setIsLoading(false);
+    audio.pause();
+  };
+
+  const handleSeek = (nextValue: number) => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    audio.currentTime = nextValue;
+    setPosition(nextValue);
+  };
+
+  return (
+    <MatchingModalAudioPlayerShell
+      duration={duration}
+      isLoading={isLoading || isResolvingSrc}
+      isReady={isReady}
+      mediaHost={
+        <audio
+          className="matching-audio-player__media"
+          ref={audioRef}
+          preload="auto"
+          src={playbackSrc || undefined}
+        />
+      }
+      playing={playing}
+      position={position}
+      volume={volume}
+      onSeek={handleSeek}
+      onToggle={handleTogglePlayback}
+      onVolumeChange={setVolume}
+    />
+  );
+}
+
+function MatchingModalYouTubeAudioPlayer({
+  startSeconds,
+  videoId,
+  volume,
+}: Readonly<{
+  startSeconds: number;
+  videoId: string;
+  volume: number;
+}>) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const playerRef = useRef<MatchingYouTubePlayer | null>(null);
+  const intervalRef = useRef<number | null>(null);
+  const currentVolumeRef = useRef(volume);
+  const [isLoading, setIsLoading] = useState(true);
+  const [ready, setReady] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [position, setPosition] = useState(startSeconds);
+  const [currentVolume, setCurrentVolume] = useState(volume);
+
+  useEffect(() => {
+    setCurrentVolume(volume);
+  }, [volume]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setReady(false);
+    setIsLoading(true);
+    setPlaying(false);
+    setDuration(0);
+    setPosition(startSeconds);
+
+    const syncPlayerState = () => {
+      const player = playerRef.current;
+      if (!player) {
+        return;
+      }
+
+      const nextDuration =
+        typeof player.getDuration === "function"
+          ? Math.max(player.getDuration() || 0, 0)
+          : 0;
+      const nextPosition =
+        typeof player.getCurrentTime === "function"
+          ? Math.max(player.getCurrentTime() || 0, 0)
+          : 0;
+      const state =
+        typeof player.getPlayerState === "function" ? player.getPlayerState() : -1;
+
+      setDuration(nextDuration);
+      setPosition(nextPosition);
+      setPlaying(state === 1);
+      setIsLoading(state === 3 || state === -1 || state === 5);
+    };
+
+    void loadMatchingYouTubeApi()
+      .then((yt) => {
+        if (cancelled || !hostRef.current) {
+          return;
+        }
+
+        playerRef.current = new yt.Player(hostRef.current, {
+          height: "1",
+          width: "1",
+          videoId,
+          playerVars: {
+            autoplay: 1,
+            controls: 0,
+            playsinline: 1,
+            rel: 0,
+            start: startSeconds,
+          },
+          events: {
+            onReady: ({ target }) => {
+              if (cancelled) {
+                return;
+              }
+
+              if (startSeconds > 0) {
+                target.seekTo(startSeconds, true);
+              }
+              target.setVolume?.(currentVolumeRef.current);
+              setReady(true);
+              setIsLoading(true);
+              target.playVideo();
+              syncPlayerState();
+            },
+            onStateChange: () => {
+              if (cancelled) {
+                return;
+              }
+              syncPlayerState();
+            },
+          },
+        });
+
+        intervalRef.current = window.setInterval(syncPlayerState, 400);
+      })
+      .catch(() => {
+        setReady(false);
+        setIsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+      if (intervalRef.current !== null) {
+        window.clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      playerRef.current?.destroy();
+      playerRef.current = null;
+    };
+  }, [startSeconds, videoId]);
+
+  useEffect(() => {
+    currentVolumeRef.current = currentVolume;
+    playerRef.current?.setVolume?.(currentVolume);
+  }, [currentVolume]);
+
+  const handleTogglePlayback = () => {
+    const player = playerRef.current;
+    if (!player) {
+      return;
+    }
+
+    if (playing) {
+      setIsLoading(false);
+      player.pauseVideo();
+      setPlaying(false);
+      return;
+    }
+
+    setIsLoading(true);
+    player.playVideo();
+    setPlaying(true);
+  };
+
+  const handleSeek = (nextValue: number) => {
+    setIsLoading(true);
+    setPosition(nextValue);
+    playerRef.current?.seekTo(nextValue, true);
+  };
+
+  return (
+    <MatchingModalAudioPlayerShell
+      duration={duration}
+      isLoading={isLoading}
+      isReady={ready}
+      mediaHost={
+        <div className="matching-audio-player__host" aria-hidden="true">
+          <div ref={hostRef} />
+        </div>
+      }
+      playing={playing}
+      position={position}
+      volume={currentVolume}
+      onSeek={handleSeek}
+      onToggle={handleTogglePlayback}
+      onVolumeChange={setCurrentVolume}
+    />
   );
 }
 
@@ -2378,9 +2957,9 @@ function MatchingMediaDialog({
           ) : media.kind === "audio" && audioEmbeddedMeta?.videoId ? (
             <>
               <p className="editor-hint">
-                Преобразование и загрузка звука могут занять около 10 секунд.
+                {MATCHING_AUDIO_LOADING_HINT}
               </p>
-              <MatchingYouTubeAudioPlayer
+              <MatchingModalYouTubeAudioPlayer
                 startSeconds={startSeconds}
                 videoId={audioEmbeddedMeta.videoId}
                 volume={audioVolume}
@@ -2390,14 +2969,13 @@ function MatchingMediaDialog({
             <>
               {convertedAudioUrl ? (
                 <p className="editor-hint">
-                  Преобразование и загрузка звука могут занять около 10 секунд.
+                  {MATCHING_AUDIO_LOADING_HINT}
                 </p>
               ) : null}
-              <MatchingInlineAudioPlayer
+              <MatchingModalAudioPlayer
                 autoPlay
                 initialVolume={audioVolume}
                 src={convertedAudioUrl ?? media.url}
-                title={title}
               />
             </>
           ) : embeddedVideoMeta ? (

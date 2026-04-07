@@ -2006,6 +2006,69 @@ video {
   width: 100%;
 }
 
+.matching-audio-player {
+  position: relative;
+  display: grid;
+  gap: 12px;
+}
+
+.matching-audio-player__media {
+  display: none;
+}
+
+.matching-audio-player__host {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.matching-audio-player__controls {
+  display: grid;
+  gap: 12px;
+  border-radius: 22px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.82);
+  padding: 18px;
+}
+
+.matching-audio-player__range {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.matching-audio-player__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.matching-audio-player__volume {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: var(--text-soft);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.matching-audio-player__volume input {
+  width: 92px;
+  min-width: 92px;
+  max-width: 100%;
+  accent-color: var(--accent);
+}
+
+.matching-audio-player__time {
+  color: var(--text-soft);
+  font-variant-numeric: tabular-nums;
+}
+
 .matching-youtube-audio {
   position: relative;
   display: grid;
