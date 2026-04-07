@@ -2954,6 +2954,17 @@ function MatchingMediaDialog({
             <div className="matching-card-placeholder">
               {"\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u043d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0442\u043a\u0440\u044b\u0442\u044c \u043a\u0430\u043a \u0430\u0443\u0434\u0438\u043e."}
             </div>
+          ) : media.kind === "audio" && convertedAudioUrl ? (
+            <>
+              <p className="editor-hint">
+                {MATCHING_AUDIO_LOADING_HINT}
+              </p>
+              <MatchingModalAudioPlayer
+                autoPlay
+                initialVolume={audioVolume}
+                src={convertedAudioUrl}
+              />
+            </>
           ) : media.kind === "audio" && audioEmbeddedMeta?.videoId ? (
             <>
               <p className="editor-hint">
@@ -2966,18 +2977,11 @@ function MatchingMediaDialog({
               />
             </>
           ) : media.kind === "audio" ? (
-            <>
-              {convertedAudioUrl ? (
-                <p className="editor-hint">
-                  {MATCHING_AUDIO_LOADING_HINT}
-                </p>
-              ) : null}
-              <MatchingModalAudioPlayer
-                autoPlay
-                initialVolume={audioVolume}
-                src={convertedAudioUrl ?? media.url}
-              />
-            </>
+            <MatchingModalAudioPlayer
+              autoPlay
+              initialVolume={audioVolume}
+              src={media.url}
+            />
           ) : embeddedVideoMeta ? (
             <>
               <div className="matching-media-modal__frame-wrap">

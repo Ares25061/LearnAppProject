@@ -1,4 +1,4 @@
-export type ConvertibleAudioProvider = "rutube" | "vk";
+export type ConvertibleAudioProvider = "youtube" | "rutube" | "vk";
 
 function parseMediaSourceUrl(sourceUrl: string) {
   const trimmed = sourceUrl.trim();
@@ -24,6 +24,15 @@ export function getConvertibleAudioProvider(
   }
 
   const host = parsed.hostname.replace(/^www\./, "").toLowerCase();
+
+  if (
+    host === "youtu.be" ||
+    host === "youtube.com" ||
+    host === "m.youtube.com" ||
+    host === "youtube-nocookie.com"
+  ) {
+    return "youtube";
+  }
 
   if (host === "rutube.ru") {
     return "rutube";

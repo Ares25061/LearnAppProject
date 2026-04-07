@@ -73,12 +73,20 @@ type YtDlpResolvedAudioMetadata = {
   cookies?: string;
   formats?: YtDlpResolvedAudioFormat[];
   http_headers?: Record<string, string>;
-  requested_downloads?: Array<{
-    cookies?: string;
-    http_headers?: Record<string, string>;
-    url?: string;
-  }>;
+  requested_downloads?: YtDlpResolvedAudioDownload[];
   url?: string;
+};
+
+type YtDlpResolvedAudioDownload = {
+  acodec?: string;
+  audio_ext?: string;
+  cookies?: string;
+  ext?: string;
+  format_id?: string;
+  http_headers?: Record<string, string>;
+  protocol?: string;
+  url?: string;
+  vcodec?: string;
 };
 
 type YtDlpResolvedAudioFormat = {
@@ -123,6 +131,53 @@ const THUMBNAIL_HTML_HEADERS = {
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
 } as const;
+
+function getDirectAudioAssetDescriptor(
+  extension: string | null | undefined,
+  videoCodec: string | null | undefined,
+  sourceUrl: string,
+  protocol: string | null | undefined,
+) {
+  const normalizedExtension = extension?.replace(/^\./, "").trim().toLowerCase() ?? "";
+  const normalizedVideoCodec = videoCodec?.trim().toLowerCase() ?? "";
+  const normalizedProtocol = protocol?.trim().toLowerCase() ?? "";
+
+  if (
+    !normalizedExtension ||
+    (normalizedVideoCodec && normalizedVideoCodec !== "none") ||
+    isHlsSourceUrl(sourceUrl) ||
+    normalizedProtocol.includes("m3u8")
+  ) {
+    return null;
+  }
+
+  switch (normalizedExtension) {
+    case "m4a":
+    case "mp4":
+      return {
+        contentType: "audio/mp4",
+        extension: normalizedExtension,
+      };
+    case "mp3":
+      return {
+        contentType: "audio/mpeg",
+        extension: "mp3",
+      };
+    case "ogg":
+    case "opus":
+      return {
+        contentType: "audio/ogg",
+        extension: normalizedExtension,
+      };
+    case "webm":
+      return {
+        contentType: "audio/webm",
+        extension: "webm",
+      };
+    default:
+      return null;
+  }
+}
 
 function isExecutableFile(filePath: string | null | undefined) {
   if (!filePath) {
@@ -328,16 +383,52 @@ export async function verifyConvertibleAudioSource(
 
     const parsed = JSON.parse(stdout) as YtDlpResolvedAudioMetadata;
 
-    const selected = parsed.requested_downloads?.[0] ?? parsed;
-    const resolvedUrl = selected.url?.trim() || parsed.url?.trim() || "";
+    const selected = parsed.requested_downloads?.[0] ?? null;
+    const resolvedUrl = selected?.url?.trim() || parsed.url?.trim() || "";
 
     if (!resolvedUrl) {
       throw new Error("yt-dlp РЅРµ РІРµСЂРЅСѓР» РїСЂСЏРјСѓСЋ СЃСЃС‹Р»РєСѓ РЅР° Р°СѓРґРёРѕРїРѕС‚РѕРє.");
     }
 
+    const selectedFormat =
+      (parsed.formats ?? []).find((format) => format.url?.trim() === resolvedUrl) ?? null;
+    const formatExtension =
+      selected?.audio_ext?.trim() ||
+      selected?.ext?.trim() ||
+      selectedFormat?.audio_ext?.trim() ||
+      selectedFormat?.ext?.trim() ||
+      null;
+    const formatProtocol =
+      selected?.protocol?.trim() || selectedFormat?.protocol?.trim() || null;
+    const directAsset = getDirectAudioAssetDescriptor(
+      formatExtension,
+      selected?.vcodec ?? selectedFormat?.vcodec,
+      resolvedUrl,
+      formatProtocol,
+    );
+
+    let resolvedHost: string | undefined;
+
+    try {
+      resolvedHost = new URL(resolvedUrl).hostname;
+    } catch {
+      resolvedHost = undefined;
+    }
+
     return {
-      cookies: selected.cookies ?? parsed.cookies,
-      headers: selected.http_headers ?? parsed.http_headers,
+      cookies: selected?.cookies ?? parsed.cookies,
+      debug: {
+        container: formatExtension ?? undefined,
+        formatId:
+          selected?.format_id?.trim() || selectedFormat?.format_id?.trim() || undefined,
+        host: resolvedHost,
+        mode: directAsset ? "direct" : isHlsSourceUrl(resolvedUrl) ? "hls" : "transcode",
+        protocol: formatProtocol ?? undefined,
+        provider,
+      },
+      directAsset: directAsset ?? undefined,
+      headers: selected?.http_headers ?? parsed.http_headers,
+      sourcePageUrl: sourceUrl,
       url: resolvedUrl,
     } satisfies ResolvedAudioSource;
   } catch (error) {
@@ -711,7 +802,7 @@ async function resolveVkAudioSource(
     const parsed = JSON.parse(stdout) as YtDlpResolvedAudioMetadata;
     const selectedFormat = pickVkYtDlpFormat(parsed.formats);
     const selected = selectedFormat ?? parsed.requested_downloads?.[0] ?? parsed;
-    const resolvedUrl = selected.url?.trim() || parsed.url?.trim() || "";
+    const resolvedUrl = selected?.url?.trim() || parsed.url?.trim() || "";
 
     if (!resolvedUrl) {
       throw new Error("yt-dlp не вернул рабочую ссылку на аудиопоток VK.");
