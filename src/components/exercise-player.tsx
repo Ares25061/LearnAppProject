@@ -2,6 +2,7 @@
 /* eslint-disable @next/next/no-img-element, react-hooks/set-state-in-effect, react-hooks/purity */
 
 import {
+  type DragEvent as ReactDragEvent,
   useEffect,
   useMemo,
   useRef,
@@ -18,6 +19,11 @@ import {
   timestampToSeconds,
   type GridPoint,
 } from "@/lib/exercise-runtime";
+import {
+  getClassificationGroupTitle,
+  normalizeClassificationBackground,
+  normalizeGroupAssignmentData,
+} from "@/lib/classification";
 import {
   MATCHING_IMAGE_HEIGHT_DEFAULT,
   getMatchingContentAriaLabel,
@@ -129,6 +135,31 @@ const MATCHING_BOARD_SCALE_STEP = 0.05;
 const MATCHING_IMAGE_CARD_BASE_HEIGHT = 72;
 const MATCHING_AUDIO_CARD_BASE_HEIGHT = 128;
 const MATCHING_VIDEO_CARD_BASE_HEIGHT = 118;
+const CLASSIFICATION_CARD_INSET = 18;
+const CLASSIFICATION_GROUP_COLORS = [
+  "#d37a48",
+  "#2c7a7b",
+  "#65743a",
+  "#845ec2",
+  "#b65d82",
+  "#4f6aa3",
+  "#8c6b2f",
+  "#5f8a4b",
+  "#4c8bc6",
+  "#b7863f",
+  "#7d5ab5",
+  "#4b9f79",
+];
+const CLASSIFICATION_DEFAULT_ANCHORS = [
+  { x: 0.5, y: 0.55 },
+  { x: 0.3, y: 0.58 },
+  { x: 0.72, y: 0.56 },
+  { x: 0.34, y: 0.3 },
+  { x: 0.66, y: 0.32 },
+  { x: 0.18, y: 0.34 },
+  { x: 0.82, y: 0.36 },
+  { x: 0.5, y: 0.8 },
+];
 
 type MatchingGroupStatus = "neutral" | "correct" | "incorrect";
 type MatchingBoardSize = {
@@ -2945,28 +2976,341 @@ function MatchingPairsActivity({
   );
 }
 
+type ClassificationDeckCard = {
+  id: string;
+  groupIndex: number;
+  content: MatchingContent;
+  label: string;
+};
+
+type ClassificationPlacement = {
+  groupIndex: number;
+  anchorX: number;
+  anchorY: number;
+};
+
+type ClassificationCardMetrics = {
+  width: number;
+  height: number;
+};
+
+type ClassificationClusterLayout = {
+  columnCount: number;
+  rowCount: number;
+  spans: number[];
+  titleSize: string;
+};
+
+function getClassificationTextMetrics(
+  text: string,
+  {
+    minWidth,
+    maxWidth,
+    widthFactor,
+    lineWidth,
+    lineHeight,
+    baseHeight,
+    minHeight,
+    maxHeight,
+  }: {
+    minWidth: number;
+    maxWidth: number;
+    widthFactor: number;
+    lineWidth: number;
+    lineHeight: number;
+    baseHeight: number;
+    minHeight: number;
+    maxHeight: number;
+  },
+): ClassificationCardMetrics {
+  const rawText = text.trim();
+  const width = clamp(
+    Math.round(Math.max(minWidth, rawText.length * widthFactor + 54)),
+    minWidth,
+    maxWidth,
+  );
+  const estimatedLines = Math.max(
+    1,
+    Math.min(5, Math.ceil((rawText.length || 12) / Math.max(12, lineWidth))),
+  );
+
+  return {
+    width,
+    height: clamp(
+      baseHeight + estimatedLines * lineHeight,
+      minHeight,
+      maxHeight,
+    ),
+  };
+}
+
+function getClassificationCardMetrics(
+  content: MatchingContent,
+): ClassificationCardMetrics {
+  const normalized = normalizeMatchingSide(content);
+
+  switch (normalized.kind) {
+    case "spoken-text":
+      return getClassificationTextMetrics(normalized.text, {
+        minWidth: 152,
+        maxWidth: 224,
+        widthFactor: 4.8,
+        lineWidth: 18,
+        lineHeight: 22,
+        baseHeight: 56,
+        minHeight: 94,
+        maxHeight: 158,
+      });
+    case "image": {
+      const mediaHeight = clamp(Math.round(normalized.size * 0.54), 88, 146);
+      const width = clamp(Math.round(mediaHeight * 1.12) + 20, 132, 208);
+      const captionHeight = normalized.alt.trim() ? 34 : 0;
+
+      return {
+        width,
+        height: mediaHeight + captionHeight + 18,
+      };
+    }
+    case "audio":
+      return {
+        width: clamp(Math.round(normalized.size * 1.24) + 82, 176, 248),
+        height: clamp(Math.round(normalized.size * 0.34) + 54, 88, 122),
+      };
+    case "video": {
+      const frameWidth = clamp(Math.round(normalized.size * 0.8), 164, 230);
+      const frameHeight = Math.round(frameWidth * 0.5625);
+
+      return {
+        width: frameWidth + 18,
+        height: clamp(
+          frameHeight + (normalized.label.trim() ? 58 : 46),
+          138,
+          188,
+        ),
+      };
+    }
+    case "text":
+    default:
+      return getClassificationTextMetrics(normalized.text, {
+        minWidth: 138,
+        maxWidth: 220,
+        widthFactor: 5.2,
+        lineWidth: 20,
+        lineHeight: 20,
+        baseHeight: 34,
+        minHeight: 68,
+        maxHeight: 140,
+      });
+  }
+}
+
+function getClassificationDefaultAnchor(order: number) {
+  return CLASSIFICATION_DEFAULT_ANCHORS[
+    order % CLASSIFICATION_DEFAULT_ANCHORS.length
+  ];
+}
+
+function getClassificationDropAnchor(
+  event: ReactDragEvent<HTMLElement>,
+  metrics: ClassificationCardMetrics,
+) {
+  const rect = event.currentTarget.getBoundingClientRect();
+  const availableWidth = Math.max(rect.width - CLASSIFICATION_CARD_INSET * 2, 1);
+  const availableHeight = Math.max(
+    rect.height - CLASSIFICATION_CARD_INSET * 2,
+    1,
+  );
+  const rawX = (event.clientX - rect.left - CLASSIFICATION_CARD_INSET) / availableWidth;
+  const rawY = (event.clientY - rect.top - CLASSIFICATION_CARD_INSET) / availableHeight;
+  const horizontalPadding = metrics.width / Math.max(availableWidth * 2, 1);
+  const verticalPadding = metrics.height / Math.max(availableHeight * 2, 1);
+
+  return {
+    anchorX: clamp(rawX, horizontalPadding, 1 - horizontalPadding),
+    anchorY: clamp(rawY, verticalPadding, 1 - verticalPadding),
+  };
+}
+
+function getClassificationPlacementStyle(
+  placement: ClassificationPlacement,
+  metrics: ClassificationCardMetrics,
+  zIndex: number,
+): CSSProperties {
+  const anchorXPercent = `${(placement.anchorX * 100).toFixed(3)}%`;
+  const anchorYPercent = `${(placement.anchorY * 100).toFixed(3)}%`;
+
+  return {
+    width: `${metrics.width}px`,
+    minHeight: `${metrics.height}px`,
+    left: `clamp(${CLASSIFICATION_CARD_INSET}px, calc(${anchorXPercent} - ${Math.round(metrics.width / 2)}px), calc(100% - ${metrics.width}px - ${CLASSIFICATION_CARD_INSET}px))`,
+    top: `clamp(${CLASSIFICATION_CARD_INSET}px, calc(${anchorYPercent} - ${Math.round(metrics.height / 2)}px), calc(100% - ${metrics.height}px - ${CLASSIFICATION_CARD_INSET}px))`,
+    zIndex,
+  };
+}
+
+function getClassificationRowPattern(groupCount: number) {
+  if (groupCount <= 6) {
+    return [groupCount];
+  }
+
+  switch (groupCount) {
+    case 7:
+      return [4, 3];
+    case 8:
+      return [4, 4];
+    case 9:
+      return [5, 4];
+    case 10:
+      return [5, 5];
+    case 11:
+      return [6, 5];
+    case 12:
+    default:
+      return [6, 6];
+  }
+}
+
+function getClassificationSpanDistribution(
+  columnCount: number,
+  itemCount: number,
+) {
+  if (itemCount <= 0) {
+    return [];
+  }
+
+  const baseSpan = Math.floor(columnCount / itemCount);
+  const remainder = columnCount - baseSpan * itemCount;
+  const spans = Array.from({ length: itemCount }, () => baseSpan);
+  const center = (itemCount - 1) / 2;
+  const priority = Array.from({ length: itemCount }, (_, index) => index).sort(
+    (left, right) => {
+      const leftDistance = Math.abs(left - center);
+      const rightDistance = Math.abs(right - center);
+      return leftDistance - rightDistance || left - right;
+    },
+  );
+
+  for (let index = 0; index < remainder; index += 1) {
+    spans[priority[index] ?? 0] += 1;
+  }
+
+  return spans;
+}
+
+function getClassificationClusterLayout(groupCount: number): ClassificationClusterLayout {
+  const rowPattern = getClassificationRowPattern(groupCount);
+
+  if (groupCount <= 6) {
+    return {
+      columnCount: Math.max(groupCount, 1),
+      rowCount: 1,
+      spans: Array.from({ length: groupCount }, () => 1),
+      titleSize:
+        groupCount >= 5
+          ? "clamp(1.05rem, 1.9vw, 1.55rem)"
+          : "clamp(1.18rem, 2.2vw, 1.85rem)",
+    };
+  }
+
+  return {
+    columnCount: 12,
+    rowCount: rowPattern.length,
+    spans: rowPattern.flatMap((rowCount) =>
+      getClassificationSpanDistribution(12, rowCount),
+    ),
+    titleSize:
+      groupCount >= 11
+        ? "clamp(0.92rem, 1.45vw, 1.32rem)"
+        : groupCount >= 9
+          ? "clamp(0.96rem, 1.55vw, 1.42rem)"
+          : "clamp(1rem, 1.7vw, 1.52rem)",
+  };
+}
+
+function buildClassificationDeck(
+  groups: ReturnType<typeof normalizeGroupAssignmentData>["groups"],
+  order: "random" | "rounds",
+) {
+  const seeds: Array<{
+    groupIndex: number;
+    itemIndex: number;
+    content: MatchingContent;
+  }> = [];
+
+  if (order === "rounds") {
+    const maxItems = groups.reduce(
+      (accumulator, group) => Math.max(accumulator, group.items.length),
+      0,
+    );
+
+    for (let itemIndex = 0; itemIndex < maxItems; itemIndex += 1) {
+      groups.forEach((group, groupIndex) => {
+        const item = group.items[itemIndex];
+        if (item) {
+          seeds.push({
+            groupIndex,
+            itemIndex,
+            content: normalizeMatchingSide(item),
+          });
+        }
+      });
+    }
+  } else {
+    groups.forEach((group, groupIndex) => {
+      group.items.forEach((item, itemIndex) => {
+        seeds.push({
+          groupIndex,
+          itemIndex,
+          content: normalizeMatchingSide(item),
+        });
+      });
+    });
+  }
+
+  const orderedSeeds = order === "random" ? shuffleArray(seeds) : seeds;
+
+  return orderedSeeds.map((seed, index) => ({
+    id: `classification-${seed.groupIndex}-${seed.itemIndex}-${index}`,
+    groupIndex: seed.groupIndex,
+    content: seed.content,
+    label: getMatchingContentAriaLabel(seed.content),
+  })) satisfies ClassificationDeckCard[];
+}
+
+function isCardInteractiveTarget(target: EventTarget | null) {
+  return (
+    target instanceof HTMLElement &&
+    Boolean(target.closest("[data-card-interactive='true']"))
+  );
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function GroupAssignmentActivity({
   draft,
   revisionKey,
   onReport,
 }: ActivityProps<"group-assignment">) {
+  const legacyData = draft.data as unknown as {
+    groups: Array<{ name: string }>;
+    items: Array<{ label: string; groupIndex: number }>;
+  };
   const [answers, setAnswers] = useState<number[]>([]);
 
   useEffect(() => {
-    setAnswers(Array.from({ length: draft.data.items.length }, () => -1));
-  }, [revisionKey, draft.data.items.length]);
+    setAnswers(Array.from({ length: legacyData.items.length }, () => -1));
+  }, [legacyData.items.length, revisionKey]);
 
   const handleCheck = () => {
-    const correct = draft.data.items.filter(
+    const correct = legacyData.items.filter(
       (item, index) => answers[index] === item.groupIndex,
     ).length;
-    const score = percentage(correct, draft.data.items.length);
-    onReport(score, correct === draft.data.items.length);
+    const score = percentage(correct, legacyData.items.length);
+    onReport(score, correct === legacyData.items.length);
   };
 
   return (
     <div className="activity-grid">
-      {draft.data.items.map((item, index) => (
+      {legacyData.items.map((item, index) => (
         <div className="prompt-card" key={`${item.label}-${index}`}>
           <strong>{item.label}</strong>
           <select
@@ -2979,7 +3323,7 @@ function GroupAssignmentActivity({
             }}
           >
             <option value={-1}>Выберите группу</option>
-            {draft.data.groups.map((group, groupIndex) => (
+            {legacyData.groups.map((group, groupIndex) => (
               <option key={`${group.name}-${groupIndex}`} value={groupIndex}>
                 {group.name}
               </option>
@@ -2990,6 +3334,485 @@ function GroupAssignmentActivity({
       <ActionRow>
         <PlayerButton onClick={handleCheck}>Проверить</PlayerButton>
       </ActionRow>
+    </div>
+  );
+}
+
+function GroupAssignmentActivityBoard({
+  draft,
+  revisionKey,
+  onReport,
+  boardOnly = false,
+}: ActivityProps<"group-assignment">) {
+  const normalized = useMemo(
+    () => normalizeGroupAssignmentData(draft.data),
+    [draft.data],
+  );
+  const clusterLayout = useMemo(
+    () => getClassificationClusterLayout(normalized.groups.length),
+    [normalized.groups.length],
+  );
+  const deck = useMemo(
+    () => buildClassificationDeck(normalized.groups, normalized.cardOrder ?? "random"),
+    [normalized.cardOrder, normalized.groups],
+  );
+  const cardMetricsById = useMemo(
+    () =>
+      Object.fromEntries(
+        deck.map((card) => [card.id, getClassificationCardMetrics(card.content)]),
+      ) as Record<string, ClassificationCardMetrics>,
+    [deck],
+  );
+  const [placements, setPlacements] = useState<
+    Record<string, ClassificationPlacement>
+  >({});
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  const [draggedCardId, setDraggedCardId] = useState<string | null>(null);
+  const [hint, setHint] = useState<string | null>(null);
+  const [checkResult, setCheckResult] = useState<{
+    correctIds: string[];
+    wrongIds: string[];
+    missingIds: string[];
+    detail: string;
+    solved: boolean;
+    score: number;
+  } | null>(null);
+  const [activeMedia, setActiveMedia] = useState<MatchingOpenableContent | null>(
+    null,
+  );
+
+  useEffect(() => {
+    setPlacements({});
+    setSelectedCardId(null);
+    setDraggedCardId(null);
+    setHint(null);
+    setCheckResult(null);
+    setActiveMedia(null);
+  }, [revisionKey]);
+
+  const placedCount = Object.keys(placements).length;
+  const remainingCards = deck.filter((card) => placements[card.id] === undefined);
+  const trayCards =
+    normalized.cardDisplayMode === "all-at-once"
+      ? remainingCards
+      : remainingCards.slice(0, 1);
+  const placedCardsByGroup = useMemo(
+    () =>
+      normalized.groups.map((_, groupIndex) =>
+        deck.filter((card) => placements[card.id]?.groupIndex === groupIndex),
+      ),
+    [deck, normalized.groups, placements],
+  );
+  const activeCardId =
+    selectedCardId ??
+    (normalized.cardDisplayMode === "sequential" ? trayCards[0]?.id ?? null : null);
+  const progressText =
+    normalized.cardDisplayMode === "sequential"
+      ? `Карточка ${Math.min(placedCount + 1, deck.length)} из ${deck.length}`
+      : `Разложено карточек: ${placedCount} из ${deck.length}`;
+
+  const placeCard = (
+    groupIndex: number,
+    sourceCardId = activeCardId,
+    anchor?: Pick<ClassificationPlacement, "anchorX" | "anchorY">,
+  ) => {
+    if (!sourceCardId) {
+      setHint("Сначала выберите карточку или перетащите ее в нужную группу.");
+      return;
+    }
+
+    setPlacements((current) => {
+      const groupCount = Object.entries(current).filter(
+        ([cardId, placement]) =>
+          cardId !== sourceCardId && placement.groupIndex === groupIndex,
+      ).length;
+      const defaultAnchor = getClassificationDefaultAnchor(groupCount);
+
+      return {
+        ...current,
+        [sourceCardId]: {
+          groupIndex,
+          anchorX: anchor?.anchorX ?? defaultAnchor.x,
+          anchorY: anchor?.anchorY ?? defaultAnchor.y,
+        },
+      };
+    });
+    setSelectedCardId(null);
+    setDraggedCardId(null);
+    setCheckResult(null);
+    setHint(null);
+  };
+
+  const resetBoard = () => {
+    setPlacements({});
+    setSelectedCardId(null);
+    setDraggedCardId(null);
+    setHint(null);
+    setCheckResult(null);
+  };
+
+  const selectCard = (cardId: string) => {
+    setSelectedCardId((current) => (current === cardId ? null : cardId));
+    setCheckResult(null);
+    setHint(null);
+  };
+
+  const handleCardDragStart = (
+    event: ReactDragEvent<HTMLElement>,
+    cardId: string,
+  ) => {
+    event.stopPropagation();
+    event.dataTransfer.setData("text/plain", cardId);
+    event.dataTransfer.effectAllowed = "move";
+    setSelectedCardId(cardId);
+    setCheckResult(null);
+    window.requestAnimationFrame(() => {
+      setDraggedCardId(cardId);
+    });
+  };
+
+  const handleCheck = () => {
+    const correctIds: string[] = [];
+    const wrongIds: string[] = [];
+    const missingIds: string[] = [];
+
+    deck.forEach((card) => {
+      const targetGroup = placements[card.id]?.groupIndex;
+
+      if (targetGroup === undefined) {
+        missingIds.push(card.id);
+        return;
+      }
+
+      if (targetGroup === card.groupIndex) {
+        correctIds.push(card.id);
+        return;
+      }
+
+      wrongIds.push(card.id);
+    });
+
+    const score = percentage(correctIds.length, deck.length);
+    const solved = correctIds.length === deck.length && missingIds.length === 0;
+    const parts = [`Верно: ${correctIds.length} из ${deck.length}.`];
+
+    if (wrongIds.length > 0) {
+      parts.push(`В неверных группах: ${wrongIds.length}.`);
+    }
+
+    if (missingIds.length > 0) {
+      parts.push(`Не распределено: ${missingIds.length}.`);
+    }
+
+    const detail = solved ? draft.successMessage : parts.join(" ");
+
+    setCheckResult({
+      correctIds,
+      wrongIds,
+      missingIds,
+      detail,
+      solved,
+      score,
+    });
+    setHint(detail);
+    onReport(score, solved, detail);
+  };
+
+  const wrongGroupIndices = new Set(
+    (checkResult?.wrongIds ?? [])
+      .map((cardId) => placements[cardId]?.groupIndex)
+      .filter((value): value is number => typeof value === "number"),
+  );
+
+  return (
+    <div
+      className={`stack classification-activity ${
+        boardOnly ? "classification-activity--board-only" : ""
+      }`}
+    >
+      <div className="classification-activity__meta">
+        <span>{progressText}</span>
+        {hint ? <span className="classification-activity__hint">{hint}</span> : null}
+      </div>
+
+      <div
+        className={`classification-board ${
+          normalized.cardDisplayMode === "sequential"
+            ? "classification-board--sequential"
+            : "classification-board--all-at-once"
+        }`}
+      >
+        <div
+          className="classification-clusters"
+          style={
+            {
+              "--classification-title-size": clusterLayout.titleSize,
+              "--classification-grid-columns": clusterLayout.columnCount,
+              "--classification-grid-rows": clusterLayout.rowCount,
+            } as CSSProperties
+          }
+        >
+          {normalized.groups.map((group, groupIndex) => {
+            const background = normalizeClassificationBackground(group.background);
+            const accentColor =
+              CLASSIFICATION_GROUP_COLORS[groupIndex % CLASSIFICATION_GROUP_COLORS.length];
+            const placedCards = placedCardsByGroup[groupIndex] ?? [];
+
+            return (
+              <article
+                className={`classification-cluster ${
+                  wrongGroupIndices.has(groupIndex)
+                    ? "classification-cluster--wrong"
+                    : ""
+                }`}
+                key={`classification-group-${groupIndex}`}
+                style={
+                  {
+                    "--classification-accent": accentColor,
+                    gridColumn: `span ${clusterLayout.spans[groupIndex] ?? 1}`,
+                  } as CSSProperties
+                }
+                onClick={() => placeCard(groupIndex)}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  const sourceCardId =
+                    draggedCardId || event.dataTransfer.getData("text/plain");
+                  if (!sourceCardId) {
+                    return;
+                  }
+
+                  const metrics = cardMetricsById[sourceCardId];
+                  placeCard(
+                    groupIndex,
+                    sourceCardId,
+                    metrics
+                      ? getClassificationDropAnchor(event, metrics)
+                      : undefined,
+                  );
+                  setDraggedCardId(null);
+                }}
+              >
+                <div
+                  className={`classification-cluster__background ${
+                    background.kind === "image"
+                      ? "classification-cluster__background--image"
+                      : "classification-cluster__background--text"
+                  } ${
+                    normalized.useGroupColors
+                      ? "classification-cluster__background--tinted"
+                      : ""
+                  }`}
+                >
+                  {background.kind === "image" && background.url ? (
+                    <img
+                      alt={background.alt || getClassificationGroupTitle(group, groupIndex)}
+                      src={background.url}
+                    />
+                  ) : null}
+                  <div className="classification-cluster__title">
+                    {background.kind === "text"
+                      ? background.text || getClassificationGroupTitle(group, groupIndex)
+                      : getClassificationGroupTitle(group, groupIndex)}
+                  </div>
+                </div>
+
+                <div className="classification-cluster__body">
+                  {placedCards.map((card, cardIndex) => {
+                    const placement = placements[card.id];
+                    const metrics = cardMetricsById[card.id];
+                    if (!placement || !metrics) {
+                      return null;
+                    }
+
+                    return (
+                      <div
+                        className={`classification-placed-card ${
+                          checkResult?.correctIds.includes(card.id)
+                            ? "classification-placed-card--correct"
+                            : ""
+                        } ${
+                          checkResult?.wrongIds.includes(card.id)
+                            ? "classification-placed-card--wrong"
+                            : ""
+                        } ${
+                          selectedCardId === card.id
+                            ? "classification-placed-card--selected"
+                            : ""
+                        } ${
+                          draggedCardId === card.id
+                            ? "classification-placed-card--dragging"
+                            : ""
+                        }`}
+                        draggable
+                        key={card.id}
+                        style={getClassificationPlacementStyle(
+                          placement,
+                          metrics,
+                          draggedCardId === card.id
+                            ? placedCards.length + 3
+                            : selectedCardId === card.id
+                              ? placedCards.length + 2
+                              : cardIndex + 1,
+                        )}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (isCardInteractiveTarget(event.target)) {
+                            return;
+                          }
+
+                          selectCard(card.id);
+                          setHint("Карточку можно перетащить или перенести в другую группу.");
+                        }}
+                        onDragEnd={() => setDraggedCardId(null)}
+                        onDragStart={(event) => handleCardDragStart(event, card.id)}
+                      >
+                        <div className="classification-placed-card__content">
+                          <MatchingCardContent
+                            cardHeight={Math.max(metrics.height - 16, 56)}
+                            cardWidth={Math.max(metrics.width - 16, 96)}
+                            content={card.content}
+                            onOpenMedia={setActiveMedia}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+
+        {normalized.cardDisplayMode === "sequential" ? (
+          trayCards[0] ? (
+            <div className="classification-floating-card">
+              {(() => {
+                const trayCard = trayCards[0];
+                const metrics = cardMetricsById[trayCard.id];
+                if (!metrics) {
+                  return null;
+                }
+
+                return (
+                  <div
+                    aria-label={trayCard.label}
+                    className={`classification-card ${
+                      activeCardId === trayCard.id
+                        ? "classification-card--selected"
+                        : ""
+                    } ${
+                      checkResult?.missingIds.includes(trayCard.id)
+                        ? "classification-card--missing"
+                        : ""
+                    } ${
+                      draggedCardId === trayCard.id
+                        ? "classification-card--dragging"
+                        : ""
+                    }`}
+                    draggable
+                    role="button"
+                    style={{
+                      width: `${metrics.width}px`,
+                      minHeight: `${metrics.height}px`,
+                    }}
+                    tabIndex={0}
+                    onClick={(event) => {
+                      if (isCardInteractiveTarget(event.target)) {
+                        return;
+                      }
+
+                      selectCard(trayCard.id);
+                    }}
+                    onDragEnd={() => setDraggedCardId(null)}
+                    onDragStart={(event) => handleCardDragStart(event, trayCard.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        selectCard(trayCard.id);
+                      }
+                    }}
+                  >
+                    <MatchingCardContent
+                      cardHeight={Math.max(metrics.height - 16, 56)}
+                      cardWidth={Math.max(metrics.width - 16, 96)}
+                      content={trayCard.content}
+                      onOpenMedia={setActiveMedia}
+                    />
+                  </div>
+                );
+              })()}
+            </div>
+          ) : null
+        ) : trayCards.length > 0 ? (
+          <div className="classification-pool classification-pool--tray">
+            {trayCards.map((card) => {
+              const metrics = cardMetricsById[card.id];
+              if (!metrics) {
+                return null;
+              }
+
+              return (
+                <div
+                  aria-label={card.label}
+                  className={`classification-card ${
+                    selectedCardId === card.id ? "classification-card--selected" : ""
+                  } ${
+                    checkResult?.missingIds.includes(card.id)
+                      ? "classification-card--missing"
+                      : ""
+                  } ${draggedCardId === card.id ? "classification-card--dragging" : ""}`}
+                  draggable
+                  key={card.id}
+                  role="button"
+                  style={{
+                    width: `${metrics.width}px`,
+                    minHeight: `${metrics.height}px`,
+                  }}
+                  tabIndex={0}
+                  onClick={(event) => {
+                    if (isCardInteractiveTarget(event.target)) {
+                      return;
+                    }
+
+                    selectCard(card.id);
+                  }}
+                  onDragEnd={() => setDraggedCardId(null)}
+                  onDragStart={(event) => handleCardDragStart(event, card.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      selectCard(card.id);
+                    }
+                  }}
+                >
+                  <MatchingCardContent
+                    cardHeight={Math.max(metrics.height - 16, 56)}
+                    cardWidth={Math.max(metrics.width - 16, 96)}
+                    content={card.content}
+                    onOpenMedia={setActiveMedia}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+
+      </div>
+
+      {!boardOnly ? (
+        <ActionRow>
+          <PlayerButton onClick={handleCheck}>Проверить</PlayerButton>
+          <button className="ghost-button" type="button" onClick={resetBoard}>
+            Сбросить
+          </button>
+        </ActionRow>
+      ) : null}
+
+      <MatchingMediaDialog media={activeMedia} onClose={() => setActiveMedia(null)} />
     </div>
   );
 }
@@ -4224,7 +5047,8 @@ function renderActivity(
       );
     case "group-assignment":
       return (
-        <GroupAssignmentActivity
+        <GroupAssignmentActivityBoard
+          boardOnly={boardOnly}
           draft={draft}
           onReport={onReport}
           revisionKey={revisionKey}

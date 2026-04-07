@@ -106,9 +106,24 @@ export interface MatchingPairsData {
   colorByGroup?: boolean;
 }
 
+export type ClassificationGroupBackground =
+  | string
+  | MatchingTextContent
+  | MatchingImageContent;
+
+export interface ClassificationGroup {
+  background: ClassificationGroupBackground;
+  items: MatchingPairSide[];
+}
+
+export type ClassificationCardDisplayMode = "sequential" | "all-at-once";
+export type ClassificationCardOrder = "random" | "rounds";
+
 export interface GroupAssignmentData {
-  groups: Array<{ name: string }>;
-  items: Array<{ label: string; groupIndex: number }>;
+  groups: ClassificationGroup[];
+  cardDisplayMode?: ClassificationCardDisplayMode;
+  cardOrder?: ClassificationCardOrder;
+  useGroupColors?: boolean;
 }
 
 export interface TimelineData {
