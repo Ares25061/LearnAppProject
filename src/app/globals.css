@@ -4458,3 +4458,391 @@ body {
   font-size: 0.92rem;
   line-height: 1;
 }
+
+/* classification */
+.classification-editor-root {
+  gap: 18px;
+}
+
+.classification-editor-settings {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.classification-editor-list {
+  display: grid;
+  gap: 18px;
+}
+
+.classification-editor-group {
+  display: grid;
+  gap: 16px;
+}
+
+.classification-editor-group__head,
+.classification-editor-item__head,
+.classification-editor-items__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.classification-editor-items {
+  display: grid;
+  gap: 14px;
+}
+
+.classification-editor-item {
+  display: grid;
+  gap: 12px;
+  border-radius: 18px;
+  border: 1px solid rgba(18, 35, 38, 0.08);
+  background: rgba(255, 255, 255, 0.62);
+  padding: 14px;
+}
+
+.classification-editor-card {
+  gap: 12px;
+}
+
+.classification-editor-kind-row {
+  flex-wrap: wrap;
+}
+
+.classification-editor-preview {
+  overflow: hidden;
+  border-radius: 16px;
+  background: rgba(18, 35, 38, 0.05);
+}
+
+.classification-editor-preview img {
+  display: block;
+  width: 100%;
+  max-height: 220px;
+  object-fit: cover;
+}
+
+.classification-activity {
+  gap: 18px;
+}
+
+.classification-activity__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  color: var(--text-soft);
+  font-size: 0.95rem;
+}
+
+.classification-activity__hint {
+  color: var(--text-main);
+}
+
+.classification-board {
+  position: relative;
+  display: grid;
+  overflow: hidden;
+  min-height: 620px;
+  border-radius: 32px;
+  border: 1px solid rgba(18, 35, 38, 0.08);
+  background:
+    linear-gradient(180deg, rgba(255, 251, 244, 0.9), rgba(247, 242, 233, 0.92)),
+    rgba(255, 255, 255, 0.78);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 20px 50px rgba(18, 35, 38, 0.08);
+}
+
+.classification-board--all-at-once {
+  padding-bottom: 168px;
+}
+
+.classification-clusters {
+  display: grid;
+  min-height: 620px;
+  gap: 0;
+  grid-auto-flow: row;
+  grid-template-columns: repeat(var(--classification-grid-columns, 1), minmax(0, 1fr));
+  grid-template-rows: repeat(var(--classification-grid-rows, 1), minmax(0, 1fr));
+}
+
+.classification-cluster {
+  display: grid;
+  grid-template-rows: 1fr;
+  overflow: hidden;
+  min-height: 250px;
+  border: 0;
+  background: transparent;
+  transition:
+    filter 0.18s ease,
+    box-shadow 0.18s ease;
+  cursor: pointer;
+}
+
+.classification-cluster:hover {
+  filter: brightness(1.02);
+}
+
+.classification-cluster--wrong {
+  box-shadow: inset 0 0 0 3px rgba(180, 66, 66, 0.38);
+}
+
+.classification-cluster__background {
+  grid-area: 1 / 1;
+  position: relative;
+  display: grid;
+  min-height: 250px;
+  place-items: center;
+  padding: 24px 18px;
+  overflow: hidden;
+  text-align: center;
+  background:
+    radial-gradient(circle at 20% 18%, rgba(255, 255, 255, 0.18), transparent 20%),
+    radial-gradient(circle at 78% 35%, rgba(255, 255, 255, 0.12), transparent 18%),
+    radial-gradient(circle at 34% 72%, rgba(130, 98, 55, 0.08), transparent 18%),
+    radial-gradient(circle at 64% 64%, rgba(130, 98, 55, 0.05), transparent 20%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.05));
+}
+
+.classification-cluster__background img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.classification-cluster__background--text {
+  background:
+    radial-gradient(circle at 20% 18%, rgba(255, 255, 255, 0.18), transparent 20%),
+    radial-gradient(circle at 78% 35%, rgba(255, 255, 255, 0.12), transparent 18%),
+    radial-gradient(circle at 34% 72%, rgba(130, 98, 55, 0.08), transparent 18%),
+    radial-gradient(circle at 64% 64%, rgba(130, 98, 55, 0.05), transparent 20%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.05)),
+    color-mix(in srgb, var(--classification-accent) 28%, white);
+}
+
+.classification-cluster__background--tinted::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02)),
+    color-mix(in srgb, var(--classification-accent) 20%, transparent);
+}
+
+.classification-cluster__title {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  font-size: var(--classification-title-size, clamp(1.2rem, 2.2vw, 1.85rem));
+  font-weight: 500;
+  line-height: 1.35;
+  color: #152226;
+  text-shadow: 0 1px 18px rgba(255, 255, 255, 0.72);
+}
+
+.classification-cluster__body {
+  grid-area: 1 / 1;
+  position: relative;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+}
+
+.classification-placed-card {
+  position: absolute;
+  display: grid;
+  gap: 8px;
+  max-width: calc(100% - 36px);
+  border-radius: 22px;
+  border: 2px solid transparent;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 14px 24px rgba(18, 35, 38, 0.14);
+  padding: 8px 9px;
+  cursor: grab;
+  pointer-events: auto;
+  touch-action: none;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    border-color 0.18s ease,
+    opacity 0.12s ease;
+}
+
+.classification-placed-card:hover {
+  transform: translateY(-2px);
+}
+
+.classification-placed-card--selected {
+  border-color: rgba(59, 144, 224, 0.42);
+  box-shadow: 0 16px 30px rgba(59, 144, 224, 0.18);
+}
+
+.classification-placed-card--correct {
+  border-color: rgba(60, 138, 90, 0.34);
+}
+
+.classification-placed-card--wrong {
+  border-color: rgba(194, 88, 88, 0.44);
+  box-shadow: 0 16px 30px rgba(194, 88, 88, 0.16);
+}
+
+.classification-placed-card__content {
+  min-width: 0;
+  width: 100%;
+}
+
+.classification-pool {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.classification-pool--tray {
+  position: absolute;
+  left: 16px;
+  right: 104px;
+  bottom: 16px;
+  z-index: 3;
+  padding: 12px 14px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 18px 40px rgba(18, 35, 38, 0.12);
+}
+
+.classification-card {
+  display: grid;
+  align-content: start;
+  border-radius: 22px;
+  border: 2px solid transparent;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 36px rgba(18, 35, 38, 0.1);
+  padding: 8px 9px;
+  cursor: grab;
+  width: auto;
+  min-width: 0;
+  max-width: min(100%, 260px);
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    border-color 0.18s ease,
+    opacity 0.12s ease;
+}
+
+.classification-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 22px 40px rgba(18, 35, 38, 0.14);
+}
+
+.classification-card--selected {
+  border-color: rgba(11, 122, 117, 0.36);
+  box-shadow: 0 22px 44px rgba(11, 122, 117, 0.16);
+}
+
+.classification-card--missing {
+  border-color: rgba(210, 144, 62, 0.42);
+  box-shadow: 0 20px 40px rgba(210, 144, 62, 0.18);
+}
+
+.classification-placed-card--dragging,
+.classification-card--dragging {
+  opacity: 0.08;
+}
+
+.classification-floating-card {
+  position: absolute;
+  z-index: 4;
+  left: 50%;
+  top: 50%;
+  display: grid;
+  justify-items: center;
+  width: auto;
+  max-width: calc(100% - 48px);
+  transform: translate(-50%, -18%);
+}
+
+.classification-floating-card .classification-card {
+  width: auto;
+  max-width: min(calc(100vw - 56px), 260px);
+}
+
+.classification-check-button {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  z-index: 5;
+  display: inline-grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #4aa7ff, #2f7dd7);
+  color: white;
+  box-shadow: 0 18px 34px rgba(47, 125, 215, 0.32);
+  font-size: 2rem;
+  cursor: pointer;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    filter 0.18s ease;
+}
+
+.classification-check-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 22px 40px rgba(47, 125, 215, 0.4);
+}
+
+.classification-check-button--success {
+  background: linear-gradient(180deg, #43b06f, #2f8e57);
+  box-shadow: 0 18px 34px rgba(47, 142, 87, 0.28);
+}
+
+.classification-activity--board-only .classification-board {
+  min-height: calc(100vh - 120px);
+}
+
+@media (max-width: 900px) {
+  .classification-editor-settings {
+    grid-template-columns: 1fr;
+  }
+
+  .classification-clusters {
+    grid-template-columns: 1fr;
+    grid-template-rows: none;
+  }
+
+  .classification-board {
+    min-height: 720px;
+  }
+
+  .classification-board--all-at-once {
+    padding-bottom: 220px;
+  }
+
+  .classification-pool--tray {
+    right: 18px;
+    bottom: 92px;
+  }
+
+  .classification-editor-group__head,
+  .classification-editor-item__head,
+  .classification-editor-items__head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .classification-floating-card {
+    top: auto;
+    bottom: 104px;
+    transform: translateX(-50%);
+  }
+
+  .classification-check-button {
+    width: 64px;
+    height: 64px;
+    bottom: 16px;
+    right: 16px;
+  }
+}

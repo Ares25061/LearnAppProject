@@ -10,6 +10,7 @@ import {
   type ChangeEvent,
 } from "react";
 import { useRouter } from "next/navigation";
+import { ClassificationEditor } from "@/components/classification-editor";
 import { ExercisePlayer } from "@/components/exercise-player";
 import { MatchingPairsEditor } from "@/components/matching-pairs-editor";
 import {
@@ -19,6 +20,7 @@ import {
 } from "@/lib/exercise-definitions";
 import type {
   AnyExerciseDraft,
+  GroupAssignmentData,
   MatchingPairsData,
   PublicUser,
 } from "@/lib/types";
@@ -61,8 +63,13 @@ export function StudioEditor({
   const deferredDraft = useDeferredValue(draft);
   const definition = exerciseDefinitionMap[draft.type];
   const isMatchingPairs = draft.type === "matching-pairs";
+  const isClassification = draft.type === "group-assignment";
+  const isCustomVisualEditor = isMatchingPairs || isClassification;
   const matchingPairsData = isMatchingPairs
     ? (draft.data as MatchingPairsData)
+    : null;
+  const classificationData = isClassification
+    ? (draft.data as GroupAssignmentData)
     : null;
   type ExportVariant = "scorm1" | "scorm2";
 
@@ -500,6 +507,7 @@ export function StudioEditor({
         successMessage: "Все пары собраны верно.",
       } as AnyExerciseDraft)
     : deferredDraft;
+  const previewDraft = isMatchingPairs ? matchingPreviewDraft : deferredDraft;
 
   const previewBlock = (
     <div
@@ -512,7 +520,7 @@ export function StudioEditor({
         </div>
       </div>
       <ExercisePlayer
-        boardOnly={isMatchingPairs && isPreviewFullscreen}
+        boardOnly={isCustomVisualEditor && isPreviewFullscreen}
         bodyOverlay={
           <button
             aria-label={isPreviewFullscreen ? "Свернуть" : "На весь экран"}
@@ -545,17 +553,17 @@ export function StudioEditor({
           </button>
         }
         compactHead={isMatchingPairs}
-        draft={matchingPreviewDraft}
+        draft={previewDraft}
         fullscreen={isPreviewFullscreen}
-        key={JSON.stringify(matchingPreviewDraft)}
+        key={JSON.stringify(previewDraft)}
       />
     </div>
   );
 
   return (
-    <div className={`editor-shell ${isMatchingPairs ? "editor-shell--single" : ""}`}>
+    <div className={`editor-shell ${isCustomVisualEditor ? "editor-shell--single" : ""}`}>
       <aside className="editor-sidebar">
-        {!isMatchingPairs ? (
+        {!isCustomVisualEditor ? (
           <div className="editor-block editor-block--hero">
             <span className="eyebrow">Редактор упражнения</span>
             <h2>{definition.title}</h2>
@@ -656,9 +664,24 @@ export function StudioEditor({
           />
         ) : null}
 
-        {isMatchingPairs ? previewBlock : null}
+        {isClassification && classificationData ? (
+          <ClassificationEditor
+            themeColor={draft.themeColor}
+            value={classificationData}
+            onChange={(nextData) => setDraftData(nextData)}
+            onThemeColorChange={(nextColor) =>
+              setDraft((current) => ({
+                ...current,
+                themeColor: nextColor,
+              }) as AnyExerciseDraft)
+            }
+            onNotice={(message) => showNotice(message, "draft")}
+          />
+        ) : null}
 
-        {!isMatchingPairs ? (
+        {isCustomVisualEditor ? previewBlock : null}
+
+        {!isCustomVisualEditor ? (
           <details className="editor-block editor-details" open>
             <summary className="editor-details__summary">JSON упражнения</summary>
             <p className="editor-hint">
@@ -679,7 +702,7 @@ export function StudioEditor({
         {draftActionsBlock}
       </aside>
 
-      {!isMatchingPairs ? (
+      {!isCustomVisualEditor ? (
         <section className="editor-preview">
           {previewBlock}
         </section>
