@@ -2,7 +2,7 @@ import "server-only";
 
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { accessSync, constants } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -59,6 +59,7 @@ type ResolvedAudioSource = {
     provider?: string;
   };
   headers?: Record<string, string>;
+  sourcePageUrl?: string;
   url: string;
 };
 
@@ -647,6 +648,7 @@ async function resolveRutubeAudioSourceWithYtDlp(
           ...RUTUBE_STREAM_HEADERS,
           ...(selectedFormat.http_headers ?? parsed.http_headers ?? {}),
         },
+        sourcePageUrl: sourceUrl,
         url: selectedFormat.url.trim(),
       } satisfies ResolvedAudioSource;
     }
@@ -674,6 +676,7 @@ async function resolveRutubeAudioSourceWithYtDlp(
         ...RUTUBE_STREAM_HEADERS,
         ...(selectedDownload?.http_headers ?? parsed.http_headers ?? {}),
       },
+      sourcePageUrl: sourceUrl,
       url: fallbackUrl,
     } satisfies ResolvedAudioSource;
   } catch {
@@ -754,6 +757,7 @@ async function resolveVkAudioSource(
         ...(selected.http_headers ?? parsed.http_headers ?? {}),
         Referer: sourceUrl,
       },
+      sourcePageUrl: sourceUrl,
       url: resolvedUrl,
     } satisfies ResolvedAudioSource;
   } catch (error) {
@@ -818,6 +822,7 @@ async function resolveRutubeAudioSource(
       ...RUTUBE_STREAM_HEADERS,
       Referer: parsed.referer?.trim() || RUTUBE_STREAM_HEADERS.Referer,
     },
+    sourcePageUrl: sourceUrl,
     url: resolvedUrl,
   } satisfies ResolvedAudioSource;
 }
@@ -1286,6 +1291,104 @@ async function downloadAudioSourceBuffer(resolvedSource: ResolvedAudioSource) {
   };
 }
 
+function getDownloadedAssetContentType(extension: string) {
+  switch (extension) {
+    case "m4a":
+      return "audio/mp4";
+    case "mp3":
+      return "audio/mpeg";
+    case "webm":
+      return "video/webm";
+    case "mp4":
+    default:
+      return "video/mp4";
+  }
+}
+
+function canUseRutubeYtDlpDownloadFallback(resolvedSource: ResolvedAudioSource) {
+  return (
+    resolvedSource.debug?.provider === "rutube" &&
+    typeof resolvedSource.debug?.formatId === "string" &&
+    resolvedSource.debug.formatId.trim().length > 0 &&
+    typeof resolvedSource.sourcePageUrl === "string" &&
+    resolvedSource.sourcePageUrl.trim().length > 0
+  );
+}
+
+async function downloadAudioSourceWithYtDlp(
+  resolvedSource: ResolvedAudioSource,
+): Promise<ConvertedAudioAsset> {
+  const ytDlpBin = await ensureYtDlpBin();
+  const formatId = resolvedSource.debug?.formatId?.trim();
+  const sourcePageUrl = resolvedSource.sourcePageUrl?.trim();
+
+  if (!formatId || !sourcePageUrl) {
+    throw new Error("Недостаточно данных для резервного скачивания через yt-dlp.");
+  }
+
+  const tempDir = await mkdtemp(path.join(tmpdir(), "learnapp-audio-"));
+  const outputTemplate = path.join(tempDir, "asset.%(ext)s");
+
+  try {
+    const { stdout } = await execFileAsync(
+      ytDlpBin,
+      [
+        "--ignore-config",
+        "--no-playlist",
+        "--no-warnings",
+        "--no-progress",
+        "--force-overwrites",
+        "--no-part",
+        "-f",
+        formatId,
+        "-o",
+        outputTemplate,
+        "--print",
+        "after_move:filepath",
+        sourcePageUrl,
+      ],
+      {
+        timeout: AUDIO_DOWNLOAD_TIMEOUT_MS,
+        windowsHide: true,
+        maxBuffer: 4 * 1024 * 1024,
+      },
+    );
+
+    const outputFilePath =
+      stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .at(-1) ??
+      (() => {
+        throw new Error("yt-dlp не сообщил путь к скачанному файлу.");
+      })();
+
+    const fallbackFilePath = path.isAbsolute(outputFilePath)
+      ? outputFilePath
+      : path.join(tempDir, outputFilePath);
+    const filePath = isExecutableFile(fallbackFilePath)
+      ? fallbackFilePath
+      : path.join(
+          tempDir,
+          (await readdir(tempDir)).find((name) => name.startsWith("asset.")) ?? "",
+        );
+
+    const extension = path.extname(filePath).replace(/^\./, "").toLowerCase() || "mp4";
+    const buffer = await readFile(filePath);
+    return {
+      buffer,
+      contentType: getDownloadedAssetContentType(extension),
+      extension,
+    };
+  } finally {
+    await rm(tempDir, {
+      force: true,
+      recursive: true,
+    }).catch(() => undefined);
+  }
+}
+
 export async function convertAudioSourceToMp3Buffer(
   resolvedSource: ResolvedAudioSource,
 ) {
@@ -1376,15 +1479,41 @@ export async function convertAudioSourceToPlayableAsset(
         contentType: "audio/mp4",
         extension: "m4a",
       };
-    } catch {
+    } catch (error) {
+      if (canUseRutubeYtDlpDownloadFallback(resolvedSource)) {
+        console.warn("[media/audio] ffmpeg remux failed, falling back to yt-dlp download", {
+          error: error instanceof Error ? error.message : String(error),
+          formatId: resolvedSource.debug?.formatId,
+          provider: resolvedSource.debug?.provider,
+          sourcePageUrl: resolvedSource.sourcePageUrl,
+        });
+
+        return downloadAudioSourceWithYtDlp(resolvedSource);
+      }
+
       // Fall back to mp3 transcoding when the source cannot be remuxed cleanly.
     }
   }
 
-  const buffer = await convertAudioSourceToMp3Buffer(resolvedSource);
-  return {
-    buffer,
-    contentType: "audio/mpeg",
-    extension: "mp3",
-  };
+  try {
+    const buffer = await convertAudioSourceToMp3Buffer(resolvedSource);
+    return {
+      buffer,
+      contentType: "audio/mpeg",
+      extension: "mp3",
+    };
+  } catch (error) {
+    if (canUseRutubeYtDlpDownloadFallback(resolvedSource)) {
+      console.warn("[media/audio] ffmpeg transcode failed, falling back to yt-dlp download", {
+        error: error instanceof Error ? error.message : String(error),
+        formatId: resolvedSource.debug?.formatId,
+        provider: resolvedSource.debug?.provider,
+        sourcePageUrl: resolvedSource.sourcePageUrl,
+      });
+
+      return downloadAudioSourceWithYtDlp(resolvedSource);
+    }
+
+    throw error;
+  }
 }
