@@ -153,8 +153,35 @@ function appendFullscreenParam(url: string) {
   return url.includes("?") ? `${url}&fullscreen=1` : `${url}?fullscreen=1`;
 }
 
+function getWrapperFrameSourceDirective(frameSource: string) {
+  const allowedOrigins = new Set<string>(["'self'"]);
+
+  try {
+    const parsed = new URL(frameSource);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      allowedOrigins.add(parsed.origin);
+    }
+  } catch {
+    // Keep the strict self-only fallback for malformed sources.
+  }
+
+  return Array.from(allowedOrigins).join(" ");
+}
+
 function buildWrapperIndexHtml(title: string, frameSource: string) {
   const safeTitle = title || "Название не указано";
+  const frameSourceDirective = getWrapperFrameSourceDirective(frameSource);
+  const contentSecurityPolicy = [
+    "default-src 'self' data: blob:",
+    "img-src 'self' data: blob:",
+    "media-src 'self' data: blob:",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "connect-src 'none'",
+    `frame-src ${frameSourceDirective}`,
+    `child-src ${frameSourceDirective}`,
+    "font-src 'self' data:",
+  ].join("; ");
 
   return `<!doctype html>
 <html lang="ru">
@@ -163,7 +190,7 @@ function buildWrapperIndexHtml(title: string, frameSource: string) {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta
     http-equiv="Content-Security-Policy"
-    content="default-src 'self' data: blob:; img-src 'self' data: blob:; media-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'none'; frame-src 'self'; child-src 'self'; font-src 'self' data:;"
+    content="${contentSecurityPolicy}"
   />
   <title>${escapeXml(safeTitle)}</title>
   <style>

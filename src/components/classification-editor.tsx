@@ -1,0 +1,791 @@
+"use client";
+/* eslint-disable @next/next/no-img-element */
+
+import type { ChangeEvent } from "react";
+import {
+  CLASSIFICATION_MAX_GROUPS,
+  CLASSIFICATION_MAX_ITEMS_PER_GROUP,
+  createClassificationGroup,
+  createClassificationItem,
+  getClassificationGroupTitle,
+  normalizeGroupAssignmentData,
+} from "@/lib/classification";
+import {
+  createMatchingContent,
+  matchingContentOptions,
+  normalizeMatchingSide,
+} from "@/lib/matching-pairs";
+import type {
+  ClassificationGroupBackground,
+  GroupAssignmentData,
+  MatchingContent,
+  MatchingContentKind,
+  MatchingPairSide,
+} from "@/lib/types";
+import { moveItem } from "@/lib/utils";
+
+const displayOptions = [
+  { id: "sequential", label: "По одной" },
+  { id: "all-at-once", label: "Все сразу" },
+] as const;
+
+const orderOptions = [
+  { id: "random", label: "Случайно" },
+  { id: "rounds", label: "По кругу" },
+] as const;
+
+function getBaseFileLabel(fileName: string) {
+  return fileName.replace(/\.[^.]+$/, "").trim();
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+
+      reject(new Error("Не удалось прочитать файл."));
+    };
+
+    reader.onerror = () => {
+      reject(reader.error ?? new Error("Не удалось прочитать файл."));
+    };
+
+    reader.readAsDataURL(file);
+  });
+}
+
+function isAcceptedMediaFile(
+  kind: "image" | "audio" | "video",
+  file: File,
+) {
+  const mimeType = file.type.toLowerCase();
+  const fileName = file.name.toLowerCase();
+
+  if (kind === "image") {
+    return mimeType.startsWith("image/");
+  }
+
+  if (kind === "audio") {
+    return (
+      mimeType.startsWith("audio/") ||
+      mimeType === "video/mp4" ||
+      fileName.endsWith(".mp3") ||
+      fileName.endsWith(".mp4") ||
+      fileName.endsWith(".m4a") ||
+      fileName.endsWith(".wav") ||
+      fileName.endsWith(".ogg")
+    );
+  }
+
+  return (
+    mimeType.startsWith("video/") ||
+    fileName.endsWith(".mp4") ||
+    fileName.endsWith(".webm") ||
+    fileName.endsWith(".ogv") ||
+    fileName.endsWith(".ogg")
+  );
+}
+
+function convertContentKind(
+  current: MatchingContent,
+  nextKind: MatchingContentKind,
+) {
+  const next = createMatchingContent(nextKind);
+  const currentText =
+    current.kind === "text" || current.kind === "spoken-text"
+      ? current.text
+      : current.kind === "image"
+        ? current.alt
+        : current.label;
+
+  if (next.kind === "text" || next.kind === "spoken-text") {
+    next.text = currentText;
+    return next;
+  }
+
+  if (next.kind === "image") {
+    if (current.kind === "image") {
+      return { ...current };
+    }
+
+    next.alt = currentText;
+    return next;
+  }
+
+  if (next.kind === "audio") {
+    if (current.kind === "audio") {
+      return { ...current };
+    }
+
+    if (current.kind === "video") {
+      return {
+        ...next,
+        url: current.url,
+        label: current.label,
+        volume: current.volume,
+      };
+    }
+
+    next.label = currentText;
+    return next;
+  }
+
+  if (current.kind === "video") {
+    return { ...current };
+  }
+
+  if (current.kind === "audio") {
+    return {
+      ...next,
+      url: current.url,
+      label: current.label,
+      volume: current.volume,
+    };
+  }
+
+  next.label = currentText;
+  return next;
+}
+
+function applyMediaLabel(
+  content: MatchingContent,
+  value: string,
+): MatchingContent {
+  if (content.kind === "image") {
+    return { ...content, alt: value };
+  }
+
+  if (content.kind === "audio" || content.kind === "video") {
+    return { ...content, label: value };
+  }
+
+  return content;
+}
+
+type ContentEditorProps = {
+  label: string;
+  value: MatchingPairSide;
+  allowedKinds: readonly MatchingContentKind[];
+  onChange: (next: MatchingPairSide) => void;
+  onNotice?: (message: string) => void;
+};
+
+function ContentEditor({
+  label,
+  value,
+  allowedKinds,
+  onChange,
+  onNotice,
+}: Readonly<ContentEditorProps>) {
+  const content = normalizeMatchingSide(value);
+  const options = matchingContentOptions.filter((option) =>
+    allowedKinds.includes(option.id),
+  );
+
+  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    if (
+      (content.kind !== "image" && content.kind !== "audio" && content.kind !== "video") ||
+      !isAcceptedMediaFile(content.kind, file)
+    ) {
+      onNotice?.("Файл не подходит для выбранного типа карточки.");
+      return;
+    }
+
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      const baseLabel = getBaseFileLabel(file.name);
+
+      if (content.kind === "image") {
+        onChange({
+          ...content,
+          url: dataUrl,
+          alt: content.alt.trim() ? content.alt : baseLabel,
+          fileName: file.name,
+        });
+      } else if (content.kind === "audio") {
+        onChange({
+          ...content,
+          url: dataUrl,
+          label: content.label.trim() ? content.label : baseLabel,
+          fileName: file.name,
+        });
+      } else {
+        onChange({
+          ...content,
+          url: dataUrl,
+          label: content.label.trim() ? content.label : baseLabel,
+          fileName: file.name,
+        });
+      }
+
+      onNotice?.("Файл встроен в карточку.");
+    } catch (error) {
+      onNotice?.(
+        error instanceof Error ? error.message : "Не удалось обработать файл.",
+      );
+    }
+  };
+
+  return (
+    <div className="matching-editor-side classification-editor-card">
+      <label className="matching-editor-field">
+        <span className="field-label">{label}</span>
+      </label>
+      <div className="matching-setting-options classification-editor-kind-row">
+        {options.map((option) => (
+          <button
+            className={`matching-setting-chip ${
+              content.kind === option.id ? "matching-setting-chip--active" : ""
+            }`}
+            key={option.id}
+            type="button"
+            onClick={() => onChange(convertContentKind(content, option.id))}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+
+      {(content.kind === "text" || content.kind === "spoken-text") ? (
+        <label className="matching-editor-field">
+          <span className="field-label">
+            {content.kind === "spoken-text" ? "Текст для озвучивания" : "Текст"}
+          </span>
+          <textarea
+            className="editor-textarea"
+            rows={3}
+            value={content.text}
+            onChange={(event) => onChange({ ...content, text: event.target.value })}
+          />
+        </label>
+      ) : (
+        <>
+          {content.kind === "image" && content.url ? (
+            <div className="classification-editor-preview">
+              <img alt={content.alt || "Превью"} src={content.url} />
+            </div>
+          ) : null}
+
+          <label className="matching-editor-field">
+            <span className="field-label">
+              {content.kind === "image"
+                ? "Ссылка на изображение"
+                : content.kind === "audio"
+                  ? "Ссылка на аудио"
+                  : "Ссылка на видео"}
+            </span>
+            <input
+              className="editor-input"
+              value={content.url}
+              onChange={(event) => onChange({ ...content, url: event.target.value })}
+            />
+          </label>
+
+          <label className="matching-editor-field">
+            <span className="field-label">
+              {content.kind === "image" ? "Подпись" : "Название"}
+            </span>
+            <input
+              className="editor-input"
+              value={content.kind === "image" ? content.alt : content.label}
+              onChange={(event) => onChange(applyMediaLabel(content, event.target.value))}
+            />
+          </label>
+
+          <label className="matching-editor-field">
+            <span className="field-label">Файл</span>
+            <input
+              accept={
+                content.kind === "image"
+                  ? "image/*"
+                  : content.kind === "audio"
+                    ? "audio/*,video/mp4,.mp3,.mp4,.m4a,.wav,.ogg"
+                    : "video/*,.mp4,.webm,.ogv,.ogg"
+              }
+              className="editor-input"
+              type="file"
+              onChange={(event) => void handleFileChange(event)}
+            />
+          </label>
+
+          {content.kind === "video" ? (
+            <label className="matching-editor-field">
+              <span className="field-label">Старт, сек</span>
+              <input
+                className="editor-input"
+                min={0}
+                step={1}
+                type="number"
+                value={content.startSeconds}
+                onChange={(event) =>
+                  onChange({
+                    ...content,
+                    startSeconds: Math.max(
+                      0,
+                      Number.parseInt(event.target.value || "0", 10) || 0,
+                    ),
+                  })
+                }
+              />
+            </label>
+          ) : null}
+
+          {(content.kind === "audio" || content.kind === "video") ? (
+            <label className="matching-editor-field">
+              <span className="field-label">Громкость: {content.volume}%</span>
+              <input
+                max={100}
+                min={0}
+                step={1}
+                type="range"
+                value={content.volume}
+                onChange={(event) =>
+                  onChange({
+                    ...content,
+                    volume: Math.max(
+                      0,
+                      Math.min(
+                        100,
+                        Number.parseInt(event.target.value || "100", 10) || 100,
+                      ),
+                    ),
+                  })
+                }
+              />
+            </label>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
+
+function BackgroundEditor({
+  value,
+  onChange,
+  onNotice,
+}: Readonly<{
+  value: ClassificationGroupBackground;
+  onChange: (next: ClassificationGroupBackground) => void;
+  onNotice?: (message: string) => void;
+}>) {
+  return (
+    <ContentEditor
+      allowedKinds={["text", "image"]}
+      label="Задний фон"
+      value={value}
+      onChange={(next) => onChange(next as ClassificationGroupBackground)}
+      onNotice={onNotice}
+    />
+  );
+}
+
+export function ClassificationEditor({
+  themeColor = "#41644a",
+  value,
+  onChange,
+  onThemeColorChange,
+  onNotice,
+}: Readonly<{
+  themeColor?: string;
+  value: GroupAssignmentData;
+  onChange: (next: GroupAssignmentData) => void;
+  onThemeColorChange?: (next: string) => void;
+  onNotice?: (message: string) => void;
+}>) {
+  const normalized = normalizeGroupAssignmentData(value);
+
+  const updateData = (
+    updater: (current: typeof normalized) => GroupAssignmentData,
+  ) => {
+    onChange(updater(normalized));
+  };
+
+  const updateGroups = (
+    updater: (current: typeof normalized.groups) => typeof normalized.groups,
+  ) => {
+    updateData((current) => ({
+      ...current,
+      groups: updater(current.groups),
+    }));
+  };
+
+  return (
+    <div className="matching-editor-root classification-editor-root">
+      <div className="editor-block">
+        <div className="editor-block__head">
+          <div>
+            <strong>Редактор классификации</strong>
+            <p className="editor-hint">
+              У каждой группы свой фон, а у карточек свои типы контента.
+            </p>
+          </div>
+        </div>
+
+        <div className="matching-settings-grid classification-editor-settings">
+          <label className="matching-setting-card">
+            <span className="field-label">Цвет акцентов</span>
+            <div className="matching-setting-color">
+              <input
+                className="editor-input editor-input--color"
+                type="color"
+                value={themeColor}
+                onChange={(event) => onThemeColorChange?.(event.target.value)}
+              />
+            </div>
+          </label>
+
+          <div className="matching-setting-card">
+            <span className="field-label">Показ карточек</span>
+            <div className="matching-setting-options">
+              {displayOptions.map((option) => (
+                <button
+                  className={`matching-setting-chip ${
+                    normalized.cardDisplayMode === option.id
+                      ? "matching-setting-chip--active"
+                      : ""
+                  }`}
+                  key={option.id}
+                  type="button"
+                  onClick={() =>
+                    updateData((current) => ({
+                      ...current,
+                      cardDisplayMode: option.id,
+                    }))
+                  }
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="matching-setting-card">
+            <span className="field-label">Порядок карточек</span>
+            <div className="matching-setting-options">
+              {orderOptions.map((option) => (
+                <button
+                  className={`matching-setting-chip ${
+                    normalized.cardOrder === option.id
+                      ? "matching-setting-chip--active"
+                      : ""
+                  }`}
+                  key={option.id}
+                  type="button"
+                  onClick={() =>
+                    updateData((current) => ({
+                      ...current,
+                      cardOrder: option.id,
+                    }))
+                  }
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="matching-setting-card classification-editor-toggle">
+            <span className="field-label">Групповые цвета</span>
+            <label className="toggle">
+              <input
+                checked={normalized.useGroupColors}
+                type="checkbox"
+                onChange={(event) =>
+                  updateData((current) => ({
+                    ...current,
+                    useGroupColors: event.target.checked,
+                  }))
+                }
+              />
+              <span>Подкрашивать группы поверх фона</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div className="classification-editor-list">
+        {normalized.groups.map((group, groupIndex) => (
+          <article className="editor-block classification-editor-group" key={`group-${groupIndex}`}>
+            <div className="classification-editor-group__head">
+              <div>
+                <strong>{`Группа ${groupIndex + 1}`}</strong>
+                <p className="editor-hint">
+                  {getClassificationGroupTitle(group, groupIndex)}
+                </p>
+              </div>
+              <div className="inline-actions">
+                <button
+                  className="ghost-button"
+                  disabled={groupIndex === 0}
+                  type="button"
+                  onClick={() =>
+                    updateGroups((current) => moveItem(current, groupIndex, groupIndex - 1))
+                  }
+                >
+                  Вверх
+                </button>
+                <button
+                  className="ghost-button"
+                  disabled={groupIndex === normalized.groups.length - 1}
+                  type="button"
+                  onClick={() =>
+                    updateGroups((current) => moveItem(current, groupIndex, groupIndex + 1))
+                  }
+                >
+                  Вниз
+                </button>
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={() =>
+                    updateGroups((current) => {
+                      if (current.length >= CLASSIFICATION_MAX_GROUPS) {
+                        onNotice?.("Достигнут максимум групп для этого шаблона.");
+                        return current;
+                      }
+
+                      const next = [...current];
+                      next.splice(groupIndex + 1, 0, structuredClone(current[groupIndex]));
+                      return next;
+                    })
+                  }
+                >
+                  Дубль
+                </button>
+                <button
+                  className="ghost-button"
+                  disabled={normalized.groups.length === 1}
+                  type="button"
+                  onClick={() =>
+                    updateGroups((current) =>
+                      current.length === 1
+                        ? [createClassificationGroup(`Группа ${groupIndex + 1}`)]
+                        : current.filter((_, currentIndex) => currentIndex !== groupIndex),
+                    )
+                  }
+                >
+                  Удалить
+                </button>
+              </div>
+            </div>
+
+            <BackgroundEditor
+              value={group.background}
+              onChange={(nextBackground) =>
+                updateGroups((current) =>
+                  current.map((currentGroup, currentIndex) =>
+                    currentIndex === groupIndex
+                      ? {
+                          ...currentGroup,
+                          background: nextBackground,
+                        }
+                      : currentGroup,
+                  ),
+                )
+              }
+              onNotice={onNotice}
+            />
+
+            <div className="classification-editor-items">
+              <div className="classification-editor-items__head">
+                <strong>Карточки группы</strong>
+                <span className="editor-hint">
+                  {`${group.items.length} из ${CLASSIFICATION_MAX_ITEMS_PER_GROUP}`}
+                </span>
+              </div>
+
+              {group.items.map((item, itemIndex) => (
+                <div className="classification-editor-item" key={`group-${groupIndex}-item-${itemIndex}`}>
+                  <div className="classification-editor-item__head">
+                    <strong>{`Элемент ${itemIndex + 1}`}</strong>
+                    <div className="inline-actions">
+                      <button
+                        className="ghost-button"
+                        disabled={itemIndex === 0}
+                        type="button"
+                        onClick={() =>
+                          updateGroups((current) =>
+                            current.map((currentGroup, currentIndex) =>
+                              currentIndex === groupIndex
+                                ? {
+                                    ...currentGroup,
+                                    items: moveItem(
+                                      currentGroup.items,
+                                      itemIndex,
+                                      itemIndex - 1,
+                                    ),
+                                  }
+                                : currentGroup,
+                            ),
+                          )
+                        }
+                      >
+                        Вверх
+                      </button>
+                      <button
+                        className="ghost-button"
+                        disabled={itemIndex === group.items.length - 1}
+                        type="button"
+                        onClick={() =>
+                          updateGroups((current) =>
+                            current.map((currentGroup, currentIndex) =>
+                              currentIndex === groupIndex
+                                ? {
+                                    ...currentGroup,
+                                    items: moveItem(
+                                      currentGroup.items,
+                                      itemIndex,
+                                      itemIndex + 1,
+                                    ),
+                                  }
+                                : currentGroup,
+                            ),
+                          )
+                        }
+                      >
+                        Вниз
+                      </button>
+                      <button
+                        className="ghost-button"
+                        type="button"
+                        onClick={() =>
+                          updateGroups((current) =>
+                            current.map((currentGroup, currentIndex) => {
+                              if (currentIndex !== groupIndex) {
+                                return currentGroup;
+                              }
+
+                              if (
+                                currentGroup.items.length >=
+                                CLASSIFICATION_MAX_ITEMS_PER_GROUP
+                              ) {
+                                onNotice?.("В одной группе можно хранить не больше 10 карточек.");
+                                return currentGroup;
+                              }
+
+                              const nextItems = [...currentGroup.items];
+                              nextItems.splice(
+                                itemIndex + 1,
+                                0,
+                                structuredClone(currentGroup.items[itemIndex]),
+                              );
+                              return {
+                                ...currentGroup,
+                                items: nextItems,
+                              };
+                            }),
+                          )
+                        }
+                      >
+                        Дубль
+                      </button>
+                      <button
+                        className="ghost-button"
+                        type="button"
+                        onClick={() =>
+                          updateGroups((current) =>
+                            current.map((currentGroup, currentIndex) =>
+                              currentIndex === groupIndex
+                                ? {
+                                    ...currentGroup,
+                                    items:
+                                      currentGroup.items.length === 1
+                                        ? [createClassificationItem()]
+                                        : currentGroup.items.filter(
+                                            (_, currentItemIndex) =>
+                                              currentItemIndex !== itemIndex,
+                                          ),
+                                  }
+                                : currentGroup,
+                            ),
+                          )
+                        }
+                      >
+                        Удалить
+                      </button>
+                    </div>
+                  </div>
+
+                  <ContentEditor
+                    allowedKinds={["text", "spoken-text", "image", "audio", "video"]}
+                    label="Содержимое"
+                    value={item}
+                    onChange={(nextItem) =>
+                      updateGroups((current) =>
+                        current.map((currentGroup, currentIndex) =>
+                          currentIndex === groupIndex
+                            ? {
+                                ...currentGroup,
+                                items: currentGroup.items.map((currentItem, currentItemIndex) =>
+                                  currentItemIndex === itemIndex ? nextItem : currentItem,
+                                ),
+                              }
+                            : currentGroup,
+                        ),
+                      )
+                    }
+                    onNotice={onNotice}
+                  />
+                </div>
+              ))}
+
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() =>
+                  updateGroups((current) =>
+                    current.map((currentGroup, currentIndex) => {
+                      if (currentIndex !== groupIndex) {
+                        return currentGroup;
+                      }
+
+                      if (currentGroup.items.length >= CLASSIFICATION_MAX_ITEMS_PER_GROUP) {
+                        onNotice?.("В одной группе можно хранить не больше 10 карточек.");
+                        return currentGroup;
+                      }
+
+                      return {
+                        ...currentGroup,
+                        items: [...currentGroup.items, createClassificationItem()],
+                      };
+                    }),
+                  )
+                }
+              >
+                Добавить следующий элемент
+              </button>
+            </div>
+          </article>
+        ))}
+      </div>
+
+      {normalized.groups.length < CLASSIFICATION_MAX_GROUPS ? (
+        <button
+          className="primary-button"
+          type="button"
+          onClick={() =>
+            updateGroups((current) => [
+              ...current,
+              createClassificationGroup(`Группа ${current.length + 1}`),
+            ])
+          }
+        >
+          Добавить группу
+        </button>
+      ) : null}
+    </div>
+  );
+}

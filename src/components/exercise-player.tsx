@@ -2,6 +2,7 @@
 /* eslint-disable @next/next/no-img-element, react-hooks/set-state-in-effect, react-hooks/purity */
 
 import {
+  type DragEvent as ReactDragEvent,
   useEffect,
   useMemo,
   useRef,
@@ -18,6 +19,11 @@ import {
   timestampToSeconds,
   type GridPoint,
 } from "@/lib/exercise-runtime";
+import {
+  getClassificationGroupTitle,
+  normalizeClassificationBackground,
+  normalizeGroupAssignmentData,
+} from "@/lib/classification";
 import {
   MATCHING_IMAGE_HEIGHT_DEFAULT,
   getMatchingContentAriaLabel,
@@ -129,12 +135,38 @@ const MATCHING_BOARD_SCALE_STEP = 0.05;
 const MATCHING_IMAGE_CARD_BASE_HEIGHT = 72;
 const MATCHING_AUDIO_CARD_BASE_HEIGHT = 128;
 const MATCHING_VIDEO_CARD_BASE_HEIGHT = 118;
+const CLASSIFICATION_CARD_INSET = 18;
+const CLASSIFICATION_GROUP_COLORS = [
+  "#d37a48",
+  "#2c7a7b",
+  "#65743a",
+  "#845ec2",
+  "#b65d82",
+  "#4f6aa3",
+  "#8c6b2f",
+  "#5f8a4b",
+  "#4c8bc6",
+  "#b7863f",
+  "#7d5ab5",
+  "#4b9f79",
+];
+const CLASSIFICATION_DEFAULT_ANCHORS = [
+  { x: 0.5, y: 0.55 },
+  { x: 0.3, y: 0.58 },
+  { x: 0.72, y: 0.56 },
+  { x: 0.34, y: 0.3 },
+  { x: 0.66, y: 0.32 },
+  { x: 0.18, y: 0.34 },
+  { x: 0.82, y: 0.36 },
+  { x: 0.5, y: 0.8 },
+];
 
 type MatchingGroupStatus = "neutral" | "correct" | "incorrect";
 type MatchingBoardSize = {
   width: number;
   height: number;
 };
+type MatchingImageAspectRatioMap = Record<string, number>;
 type MatchingBoardMetrics = {
   width: number;
   height: number;
@@ -233,6 +265,88 @@ function getMatchingImageHeight(input: MatchingContent | MatchingImageContent) {
   );
 }
 
+function clampMatchingImageAspectRatio(value: number) {
+  return clamp(value, 0.72, 1.85);
+}
+
+function getMatchingImageDisplayRatio(
+  content: MatchingImageContent,
+  imageAspectRatios: MatchingImageAspectRatioMap = {},
+) {
+  const ratio = imageAspectRatios[content.url.trim()];
+  if (typeof ratio !== "number" || !Number.isFinite(ratio) || ratio <= 0) {
+    return 1;
+  }
+
+  return clampMatchingImageAspectRatio(ratio);
+}
+
+function getMatchingImageFrameSize(
+  content: MatchingImageContent,
+  maxWidth: number,
+  imageAspectRatios: MatchingImageAspectRatioMap = {},
+) {
+  const ratio = getMatchingImageDisplayRatio(content, imageAspectRatios);
+  const targetEdge = clamp(getMatchingImageHeight(content), 112, 220);
+  const frameWidth = clamp(
+    Math.round(targetEdge * ratio),
+    92,
+    Math.max(92, maxWidth - 24),
+  );
+  const frameHeight = clamp(Math.round(frameWidth / ratio), 72, 280);
+
+  return {
+    ratio,
+    frameWidth,
+    frameHeight,
+  };
+}
+
+function loadMatchingImageAspectRatio(url: string) {
+  return new Promise<number | null>((resolve) => {
+    if (typeof window === "undefined" || !url.trim()) {
+      resolve(null);
+      return;
+    }
+
+    const image = new Image();
+    image.decoding = "async";
+    image.loading = "eager";
+    image.onload = () => {
+      if (!image.naturalWidth || !image.naturalHeight) {
+        resolve(null);
+        return;
+      }
+
+      resolve(image.naturalWidth / image.naturalHeight);
+    };
+    image.onerror = () => resolve(null);
+    image.src = url;
+  });
+}
+
+function collectMatchingImageUrls(
+  data: Extract<AnyExerciseDraft, { type: "matching-pairs" }>["data"],
+) {
+  const normalized = normalizeMatchingPairsData(data);
+  const imageUrls = new Set<string>();
+
+  [...normalized.pairs.flatMap((pair) => [pair.left, pair.right]), ...normalized.extras.map((item) => item.content)]
+    .map((item) => normalizeMatchingSide(item))
+    .forEach((content) => {
+      if (content.kind !== "image") {
+        return;
+      }
+
+      const url = content.url.trim();
+      if (url) {
+        imageUrls.add(url);
+      }
+    });
+
+  return Array.from(imageUrls);
+}
+
 function getMatchingAudioSize(input: MatchingAudioContent) {
   return clamp(
     Math.round(input.size),
@@ -325,6 +439,7 @@ function getMatchingLongestLineLength(text: string) {
 function getMatchingCardHeight(
   content: MatchingContent,
   width = MATCHING_CARD_WIDTH,
+  imageAspectRatios: MatchingImageAspectRatioMap = {},
 ) {
   const normalized = normalizeMatchingSide(content);
   const widthScale = clamp(width / MATCHING_CARD_WIDTH, 0.64, 1);
@@ -354,7 +469,7 @@ function getMatchingCardHeight(
   }
 
   if (normalized.kind === "spoken-text") {
-    return estimateMatchingTextHeight(normalized.text, innerWidth, 54) + 18;
+    return clamp(Math.round(Math.max(104, width * 0.64)), 104, 132);
   }
 
   if (normalized.kind === "text") {
@@ -365,13 +480,26 @@ function getMatchingCardHeight(
     return MATCHING_DEFAULT_CARD_HEIGHT;
   }
 
+  const imageFrame = getMatchingImageFrameSize(
+    normalized,
+    width,
+    imageAspectRatios,
+  );
+  const captionHeight = normalized.alt.trim()
+    ? estimateMatchingTextHeight(normalized.alt, innerWidth, 18) + 8
+    : 0;
+
   return (
-    28 +
-    Math.round(clamp(getMatchingImageHeight(normalized), 110, 220) * widthScale * 0.58) +
-    (normalized.alt.trim() ? 34 : 0)
+    14 +
+    imageFrame.frameHeight +
+    captionHeight
   );
 }
-function getMatchingCardBaseWidth(content: MatchingContent, columnWidth: number) {
+function getMatchingCardBaseWidth(
+  content: MatchingContent,
+  columnWidth: number,
+  imageAspectRatios: MatchingImageAspectRatioMap = {},
+) {
   const normalized = normalizeMatchingSide(content);
   const maxWidth = Math.max(MATCHING_CARD_MIN_WIDTH, Math.floor(columnWidth));
 
@@ -395,11 +523,20 @@ function getMatchingCardBaseWidth(content: MatchingContent, columnWidth: number)
   }
 
   if (normalized.kind === "image") {
+    const imageFrame = getMatchingImageFrameSize(
+      normalized,
+      maxWidth,
+      imageAspectRatios,
+    );
     return clamp(
-      Math.round(176 + clamp(getMatchingImageHeight(normalized), 110, 220) * 0.92),
-      182,
+      imageFrame.frameWidth + 24,
+      116,
       maxWidth,
     );
+  }
+
+  if (normalized.kind === "spoken-text") {
+    return clamp(Math.round(164 + Math.min(normalized.size, 260) * 0.08), 152, 220);
   }
 
   const normalizedText = normalized.text.trim();
@@ -412,9 +549,8 @@ function getMatchingCardBaseWidth(content: MatchingContent, columnWidth: number)
       Math.min(normalizedText.length, 180) * 0.16 +
       Math.min(lineCount, 5) * 4,
   );
-  const minWidth = normalized.kind === "spoken-text" ? 148 : 78;
-  const placeholderWidth =
-    normalized.kind === "spoken-text" ? 172 : 118;
+  const minWidth = 78;
+  const placeholderWidth = 118;
   return clamp(
     isPlaceholderText ? placeholderWidth : preferredWidth,
     minWidth,
@@ -437,7 +573,7 @@ function getMatchingCardMinimumHeight(content: MatchingContent) {
   }
 
   if (normalized.kind === "spoken-text") {
-    return normalized.text.trim() ? 92 : 110;
+    return 104;
   }
 
   if (normalized.kind === "text") {
@@ -451,23 +587,30 @@ function getMatchingCardSize(
   content: MatchingContent,
   columnWidth: number,
   scale: number,
+  imageAspectRatios: MatchingImageAspectRatioMap = {},
 ) {
   const normalized = normalizeMatchingSide(content);
   const maxWidth = Math.max(MATCHING_CARD_MIN_WIDTH, Math.floor(columnWidth));
-  const baseWidth = getMatchingCardBaseWidth(content, columnWidth);
+  const baseWidth = getMatchingCardBaseWidth(
+    content,
+    columnWidth,
+    imageAspectRatios,
+  );
   const minimumWidthFloor =
     normalized.kind === "text"
       ? 78
         : normalized.kind === "spoken-text"
-          ? 132
-          : normalized.kind === "audio"
-            ? 224
-            : 148;
+          ? 148
+            : normalized.kind === "audio"
+              ? 224
+            : normalized.kind === "image"
+              ? 116
+              : 148;
   const minimumHeightFloor =
     normalized.kind === "text"
       ? 38
       : normalized.kind === "spoken-text"
-        ? 84
+        ? 96
         : normalized.kind === "audio"
           ? 88
           : 72;
@@ -480,10 +623,12 @@ function getMatchingCardSize(
     Math.round(getMatchingCardMinimumHeight(content) * Math.max(scale, 0.74)),
   );
   const widthBias =
-    normalized.kind === "text" || normalized.kind === "spoken-text"
+    normalized.kind === "text"
       ? 0.34
-      : normalized.kind === "image"
-        ? 0.24
+      : normalized.kind === "spoken-text"
+        ? 0.16
+        : normalized.kind === "image"
+        ? 0.08
         : normalized.kind === "audio"
           ? 0.18
           : 0.14;
@@ -493,11 +638,14 @@ function getMatchingCardSize(
     minimumWidth,
     maxWidth,
   );
-  const height = Math.max(minimumHeight, getMatchingCardHeight(content, width));
+  const sizedHeight = Math.max(
+    minimumHeight,
+    getMatchingCardHeight(content, width, imageAspectRatios),
+  );
 
   return {
     width,
-    height,
+    height: sizedHeight,
   };
 }
 
@@ -505,6 +653,7 @@ function getMatchingStackScale(
   cards: ReadonlyArray<Pick<MatchingDragCard, "content">>,
   columnWidth: number,
   availableHeight: number,
+  imageAspectRatios: MatchingImageAspectRatioMap = {},
 ) {
   if (cards.length === 0) {
     return 1;
@@ -515,7 +664,13 @@ function getMatchingStackScale(
     const totalHeight =
       cards.reduce(
         (total, card) =>
-          total + getMatchingCardSize(card.content, columnWidth, scale).height,
+          total +
+          getMatchingCardSize(
+            card.content,
+            columnWidth,
+            scale,
+            imageAspectRatios,
+          ).height,
         0,
       ) +
       gap * Math.max(cards.length - 1, 0);
@@ -537,11 +692,17 @@ function positionMatchingColumn(
   columnX: number,
   metrics: MatchingBoardMetrics,
   scale: number,
+  imageAspectRatios: MatchingImageAspectRatioMap = {},
 ): MatchingDragCard[] {
   const gap = Math.max(10, Math.round(MATCHING_CARD_STEP * scale));
   const sizedCards = cards.map((card) => ({
     ...card,
-    ...getMatchingCardSize(card.content, metrics.columnWidth, scale),
+    ...getMatchingCardSize(
+      card.content,
+      metrics.columnWidth,
+      scale,
+      imageAspectRatios,
+    ),
   }));
   const totalHeight =
     sizedCards.reduce((sum, card) => sum + card.height, 0) +
@@ -710,6 +871,7 @@ function deterministicShuffle<T>(items: T[], seedSource: string) {
 function createMatchingCards(
   data: Extract<AnyExerciseDraft, { type: "matching-pairs" }>["data"],
   boardSize: Partial<MatchingBoardSize> = {},
+  imageAspectRatios: MatchingImageAspectRatioMap = {},
 ): MatchingDragCard[] {
   const normalized = normalizeMatchingPairsData(data);
   const { extras, pairs } = normalized;
@@ -764,20 +926,32 @@ function createMatchingCards(
   );
   const scale = Math.min(
     1,
-    getMatchingStackScale(leftCards, metrics.columnWidth, metrics.availableHeight),
-    getMatchingStackScale(rightCards, metrics.columnWidth, metrics.availableHeight),
+    getMatchingStackScale(
+      leftCards,
+      metrics.columnWidth,
+      metrics.availableHeight,
+      imageAspectRatios,
+    ),
+    getMatchingStackScale(
+      rightCards,
+      metrics.columnWidth,
+      metrics.availableHeight,
+      imageAspectRatios,
+    ),
   );
   const positionedLeftCards = positionMatchingColumn(
     leftCards,
     metrics.leftColumnX,
     metrics,
     scale,
+    imageAspectRatios,
   );
   const positionedRightCards = positionMatchingColumn(
     rightCards,
     metrics.rightColumnX,
     metrics,
     scale,
+    imageAspectRatios,
   );
 
   return [...positionedLeftCards, ...positionedRightCards];
@@ -1141,6 +1315,116 @@ function getMatchingAudioVolume(content: MatchingAudioContent) {
 
 function getMatchingConvertedAudioUrl(url: string) {
   return getConvertibleAudioProvider(url) ? buildConvertedAudioPath(url) : null;
+}
+
+const MATCHING_AUDIO_LOADING_HINT =
+  "Преобразование и загрузка звука могут занять около 20 секунд.";
+const MATCHING_SESSION_AUDIO_CACHE_MAX_ENTRIES = 8;
+const matchingSessionAudioUrlCache = new Map<string, string>();
+const matchingSessionAudioFetches = new Map<string, Promise<string>>();
+
+function isMatchingSessionCachedAudioUrl(url: string) {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  if (trimmed.startsWith("/api/media/audio")) {
+    return true;
+  }
+
+  const pathIndex = trimmed.indexOf("/api/media/audio");
+  if (pathIndex <= 0) {
+    return false;
+  }
+
+  return trimmed.slice(0, pathIndex).includes("://");
+}
+
+function getMatchingCachedSessionAudioUrl(url: string) {
+  const cachedUrl = matchingSessionAudioUrlCache.get(url);
+  if (!cachedUrl) {
+    return null;
+  }
+
+  matchingSessionAudioUrlCache.delete(url);
+  matchingSessionAudioUrlCache.set(url, cachedUrl);
+  return cachedUrl;
+}
+
+function setMatchingCachedSessionAudioUrl(url: string, objectUrl: string) {
+  const previousObjectUrl = matchingSessionAudioUrlCache.get(url);
+  if (previousObjectUrl && previousObjectUrl !== objectUrl) {
+    URL.revokeObjectURL(previousObjectUrl);
+  }
+
+  matchingSessionAudioUrlCache.delete(url);
+  matchingSessionAudioUrlCache.set(url, objectUrl);
+
+  while (matchingSessionAudioUrlCache.size > MATCHING_SESSION_AUDIO_CACHE_MAX_ENTRIES) {
+    const oldestEntry = matchingSessionAudioUrlCache.entries().next().value as
+      | [string, string]
+      | undefined;
+    if (!oldestEntry) {
+      break;
+    }
+
+    matchingSessionAudioUrlCache.delete(oldestEntry[0]);
+    URL.revokeObjectURL(oldestEntry[1]);
+  }
+}
+
+async function resolveMatchingSessionAudioUrl(url: string) {
+  const cachedUrl = getMatchingCachedSessionAudioUrl(url);
+  if (cachedUrl) {
+    return cachedUrl;
+  }
+
+  const pendingRequest = matchingSessionAudioFetches.get(url);
+  if (pendingRequest) {
+    return pendingRequest;
+  }
+
+  const fetchPromise = fetch(url, { cache: "force-cache" })
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error("Не удалось загрузить аудио.");
+      }
+
+      const audioBlob = await response.blob();
+      const objectUrl = URL.createObjectURL(audioBlob);
+      setMatchingCachedSessionAudioUrl(url, objectUrl);
+      return objectUrl;
+    })
+    .finally(() => {
+      matchingSessionAudioFetches.delete(url);
+    });
+
+  matchingSessionAudioFetches.set(url, fetchPromise);
+  return fetchPromise;
+}
+
+function getMatchingModalAudioSourceState(url: string) {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return {
+      playbackSrc: "",
+      isResolvingSrc: false,
+    };
+  }
+
+  if (!isMatchingSessionCachedAudioUrl(trimmed)) {
+    return {
+      playbackSrc: trimmed,
+      isResolvingSrc: false,
+    };
+  }
+
+  const cachedUrl = getMatchingCachedSessionAudioUrl(trimmed);
+  return {
+    playbackSrc: cachedUrl ?? "",
+    isResolvingSrc: !cachedUrl,
+  };
 }
 
 function buildMatchingVideoThumbnailPath(url: string) {
@@ -1634,6 +1918,494 @@ function MatchingNativeAudioPlayer({
   );
 }
 
+function MatchingModalAudioPlayerShell({
+  duration,
+  isLoading,
+  isReady,
+  mediaHost = null,
+  onSeek,
+  onToggle,
+  onVolumeChange,
+  playing,
+  position,
+  volume,
+}: Readonly<{
+  duration: number;
+  isLoading: boolean;
+  isReady: boolean;
+  mediaHost?: ReactNode;
+  onSeek: (nextValue: number) => void;
+  onToggle: () => void;
+  onVolumeChange: (nextValue: number) => void;
+  playing: boolean;
+  position: number;
+  volume: number;
+}>) {
+  const rangeMax = Math.max(duration, position, 1);
+
+  return (
+    <div className="matching-audio-player" data-card-interactive="true">
+      {mediaHost}
+      <div className="matching-audio-player__controls">
+        <button
+          className="player-button matching-audio-player__toggle"
+          disabled={!isReady || isLoading}
+          type="button"
+          onClick={onToggle}
+        >
+          {!isReady || isLoading
+            ? "Загрузка..."
+            : playing
+              ? "Пауза"
+              : "Слушать"}
+        </button>
+        <input
+          aria-label="Перемотка"
+          className="matching-audio-player__range"
+          disabled={!isReady || isLoading || duration <= 0}
+          max={rangeMax}
+          min={0}
+          step={0.1}
+          type="range"
+          value={Math.min(position, rangeMax)}
+          onChange={(event) =>
+            onSeek(Number.parseFloat(event.currentTarget.value) || 0)
+          }
+        />
+        <div className="matching-audio-player__footer">
+          <label className="matching-audio-player__volume" title="Громкость">
+            <span>Громкость</span>
+            <input
+              aria-label="Громкость"
+              disabled={!isReady || isLoading}
+              max={100}
+              min={0}
+              step={5}
+              type="range"
+              value={volume}
+              onChange={(event) =>
+                onVolumeChange(
+                  Math.max(
+                    0,
+                    Math.min(
+                      100,
+                      Number.parseInt(event.currentTarget.value, 10) || 0,
+                    ),
+                  ),
+                )
+              }
+            />
+          </label>
+          <span className="matching-audio-player__time">
+            {formatMatchingMediaTime(position)} / {formatMatchingMediaTime(duration)}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MatchingModalAudioPlayer({
+  src,
+  initialVolume,
+  autoPlay = false,
+}: Readonly<{
+  src: string;
+  initialVolume: number;
+  autoPlay?: boolean;
+}>) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const initialAudioSourceState = getMatchingModalAudioSourceState(src);
+  const [playbackSrc, setPlaybackSrc] = useState(
+    initialAudioSourceState.playbackSrc,
+  );
+  const [isResolvingSrc, setIsResolvingSrc] = useState(
+    initialAudioSourceState.isResolvingSrc,
+  );
+  const [isLoading, setIsLoading] = useState(Boolean(src.trim()));
+  const [isReady, setIsReady] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [position, setPosition] = useState(0);
+  const [volume, setVolume] = useState(initialVolume);
+
+  useEffect(() => {
+    setVolume(initialVolume);
+    setPosition(0);
+    setDuration(0);
+    setPlaying(false);
+    setIsReady(false);
+    setIsLoading(Boolean(src.trim()));
+  }, [initialVolume, src]);
+
+  useEffect(() => {
+    const nextSourceState = getMatchingModalAudioSourceState(src);
+    setPlaybackSrc(nextSourceState.playbackSrc);
+    setIsResolvingSrc(nextSourceState.isResolvingSrc);
+
+    if (!src.trim() || !isMatchingSessionCachedAudioUrl(src) || nextSourceState.playbackSrc) {
+      return;
+    }
+
+    let isCancelled = false;
+
+    void resolveMatchingSessionAudioUrl(src.trim())
+      .then((nextPlaybackSrc) => {
+        if (isCancelled) {
+          return;
+        }
+
+        setPlaybackSrc(nextPlaybackSrc);
+      })
+      .catch(() => {
+        if (isCancelled) {
+          return;
+        }
+
+        setPlaybackSrc(src.trim());
+      })
+      .finally(() => {
+        if (isCancelled) {
+          return;
+        }
+
+        setIsResolvingSrc(false);
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [src]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    audio.volume = volume / 100;
+  }, [volume]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    const syncState = () => {
+      setDuration(Number.isFinite(audio.duration) ? Math.max(audio.duration, 0) : 0);
+      setPosition(Math.max(audio.currentTime || 0, 0));
+      setPlaying(!audio.paused && !audio.ended);
+    };
+
+    const handleCanPlay = () => {
+      setIsReady(true);
+      setIsLoading(false);
+      syncState();
+    };
+
+    const handleLoadStart = () => {
+      setIsLoading(true);
+    };
+
+    const handleWaiting = () => {
+      setIsLoading(true);
+      syncState();
+    };
+
+    const handlePlaying = () => {
+      setIsReady(true);
+      setIsLoading(false);
+      syncState();
+    };
+
+    const handlePause = () => {
+      setIsLoading(false);
+      syncState();
+    };
+
+    const handleError = () => {
+      setIsReady(false);
+      setIsLoading(false);
+      syncState();
+    };
+
+    audio.addEventListener("loadstart", handleLoadStart);
+    audio.addEventListener("loadedmetadata", syncState);
+    audio.addEventListener("canplay", handleCanPlay);
+    audio.addEventListener("playing", handlePlaying);
+    audio.addEventListener("waiting", handleWaiting);
+    audio.addEventListener("stalled", handleWaiting);
+    audio.addEventListener("timeupdate", syncState);
+    audio.addEventListener("play", syncState);
+    audio.addEventListener("pause", handlePause);
+    audio.addEventListener("ended", handlePause);
+    audio.addEventListener("error", handleError);
+
+    return () => {
+      audio.removeEventListener("loadstart", handleLoadStart);
+      audio.removeEventListener("loadedmetadata", syncState);
+      audio.removeEventListener("canplay", handleCanPlay);
+      audio.removeEventListener("playing", handlePlaying);
+      audio.removeEventListener("waiting", handleWaiting);
+      audio.removeEventListener("stalled", handleWaiting);
+      audio.removeEventListener("timeupdate", syncState);
+      audio.removeEventListener("play", syncState);
+      audio.removeEventListener("pause", handlePause);
+      audio.removeEventListener("ended", handlePause);
+      audio.removeEventListener("error", handleError);
+    };
+  }, [playbackSrc, volume]);
+
+  useEffect(() => {
+    if (!autoPlay || !playbackSrc) {
+      return;
+    }
+
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    setIsLoading(true);
+    void audio.play().catch(() => {
+      setIsLoading(false);
+    });
+  }, [autoPlay, playbackSrc]);
+
+  const handleTogglePlayback = () => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    if (audio.paused || audio.ended) {
+      setIsLoading(true);
+      void audio.play().catch(() => {
+        setIsLoading(false);
+      });
+      return;
+    }
+
+    setIsLoading(false);
+    audio.pause();
+  };
+
+  const handleSeek = (nextValue: number) => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    audio.currentTime = nextValue;
+    setPosition(nextValue);
+  };
+
+  return (
+    <MatchingModalAudioPlayerShell
+      duration={duration}
+      isLoading={isLoading || isResolvingSrc}
+      isReady={isReady}
+      mediaHost={
+        <audio
+          className="matching-audio-player__media"
+          ref={audioRef}
+          preload="auto"
+          src={playbackSrc || undefined}
+        />
+      }
+      playing={playing}
+      position={position}
+      volume={volume}
+      onSeek={handleSeek}
+      onToggle={handleTogglePlayback}
+      onVolumeChange={setVolume}
+    />
+  );
+}
+
+function MatchingModalYouTubeAudioPlayer({
+  startSeconds,
+  videoId,
+  volume,
+}: Readonly<{
+  startSeconds: number;
+  videoId: string;
+  volume: number;
+}>) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const playerRef = useRef<MatchingYouTubePlayer | null>(null);
+  const intervalRef = useRef<number | null>(null);
+  const currentVolumeRef = useRef(volume);
+  const [isLoading, setIsLoading] = useState(true);
+  const [ready, setReady] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [position, setPosition] = useState(startSeconds);
+  const [currentVolume, setCurrentVolume] = useState(volume);
+
+  useEffect(() => {
+    setCurrentVolume(volume);
+  }, [volume]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setReady(false);
+    setIsLoading(true);
+    setPlaying(false);
+    setDuration(0);
+    setPosition(startSeconds);
+
+    const syncPlayerState = () => {
+      const player = playerRef.current;
+      if (!player) {
+        return;
+      }
+
+      const nextDuration =
+        typeof player.getDuration === "function"
+          ? Math.max(player.getDuration() || 0, 0)
+          : 0;
+      const nextPosition =
+        typeof player.getCurrentTime === "function"
+          ? Math.max(player.getCurrentTime() || 0, 0)
+          : 0;
+      const state =
+        typeof player.getPlayerState === "function" ? player.getPlayerState() : -1;
+
+      setDuration(nextDuration);
+      setPosition(nextPosition);
+      setPlaying(state === 1);
+      setIsLoading(state === 3 || state === -1 || state === 5);
+    };
+
+    void loadMatchingYouTubeApi()
+      .then((yt) => {
+        if (cancelled || !hostRef.current) {
+          return;
+        }
+
+        playerRef.current = new yt.Player(hostRef.current, {
+          height: "1",
+          width: "1",
+          videoId,
+          playerVars: {
+            autoplay: 1,
+            controls: 0,
+            playsinline: 1,
+            rel: 0,
+            start: startSeconds,
+          },
+          events: {
+            onReady: ({ target }) => {
+              if (cancelled) {
+                return;
+              }
+
+              if (startSeconds > 0) {
+                target.seekTo(startSeconds, true);
+              }
+              target.setVolume?.(currentVolumeRef.current);
+              setReady(true);
+              setIsLoading(true);
+              target.playVideo();
+              syncPlayerState();
+            },
+            onStateChange: () => {
+              if (cancelled) {
+                return;
+              }
+              syncPlayerState();
+            },
+          },
+        });
+
+        intervalRef.current = window.setInterval(syncPlayerState, 400);
+      })
+      .catch(() => {
+        setReady(false);
+        setIsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+      if (intervalRef.current !== null) {
+        window.clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      playerRef.current?.destroy();
+      playerRef.current = null;
+    };
+  }, [startSeconds, videoId]);
+
+  useEffect(() => {
+    currentVolumeRef.current = currentVolume;
+    playerRef.current?.setVolume?.(currentVolume);
+  }, [currentVolume]);
+
+  const handleTogglePlayback = () => {
+    const player = playerRef.current;
+    if (!player) {
+      return;
+    }
+
+    if (playing) {
+      setIsLoading(false);
+      player.pauseVideo();
+      setPlaying(false);
+      return;
+    }
+
+    setIsLoading(true);
+    player.playVideo();
+    setPlaying(true);
+  };
+
+  const handleSeek = (nextValue: number) => {
+    setIsLoading(true);
+    setPosition(nextValue);
+    playerRef.current?.seekTo(nextValue, true);
+  };
+
+  return (
+    <MatchingModalAudioPlayerShell
+      duration={duration}
+      isLoading={isLoading}
+      isReady={ready}
+      mediaHost={
+        <div className="matching-audio-player__host" aria-hidden="true">
+          <div ref={hostRef} />
+        </div>
+      }
+      playing={playing}
+      position={position}
+      volume={currentVolume}
+      onSeek={handleSeek}
+      onToggle={handleTogglePlayback}
+      onVolumeChange={setCurrentVolume}
+    />
+  );
+}
+
+function MatchingSpokenCardIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="matching-spoken-card__icon"
+      viewBox="0 0 24 24"
+    >
+      <path
+        d="M4 13.5V10a2 2 0 0 1 2-2h1.2A2.8 2.8 0 0 1 10 10.8v5.4A2.8 2.8 0 0 1 7.2 19H6a2 2 0 0 1-2-2v-3.5Zm10 0V10a2 2 0 0 1 2-2h1.2a2.8 2.8 0 0 1 2.8 2.8v5.4a2.8 2.8 0 0 1-2.8 2.8H16a2 2 0 0 1-2-2v-3.5ZM9 9.5a3 3 0 0 1 6 0"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
+
 function MatchingCardContent({
   cardHeight,
   cardWidth,
@@ -1650,17 +2422,11 @@ function MatchingCardContent({
 
   switch (normalized.kind) {
     case "spoken-text": {
-      const spokenTextSize = Math.max(cardHeight - 74, 0);
       return (
-        <div
-          className={contentClassName}
-          style={{
-            minHeight: `${spokenTextSize}px`,
-          }}
-        >
-          <p className="matching-card-copy">
-            {normalized.text || "\u0422\u0435\u043a\u0441\u0442 \u043d\u0435 \u0437\u0430\u0434\u0430\u043d"}
-          </p>
+        <div className={`${contentClassName} matching-card-content--spoken`}>
+          <span className="matching-spoken-card">
+            <MatchingSpokenCardIcon />
+          </span>
           <button
             className="ghost-button matching-card-action"
             data-card-interactive="true"
@@ -1678,11 +2444,8 @@ function MatchingCardContent({
       );
     }
     case "image": {
-      const captionSpace = normalized.alt ? 44 : 14;
-      const imageHeight = Math.max(
-        72,
-        Math.min(cardHeight - captionSpace, Math.round(cardWidth * 0.82)),
-      );
+      const captionSpace = normalized.alt ? 34 : 10;
+      const imageHeight = Math.max(72, cardHeight - captionSpace);
       return (
         <div className={contentClassName}>
           <div
@@ -1729,7 +2492,10 @@ function MatchingCardContent({
       const audioVolume = getMatchingAudioVolume(normalized);
       const audioSourceLabel = getMatchingPlayableSourceLabel(normalized);
       const audioTitle =
-        normalized.label || audioSourceLabel || "\u0410\u0443\u0434\u0438\u043e";
+        normalized.fileName?.trim() ||
+        normalized.label ||
+        audioSourceLabel ||
+        "\u0410\u0443\u0434\u0438\u043e";
       return (
         <div className={contentClassName}>
           <div className="matching-card-media-frame matching-card-media-frame--audio">
@@ -1771,6 +2537,7 @@ function MatchingCardContent({
     }
     case "video": {
       const embeddedVideoMeta = getMatchingEmbeddedVideoMeta(normalized.url);
+      const isEmbeddedFileVideo = isMatchingEmbeddedFileUrl(normalized.url);
       const videoTitle = normalized.label.trim();
       const startSeconds =
         getMatchingVideoStartSeconds(normalized) ||
@@ -1824,19 +2591,20 @@ function MatchingCardContent({
                     }
                     src={embeddedVideoMeta.thumbnailUrl}
                   />
-                ) : getMatchingMediaType("video", normalized.url) ? (
-                  <video
-                    aria-hidden="true"
-                    className="matching-card-thumbnail"
-                    muted
-                    playsInline
-                    preload="metadata"
-                    src={normalized.url}
-                    tabIndex={-1}
-                  />
                 ) : (
-                  <div className="matching-card-thumbnail matching-card-thumbnail--placeholder">
-                    {"\u0412\u0438\u0434\u0435\u043e"}
+                  <div
+                    className={`matching-card-thumbnail matching-card-thumbnail--placeholder ${
+                      isEmbeddedFileVideo
+                        ? "matching-card-thumbnail--file"
+                        : ""
+                    }`}
+                  >
+                    <span className="matching-card-thumbnail__icon">
+                      {"\u25b6"}
+                    </span>
+                    <span className="matching-card-thumbnail__title">
+                      {videoTitle || videoSourceLabel || "\u0412\u0438\u0434\u0435\u043e"}
+                    </span>
                   </div>
                 )}
               </div>
@@ -2135,6 +2903,8 @@ function MatchingMediaDialog({
       <div
         className={`matching-media-modal__dialog ${
           media.kind === "audio" ? "matching-media-modal__dialog--audio" : ""
+        } ${
+          media.kind === "image" ? "matching-media-modal__dialog--image" : ""
         }`}
         role="dialog"
         aria-modal="true"
@@ -2161,7 +2931,11 @@ function MatchingMediaDialog({
           </button>
         </div>
 
-        <div className="matching-media-modal__body">
+        <div
+          className={`matching-media-modal__body ${
+            media.kind === "image" ? "matching-media-modal__body--image" : ""
+          }`}
+        >
           {media.kind === "image" ? (
             <div className="matching-media-modal__image-wrap">
               {media.url ? (
@@ -2183,9 +2957,9 @@ function MatchingMediaDialog({
           ) : media.kind === "audio" && audioEmbeddedMeta?.videoId ? (
             <>
               <p className="editor-hint">
-                Преобразование и загрузка звука могут занять около 10 секунд.
+                {MATCHING_AUDIO_LOADING_HINT}
               </p>
-              <MatchingYouTubeAudioPlayer
+              <MatchingModalYouTubeAudioPlayer
                 startSeconds={startSeconds}
                 videoId={audioEmbeddedMeta.videoId}
                 volume={audioVolume}
@@ -2195,14 +2969,13 @@ function MatchingMediaDialog({
             <>
               {convertedAudioUrl ? (
                 <p className="editor-hint">
-                  Преобразование и загрузка звука могут занять около 10 секунд.
+                  {MATCHING_AUDIO_LOADING_HINT}
                 </p>
               ) : null}
-              <MatchingInlineAudioPlayer
+              <MatchingModalAudioPlayer
                 autoPlay
                 initialVolume={audioVolume}
                 src={convertedAudioUrl ?? media.url}
-                title={title}
               />
             </>
           ) : embeddedVideoMeta ? (
@@ -2273,6 +3046,8 @@ function MatchingPairsActivity({
   const [activeMedia, setActiveMedia] = useState<MatchingOpenableContent | null>(
     null,
   );
+  const [imageAspectRatios, setImageAspectRatios] =
+    useState<MatchingImageAspectRatioMap>({});
   const [boardScale, setBoardScale] = useState(1);
   const [boardResultVisible, setBoardResultVisible] = useState(false);
   const dragRef = useRef<{
@@ -2319,14 +3094,58 @@ function MatchingPairsActivity({
   }, []);
 
   useEffect(() => {
-    setCards(createMatchingCards(draft.data, boardSize));
+    setCards(createMatchingCards(draft.data, boardSize, imageAspectRatios));
     setSolvedPairs(new Set());
     setHasChecked(false);
     setBoardResultVisible(false);
     setDraggingGroupId(null);
     setActiveMedia(null);
     dragRef.current = null;
-  }, [boardSize, draft.data]);
+  }, [boardSize, draft.data, imageAspectRatios]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const urls = collectMatchingImageUrls(draft.data).filter(
+      (url) => !(url in imageAspectRatios),
+    );
+
+    if (urls.length === 0) {
+      return;
+    }
+
+    void Promise.all(
+      urls.map(async (url) => [url, await loadMatchingImageAspectRatio(url)] as const),
+    ).then((entries) => {
+      if (cancelled) {
+        return;
+      }
+
+      setImageAspectRatios((current) => {
+        const next = { ...current };
+        let hasChanges = false;
+
+        entries.forEach(([url, ratio]) => {
+          if (typeof ratio !== "number" || !Number.isFinite(ratio) || ratio <= 0) {
+            return;
+          }
+
+          const clampedRatio = clampMatchingImageAspectRatio(ratio);
+          if (next[url] === clampedRatio) {
+            return;
+          }
+
+          next[url] = clampedRatio;
+          hasChanges = true;
+        });
+
+        return hasChanges ? next : current;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [draft.data, imageAspectRatios]);
 
   useEffect(() => {
     if (!normalized.autoRemoveCorrectPairs) {
@@ -2945,28 +3764,341 @@ function MatchingPairsActivity({
   );
 }
 
+type ClassificationDeckCard = {
+  id: string;
+  groupIndex: number;
+  content: MatchingContent;
+  label: string;
+};
+
+type ClassificationPlacement = {
+  groupIndex: number;
+  anchorX: number;
+  anchorY: number;
+};
+
+type ClassificationCardMetrics = {
+  width: number;
+  height: number;
+};
+
+type ClassificationClusterLayout = {
+  columnCount: number;
+  rowCount: number;
+  spans: number[];
+  titleSize: string;
+};
+
+function getClassificationTextMetrics(
+  text: string,
+  {
+    minWidth,
+    maxWidth,
+    widthFactor,
+    lineWidth,
+    lineHeight,
+    baseHeight,
+    minHeight,
+    maxHeight,
+  }: {
+    minWidth: number;
+    maxWidth: number;
+    widthFactor: number;
+    lineWidth: number;
+    lineHeight: number;
+    baseHeight: number;
+    minHeight: number;
+    maxHeight: number;
+  },
+): ClassificationCardMetrics {
+  const rawText = text.trim();
+  const width = clamp(
+    Math.round(Math.max(minWidth, rawText.length * widthFactor + 54)),
+    minWidth,
+    maxWidth,
+  );
+  const estimatedLines = Math.max(
+    1,
+    Math.min(5, Math.ceil((rawText.length || 12) / Math.max(12, lineWidth))),
+  );
+
+  return {
+    width,
+    height: clamp(
+      baseHeight + estimatedLines * lineHeight,
+      minHeight,
+      maxHeight,
+    ),
+  };
+}
+
+function getClassificationCardMetrics(
+  content: MatchingContent,
+): ClassificationCardMetrics {
+  const normalized = normalizeMatchingSide(content);
+
+  switch (normalized.kind) {
+    case "spoken-text":
+      return getClassificationTextMetrics(normalized.text, {
+        minWidth: 152,
+        maxWidth: 224,
+        widthFactor: 4.8,
+        lineWidth: 18,
+        lineHeight: 22,
+        baseHeight: 56,
+        minHeight: 94,
+        maxHeight: 158,
+      });
+    case "image": {
+      const mediaHeight = clamp(Math.round(normalized.size * 0.54), 88, 146);
+      const width = clamp(Math.round(mediaHeight * 1.12) + 20, 132, 208);
+      const captionHeight = normalized.alt.trim() ? 34 : 0;
+
+      return {
+        width,
+        height: mediaHeight + captionHeight + 18,
+      };
+    }
+    case "audio":
+      return {
+        width: clamp(Math.round(normalized.size * 1.24) + 82, 176, 248),
+        height: clamp(Math.round(normalized.size * 0.34) + 54, 88, 122),
+      };
+    case "video": {
+      const frameWidth = clamp(Math.round(normalized.size * 0.8), 164, 230);
+      const frameHeight = Math.round(frameWidth * 0.5625);
+
+      return {
+        width: frameWidth + 18,
+        height: clamp(
+          frameHeight + (normalized.label.trim() ? 58 : 46),
+          138,
+          188,
+        ),
+      };
+    }
+    case "text":
+    default:
+      return getClassificationTextMetrics(normalized.text, {
+        minWidth: 138,
+        maxWidth: 220,
+        widthFactor: 5.2,
+        lineWidth: 20,
+        lineHeight: 20,
+        baseHeight: 34,
+        minHeight: 68,
+        maxHeight: 140,
+      });
+  }
+}
+
+function getClassificationDefaultAnchor(order: number) {
+  return CLASSIFICATION_DEFAULT_ANCHORS[
+    order % CLASSIFICATION_DEFAULT_ANCHORS.length
+  ];
+}
+
+function getClassificationDropAnchor(
+  event: ReactDragEvent<HTMLElement>,
+  metrics: ClassificationCardMetrics,
+) {
+  const rect = event.currentTarget.getBoundingClientRect();
+  const availableWidth = Math.max(rect.width - CLASSIFICATION_CARD_INSET * 2, 1);
+  const availableHeight = Math.max(
+    rect.height - CLASSIFICATION_CARD_INSET * 2,
+    1,
+  );
+  const rawX = (event.clientX - rect.left - CLASSIFICATION_CARD_INSET) / availableWidth;
+  const rawY = (event.clientY - rect.top - CLASSIFICATION_CARD_INSET) / availableHeight;
+  const horizontalPadding = metrics.width / Math.max(availableWidth * 2, 1);
+  const verticalPadding = metrics.height / Math.max(availableHeight * 2, 1);
+
+  return {
+    anchorX: clamp(rawX, horizontalPadding, 1 - horizontalPadding),
+    anchorY: clamp(rawY, verticalPadding, 1 - verticalPadding),
+  };
+}
+
+function getClassificationPlacementStyle(
+  placement: ClassificationPlacement,
+  metrics: ClassificationCardMetrics,
+  zIndex: number,
+): CSSProperties {
+  const anchorXPercent = `${(placement.anchorX * 100).toFixed(3)}%`;
+  const anchorYPercent = `${(placement.anchorY * 100).toFixed(3)}%`;
+
+  return {
+    width: `${metrics.width}px`,
+    minHeight: `${metrics.height}px`,
+    left: `clamp(${CLASSIFICATION_CARD_INSET}px, calc(${anchorXPercent} - ${Math.round(metrics.width / 2)}px), calc(100% - ${metrics.width}px - ${CLASSIFICATION_CARD_INSET}px))`,
+    top: `clamp(${CLASSIFICATION_CARD_INSET}px, calc(${anchorYPercent} - ${Math.round(metrics.height / 2)}px), calc(100% - ${metrics.height}px - ${CLASSIFICATION_CARD_INSET}px))`,
+    zIndex,
+  };
+}
+
+function getClassificationRowPattern(groupCount: number) {
+  if (groupCount <= 6) {
+    return [groupCount];
+  }
+
+  switch (groupCount) {
+    case 7:
+      return [4, 3];
+    case 8:
+      return [4, 4];
+    case 9:
+      return [5, 4];
+    case 10:
+      return [5, 5];
+    case 11:
+      return [6, 5];
+    case 12:
+    default:
+      return [6, 6];
+  }
+}
+
+function getClassificationSpanDistribution(
+  columnCount: number,
+  itemCount: number,
+) {
+  if (itemCount <= 0) {
+    return [];
+  }
+
+  const baseSpan = Math.floor(columnCount / itemCount);
+  const remainder = columnCount - baseSpan * itemCount;
+  const spans = Array.from({ length: itemCount }, () => baseSpan);
+  const center = (itemCount - 1) / 2;
+  const priority = Array.from({ length: itemCount }, (_, index) => index).sort(
+    (left, right) => {
+      const leftDistance = Math.abs(left - center);
+      const rightDistance = Math.abs(right - center);
+      return leftDistance - rightDistance || left - right;
+    },
+  );
+
+  for (let index = 0; index < remainder; index += 1) {
+    spans[priority[index] ?? 0] += 1;
+  }
+
+  return spans;
+}
+
+function getClassificationClusterLayout(groupCount: number): ClassificationClusterLayout {
+  const rowPattern = getClassificationRowPattern(groupCount);
+
+  if (groupCount <= 6) {
+    return {
+      columnCount: Math.max(groupCount, 1),
+      rowCount: 1,
+      spans: Array.from({ length: groupCount }, () => 1),
+      titleSize:
+        groupCount >= 5
+          ? "clamp(1.05rem, 1.9vw, 1.55rem)"
+          : "clamp(1.18rem, 2.2vw, 1.85rem)",
+    };
+  }
+
+  return {
+    columnCount: 12,
+    rowCount: rowPattern.length,
+    spans: rowPattern.flatMap((rowCount) =>
+      getClassificationSpanDistribution(12, rowCount),
+    ),
+    titleSize:
+      groupCount >= 11
+        ? "clamp(0.92rem, 1.45vw, 1.32rem)"
+        : groupCount >= 9
+          ? "clamp(0.96rem, 1.55vw, 1.42rem)"
+          : "clamp(1rem, 1.7vw, 1.52rem)",
+  };
+}
+
+function buildClassificationDeck(
+  groups: ReturnType<typeof normalizeGroupAssignmentData>["groups"],
+  order: "random" | "rounds",
+) {
+  const seeds: Array<{
+    groupIndex: number;
+    itemIndex: number;
+    content: MatchingContent;
+  }> = [];
+
+  if (order === "rounds") {
+    const maxItems = groups.reduce(
+      (accumulator, group) => Math.max(accumulator, group.items.length),
+      0,
+    );
+
+    for (let itemIndex = 0; itemIndex < maxItems; itemIndex += 1) {
+      groups.forEach((group, groupIndex) => {
+        const item = group.items[itemIndex];
+        if (item) {
+          seeds.push({
+            groupIndex,
+            itemIndex,
+            content: normalizeMatchingSide(item),
+          });
+        }
+      });
+    }
+  } else {
+    groups.forEach((group, groupIndex) => {
+      group.items.forEach((item, itemIndex) => {
+        seeds.push({
+          groupIndex,
+          itemIndex,
+          content: normalizeMatchingSide(item),
+        });
+      });
+    });
+  }
+
+  const orderedSeeds = order === "random" ? shuffleArray(seeds) : seeds;
+
+  return orderedSeeds.map((seed, index) => ({
+    id: `classification-${seed.groupIndex}-${seed.itemIndex}-${index}`,
+    groupIndex: seed.groupIndex,
+    content: seed.content,
+    label: getMatchingContentAriaLabel(seed.content),
+  })) satisfies ClassificationDeckCard[];
+}
+
+function isCardInteractiveTarget(target: EventTarget | null) {
+  return (
+    target instanceof HTMLElement &&
+    Boolean(target.closest("[data-card-interactive='true']"))
+  );
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function GroupAssignmentActivity({
   draft,
   revisionKey,
   onReport,
 }: ActivityProps<"group-assignment">) {
+  const legacyData = draft.data as unknown as {
+    groups: Array<{ name: string }>;
+    items: Array<{ label: string; groupIndex: number }>;
+  };
   const [answers, setAnswers] = useState<number[]>([]);
 
   useEffect(() => {
-    setAnswers(Array.from({ length: draft.data.items.length }, () => -1));
-  }, [revisionKey, draft.data.items.length]);
+    setAnswers(Array.from({ length: legacyData.items.length }, () => -1));
+  }, [legacyData.items.length, revisionKey]);
 
   const handleCheck = () => {
-    const correct = draft.data.items.filter(
+    const correct = legacyData.items.filter(
       (item, index) => answers[index] === item.groupIndex,
     ).length;
-    const score = percentage(correct, draft.data.items.length);
-    onReport(score, correct === draft.data.items.length);
+    const score = percentage(correct, legacyData.items.length);
+    onReport(score, correct === legacyData.items.length);
   };
 
   return (
     <div className="activity-grid">
-      {draft.data.items.map((item, index) => (
+      {legacyData.items.map((item, index) => (
         <div className="prompt-card" key={`${item.label}-${index}`}>
           <strong>{item.label}</strong>
           <select
@@ -2979,7 +4111,7 @@ function GroupAssignmentActivity({
             }}
           >
             <option value={-1}>Выберите группу</option>
-            {draft.data.groups.map((group, groupIndex) => (
+            {legacyData.groups.map((group, groupIndex) => (
               <option key={`${group.name}-${groupIndex}`} value={groupIndex}>
                 {group.name}
               </option>
@@ -2990,6 +4122,485 @@ function GroupAssignmentActivity({
       <ActionRow>
         <PlayerButton onClick={handleCheck}>Проверить</PlayerButton>
       </ActionRow>
+    </div>
+  );
+}
+
+function GroupAssignmentActivityBoard({
+  draft,
+  revisionKey,
+  onReport,
+  boardOnly = false,
+}: ActivityProps<"group-assignment">) {
+  const normalized = useMemo(
+    () => normalizeGroupAssignmentData(draft.data),
+    [draft.data],
+  );
+  const clusterLayout = useMemo(
+    () => getClassificationClusterLayout(normalized.groups.length),
+    [normalized.groups.length],
+  );
+  const deck = useMemo(
+    () => buildClassificationDeck(normalized.groups, normalized.cardOrder ?? "random"),
+    [normalized.cardOrder, normalized.groups],
+  );
+  const cardMetricsById = useMemo(
+    () =>
+      Object.fromEntries(
+        deck.map((card) => [card.id, getClassificationCardMetrics(card.content)]),
+      ) as Record<string, ClassificationCardMetrics>,
+    [deck],
+  );
+  const [placements, setPlacements] = useState<
+    Record<string, ClassificationPlacement>
+  >({});
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  const [draggedCardId, setDraggedCardId] = useState<string | null>(null);
+  const [hint, setHint] = useState<string | null>(null);
+  const [checkResult, setCheckResult] = useState<{
+    correctIds: string[];
+    wrongIds: string[];
+    missingIds: string[];
+    detail: string;
+    solved: boolean;
+    score: number;
+  } | null>(null);
+  const [activeMedia, setActiveMedia] = useState<MatchingOpenableContent | null>(
+    null,
+  );
+
+  useEffect(() => {
+    setPlacements({});
+    setSelectedCardId(null);
+    setDraggedCardId(null);
+    setHint(null);
+    setCheckResult(null);
+    setActiveMedia(null);
+  }, [revisionKey]);
+
+  const placedCount = Object.keys(placements).length;
+  const remainingCards = deck.filter((card) => placements[card.id] === undefined);
+  const trayCards =
+    normalized.cardDisplayMode === "all-at-once"
+      ? remainingCards
+      : remainingCards.slice(0, 1);
+  const placedCardsByGroup = useMemo(
+    () =>
+      normalized.groups.map((_, groupIndex) =>
+        deck.filter((card) => placements[card.id]?.groupIndex === groupIndex),
+      ),
+    [deck, normalized.groups, placements],
+  );
+  const activeCardId =
+    selectedCardId ??
+    (normalized.cardDisplayMode === "sequential" ? trayCards[0]?.id ?? null : null);
+  const progressText =
+    normalized.cardDisplayMode === "sequential"
+      ? `Карточка ${Math.min(placedCount + 1, deck.length)} из ${deck.length}`
+      : `Разложено карточек: ${placedCount} из ${deck.length}`;
+
+  const placeCard = (
+    groupIndex: number,
+    sourceCardId = activeCardId,
+    anchor?: Pick<ClassificationPlacement, "anchorX" | "anchorY">,
+  ) => {
+    if (!sourceCardId) {
+      setHint("Сначала выберите карточку или перетащите ее в нужную группу.");
+      return;
+    }
+
+    setPlacements((current) => {
+      const groupCount = Object.entries(current).filter(
+        ([cardId, placement]) =>
+          cardId !== sourceCardId && placement.groupIndex === groupIndex,
+      ).length;
+      const defaultAnchor = getClassificationDefaultAnchor(groupCount);
+
+      return {
+        ...current,
+        [sourceCardId]: {
+          groupIndex,
+          anchorX: anchor?.anchorX ?? defaultAnchor.x,
+          anchorY: anchor?.anchorY ?? defaultAnchor.y,
+        },
+      };
+    });
+    setSelectedCardId(null);
+    setDraggedCardId(null);
+    setCheckResult(null);
+    setHint(null);
+  };
+
+  const resetBoard = () => {
+    setPlacements({});
+    setSelectedCardId(null);
+    setDraggedCardId(null);
+    setHint(null);
+    setCheckResult(null);
+  };
+
+  const selectCard = (cardId: string) => {
+    setSelectedCardId((current) => (current === cardId ? null : cardId));
+    setCheckResult(null);
+    setHint(null);
+  };
+
+  const handleCardDragStart = (
+    event: ReactDragEvent<HTMLElement>,
+    cardId: string,
+  ) => {
+    event.stopPropagation();
+    event.dataTransfer.setData("text/plain", cardId);
+    event.dataTransfer.effectAllowed = "move";
+    setSelectedCardId(cardId);
+    setCheckResult(null);
+    window.requestAnimationFrame(() => {
+      setDraggedCardId(cardId);
+    });
+  };
+
+  const handleCheck = () => {
+    const correctIds: string[] = [];
+    const wrongIds: string[] = [];
+    const missingIds: string[] = [];
+
+    deck.forEach((card) => {
+      const targetGroup = placements[card.id]?.groupIndex;
+
+      if (targetGroup === undefined) {
+        missingIds.push(card.id);
+        return;
+      }
+
+      if (targetGroup === card.groupIndex) {
+        correctIds.push(card.id);
+        return;
+      }
+
+      wrongIds.push(card.id);
+    });
+
+    const score = percentage(correctIds.length, deck.length);
+    const solved = correctIds.length === deck.length && missingIds.length === 0;
+    const parts = [`Верно: ${correctIds.length} из ${deck.length}.`];
+
+    if (wrongIds.length > 0) {
+      parts.push(`В неверных группах: ${wrongIds.length}.`);
+    }
+
+    if (missingIds.length > 0) {
+      parts.push(`Не распределено: ${missingIds.length}.`);
+    }
+
+    const detail = solved ? draft.successMessage : parts.join(" ");
+
+    setCheckResult({
+      correctIds,
+      wrongIds,
+      missingIds,
+      detail,
+      solved,
+      score,
+    });
+    setHint(detail);
+    onReport(score, solved, detail);
+  };
+
+  const wrongGroupIndices = new Set(
+    (checkResult?.wrongIds ?? [])
+      .map((cardId) => placements[cardId]?.groupIndex)
+      .filter((value): value is number => typeof value === "number"),
+  );
+
+  return (
+    <div
+      className={`stack classification-activity ${
+        boardOnly ? "classification-activity--board-only" : ""
+      }`}
+    >
+      <div className="classification-activity__meta">
+        <span>{progressText}</span>
+        {hint ? <span className="classification-activity__hint">{hint}</span> : null}
+      </div>
+
+      <div
+        className={`classification-board ${
+          normalized.cardDisplayMode === "sequential"
+            ? "classification-board--sequential"
+            : "classification-board--all-at-once"
+        }`}
+      >
+        <div
+          className="classification-clusters"
+          style={
+            {
+              "--classification-title-size": clusterLayout.titleSize,
+              "--classification-grid-columns": clusterLayout.columnCount,
+              "--classification-grid-rows": clusterLayout.rowCount,
+            } as CSSProperties
+          }
+        >
+          {normalized.groups.map((group, groupIndex) => {
+            const background = normalizeClassificationBackground(group.background);
+            const accentColor =
+              CLASSIFICATION_GROUP_COLORS[groupIndex % CLASSIFICATION_GROUP_COLORS.length];
+            const placedCards = placedCardsByGroup[groupIndex] ?? [];
+
+            return (
+              <article
+                className={`classification-cluster ${
+                  wrongGroupIndices.has(groupIndex)
+                    ? "classification-cluster--wrong"
+                    : ""
+                }`}
+                key={`classification-group-${groupIndex}`}
+                style={
+                  {
+                    "--classification-accent": accentColor,
+                    gridColumn: `span ${clusterLayout.spans[groupIndex] ?? 1}`,
+                  } as CSSProperties
+                }
+                onClick={() => placeCard(groupIndex)}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  const sourceCardId =
+                    draggedCardId || event.dataTransfer.getData("text/plain");
+                  if (!sourceCardId) {
+                    return;
+                  }
+
+                  const metrics = cardMetricsById[sourceCardId];
+                  placeCard(
+                    groupIndex,
+                    sourceCardId,
+                    metrics
+                      ? getClassificationDropAnchor(event, metrics)
+                      : undefined,
+                  );
+                  setDraggedCardId(null);
+                }}
+              >
+                <div
+                  className={`classification-cluster__background ${
+                    background.kind === "image"
+                      ? "classification-cluster__background--image"
+                      : "classification-cluster__background--text"
+                  } ${
+                    normalized.useGroupColors
+                      ? "classification-cluster__background--tinted"
+                      : ""
+                  }`}
+                >
+                  {background.kind === "image" && background.url ? (
+                    <img
+                      alt={background.alt || getClassificationGroupTitle(group, groupIndex)}
+                      src={background.url}
+                    />
+                  ) : null}
+                  <div className="classification-cluster__title">
+                    {background.kind === "text"
+                      ? background.text || getClassificationGroupTitle(group, groupIndex)
+                      : getClassificationGroupTitle(group, groupIndex)}
+                  </div>
+                </div>
+
+                <div className="classification-cluster__body">
+                  {placedCards.map((card, cardIndex) => {
+                    const placement = placements[card.id];
+                    const metrics = cardMetricsById[card.id];
+                    if (!placement || !metrics) {
+                      return null;
+                    }
+
+                    return (
+                      <div
+                        className={`classification-placed-card ${
+                          checkResult?.correctIds.includes(card.id)
+                            ? "classification-placed-card--correct"
+                            : ""
+                        } ${
+                          checkResult?.wrongIds.includes(card.id)
+                            ? "classification-placed-card--wrong"
+                            : ""
+                        } ${
+                          selectedCardId === card.id
+                            ? "classification-placed-card--selected"
+                            : ""
+                        } ${
+                          draggedCardId === card.id
+                            ? "classification-placed-card--dragging"
+                            : ""
+                        }`}
+                        draggable
+                        key={card.id}
+                        style={getClassificationPlacementStyle(
+                          placement,
+                          metrics,
+                          draggedCardId === card.id
+                            ? placedCards.length + 3
+                            : selectedCardId === card.id
+                              ? placedCards.length + 2
+                              : cardIndex + 1,
+                        )}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (isCardInteractiveTarget(event.target)) {
+                            return;
+                          }
+
+                          selectCard(card.id);
+                          setHint("Карточку можно перетащить или перенести в другую группу.");
+                        }}
+                        onDragEnd={() => setDraggedCardId(null)}
+                        onDragStart={(event) => handleCardDragStart(event, card.id)}
+                      >
+                        <div className="classification-placed-card__content">
+                          <MatchingCardContent
+                            cardHeight={Math.max(metrics.height - 16, 56)}
+                            cardWidth={Math.max(metrics.width - 16, 96)}
+                            content={card.content}
+                            onOpenMedia={setActiveMedia}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+
+        {normalized.cardDisplayMode === "sequential" ? (
+          trayCards[0] ? (
+            <div className="classification-floating-card">
+              {(() => {
+                const trayCard = trayCards[0];
+                const metrics = cardMetricsById[trayCard.id];
+                if (!metrics) {
+                  return null;
+                }
+
+                return (
+                  <div
+                    aria-label={trayCard.label}
+                    className={`classification-card ${
+                      activeCardId === trayCard.id
+                        ? "classification-card--selected"
+                        : ""
+                    } ${
+                      checkResult?.missingIds.includes(trayCard.id)
+                        ? "classification-card--missing"
+                        : ""
+                    } ${
+                      draggedCardId === trayCard.id
+                        ? "classification-card--dragging"
+                        : ""
+                    }`}
+                    draggable
+                    role="button"
+                    style={{
+                      width: `${metrics.width}px`,
+                      minHeight: `${metrics.height}px`,
+                    }}
+                    tabIndex={0}
+                    onClick={(event) => {
+                      if (isCardInteractiveTarget(event.target)) {
+                        return;
+                      }
+
+                      selectCard(trayCard.id);
+                    }}
+                    onDragEnd={() => setDraggedCardId(null)}
+                    onDragStart={(event) => handleCardDragStart(event, trayCard.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        selectCard(trayCard.id);
+                      }
+                    }}
+                  >
+                    <MatchingCardContent
+                      cardHeight={Math.max(metrics.height - 16, 56)}
+                      cardWidth={Math.max(metrics.width - 16, 96)}
+                      content={trayCard.content}
+                      onOpenMedia={setActiveMedia}
+                    />
+                  </div>
+                );
+              })()}
+            </div>
+          ) : null
+        ) : trayCards.length > 0 ? (
+          <div className="classification-pool classification-pool--tray">
+            {trayCards.map((card) => {
+              const metrics = cardMetricsById[card.id];
+              if (!metrics) {
+                return null;
+              }
+
+              return (
+                <div
+                  aria-label={card.label}
+                  className={`classification-card ${
+                    selectedCardId === card.id ? "classification-card--selected" : ""
+                  } ${
+                    checkResult?.missingIds.includes(card.id)
+                      ? "classification-card--missing"
+                      : ""
+                  } ${draggedCardId === card.id ? "classification-card--dragging" : ""}`}
+                  draggable
+                  key={card.id}
+                  role="button"
+                  style={{
+                    width: `${metrics.width}px`,
+                    minHeight: `${metrics.height}px`,
+                  }}
+                  tabIndex={0}
+                  onClick={(event) => {
+                    if (isCardInteractiveTarget(event.target)) {
+                      return;
+                    }
+
+                    selectCard(card.id);
+                  }}
+                  onDragEnd={() => setDraggedCardId(null)}
+                  onDragStart={(event) => handleCardDragStart(event, card.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      selectCard(card.id);
+                    }
+                  }}
+                >
+                  <MatchingCardContent
+                    cardHeight={Math.max(metrics.height - 16, 56)}
+                    cardWidth={Math.max(metrics.width - 16, 96)}
+                    content={card.content}
+                    onOpenMedia={setActiveMedia}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+
+      </div>
+
+      {!boardOnly ? (
+        <ActionRow>
+          <PlayerButton onClick={handleCheck}>Проверить</PlayerButton>
+          <button className="ghost-button" type="button" onClick={resetBoard}>
+            Сбросить
+          </button>
+        </ActionRow>
+      ) : null}
+
+      <MatchingMediaDialog media={activeMedia} onClose={() => setActiveMedia(null)} />
     </div>
   );
 }
@@ -4224,7 +5835,8 @@ function renderActivity(
       );
     case "group-assignment":
       return (
-        <GroupAssignmentActivity
+        <GroupAssignmentActivityBoard
+          boardOnly={boardOnly}
           draft={draft}
           onReport={onReport}
           revisionKey={revisionKey}

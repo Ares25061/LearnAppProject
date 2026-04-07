@@ -14,7 +14,8 @@ import { getConvertibleAudioProvider } from "@/lib/media-audio";
 const execFileAsync = promisify(execFile);
 const AUDIO_PROBE_TIMEOUT_MS = 45_000;
 const THUMBNAIL_PROBE_TIMEOUT_MS = 20_000;
-const THUMBNAIL_CACHE_TTL_MS = 1000 * 60 * 60 * 6;
+const THUMBNAIL_SUCCESS_CACHE_TTL_MS = 1000 * 60 * 60 * 6;
+const THUMBNAIL_FAILURE_CACHE_TTL_MS = 1000 * 30;
 const require = createRequire(import.meta.url);
 const ffmpegStatic = require("ffmpeg-static") as string | null;
 const RUTUBE_USER_AGENT =
@@ -36,6 +37,17 @@ type ResolvedAudioSource = {
   url: string;
 };
 
+type YtDlpResolvedAudioMetadata = {
+  cookies?: string;
+  http_headers?: Record<string, string>;
+  requested_downloads?: Array<{
+    cookies?: string;
+    http_headers?: Record<string, string>;
+    url?: string;
+  }>;
+  url?: string;
+};
+
 type YtDlpThumbnailInfo = {
   height?: number;
   url?: string;
@@ -54,6 +66,13 @@ type RutubePlayOptions = {
     m3u8?: string;
   };
 };
+const THUMBNAIL_HTML_HEADERS = {
+  Accept:
+    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  "Accept-Language": "ru,en;q=0.8",
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+} as const;
 
 function isExecutableFile(filePath: string | null | undefined) {
   if (!filePath) {
@@ -141,11 +160,12 @@ function stopProcess(process: ChildProcess | null) {
   }
 }
 
+
 export async function verifyConvertibleAudioSource(sourceUrl: string) {
   const provider = getConvertibleAudioProvider(sourceUrl);
 
   if (!provider) {
-    throw new Error("Ссылка не относится к поддерживаемым сервисам VK Видео или Rutube.");
+    throw new Error("РЎСЃС‹Р»РєР° РЅРµ РѕС‚РЅРѕСЃРёС‚СЃСЏ Рє РїРѕРґРґРµСЂР¶РёРІР°РµРјС‹Рј СЃРµСЂРІРёСЃР°Рј VK Р’РёРґРµРѕ РёР»Рё Rutube.");
   }
 
   if (provider === "rutube") {
@@ -173,22 +193,13 @@ export async function verifyConvertibleAudioSource(sourceUrl: string) {
       },
     );
 
-    const parsed = JSON.parse(stdout) as {
-      cookies?: string;
-      http_headers?: Record<string, string>;
-      requested_downloads?: Array<{
-        cookies?: string;
-        http_headers?: Record<string, string>;
-        url?: string;
-      }>;
-      url?: string;
-    };
+    const parsed = JSON.parse(stdout) as YtDlpResolvedAudioMetadata;
 
     const selected = parsed.requested_downloads?.[0] ?? parsed;
     const resolvedUrl = selected.url?.trim() || parsed.url?.trim() || "";
 
     if (!resolvedUrl) {
-      throw new Error("yt-dlp не вернул прямую ссылку на аудиопоток.");
+      throw new Error("yt-dlp РЅРµ РІРµСЂРЅСѓР» РїСЂСЏРјСѓСЋ СЃСЃС‹Р»РєСѓ РЅР° Р°СѓРґРёРѕРїРѕС‚РѕРє.");
     }
 
     return {
@@ -199,7 +210,7 @@ export async function verifyConvertibleAudioSource(sourceUrl: string) {
   } catch (error) {
     if (error instanceof Error) {
       throw new Error(
-        `Не удалось подготовить аудиопоток через yt-dlp (${ytDlpBin}): ${error.message}`,
+        `РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕРґРіРѕС‚РѕРІРёС‚СЊ Р°СѓРґРёРѕРїРѕС‚РѕРє С‡РµСЂРµР· yt-dlp (${ytDlpBin}): ${error.message}`,
       );
     }
 
@@ -220,6 +231,72 @@ function parseThumbnailSourceUrl(sourceUrl: string) {
   } catch {
     return null;
   }
+}
+
+function isVkThumbnailHost(hostname: string) {
+  const host = hostname.replace(/^www\./, "").toLowerCase();
+  return host === "vk.com" || host === "m.vk.com" || host === "vkvideo.ru" || host === "m.vkvideo.ru";
+}
+
+function extractVkVideoKey(parsed: URL) {
+  let ownerId = parsed.searchParams.get("oid") ?? "";
+  let videoId = parsed.searchParams.get("id") ?? "";
+
+  if (!ownerId || !videoId) {
+    const pathMatch = parsed.pathname.match(/\/video(-?\d+)_(\d+)/);
+    if (pathMatch) {
+      ownerId = pathMatch[1] ?? ownerId;
+      videoId = pathMatch[2] ?? videoId;
+    }
+  }
+
+  if (!ownerId || !videoId) {
+    const zMatch = (parsed.searchParams.get("z") ?? "").match(/video(-?\d+)_(\d+)/);
+    if (zMatch) {
+      ownerId = zMatch[1] ?? ownerId;
+      videoId = zMatch[2] ?? videoId;
+    }
+  }
+
+  if (!ownerId || !videoId) {
+    return null;
+  }
+
+  return { ownerId, videoId };
+}
+
+function buildVkThumbnailProbeCandidates(sourceUrl: string) {
+  const trimmed = sourceUrl.trim();
+  const parsed = parseThumbnailSourceUrl(trimmed);
+
+  if (!parsed || !isVkThumbnailHost(parsed.hostname)) {
+    return trimmed ? [trimmed] : [];
+  }
+
+  const candidates = new Set<string>([parsed.href, trimmed]);
+  const videoKey = extractVkVideoKey(parsed);
+
+  if (!videoKey) {
+    return Array.from(candidates);
+  }
+
+  const canonicalSuffix = `video${videoKey.ownerId}_${videoKey.videoId}`;
+  candidates.add(`https://vkvideo.ru/${canonicalSuffix}`);
+  candidates.add(`https://vk.com/${canonicalSuffix}`);
+
+  const embedUrl = new URL("https://vkvideo.ru/video_ext.php");
+  embedUrl.searchParams.set("oid", videoKey.ownerId);
+  embedUrl.searchParams.set("id", videoKey.videoId);
+
+  for (const key of ["hash", "hd", "list", "referrer", "player"]) {
+    const value = parsed.searchParams.get(key);
+    if (value) {
+      embedUrl.searchParams.set(key, value);
+    }
+  }
+
+  candidates.add(embedUrl.toString());
+  return Array.from(candidates);
 }
 
 function getRutubeVideoId(sourceUrl: string) {
@@ -253,7 +330,7 @@ function getRutubeVideoId(sourceUrl: string) {
 async function resolveRutubeAudioSource(sourceUrl: string) {
   const videoId = getRutubeVideoId(sourceUrl);
   if (!videoId) {
-    throw new Error("Не удалось определить идентификатор видео Rutube.");
+    throw new Error("РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂ РІРёРґРµРѕ Rutube.");
   }
 
   const response = await fetch(
@@ -265,7 +342,7 @@ async function resolveRutubeAudioSource(sourceUrl: string) {
   );
 
   if (!response.ok) {
-    throw new Error(`Rutube вернул статус ${response.status} при запросе потока.`);
+    throw new Error(`Rutube РІРµСЂРЅСѓР» СЃС‚Р°С‚СѓСЃ ${response.status} РїСЂРё Р·Р°РїСЂРѕСЃРµ РїРѕС‚РѕРєР°.`);
   }
 
   const parsed = (await response.json()) as RutubePlayOptions;
@@ -275,7 +352,7 @@ async function resolveRutubeAudioSource(sourceUrl: string) {
     "";
 
   if (!resolvedUrl) {
-    throw new Error("Rutube не вернул ссылку на HLS-поток.");
+    throw new Error("Rutube РЅРµ РІРµСЂРЅСѓР» СЃСЃС‹Р»РєСѓ РЅР° HLS-РїРѕС‚РѕРє.");
   }
 
   return {
@@ -330,26 +407,121 @@ async function resolveRutubeThumbnailUrl(sourceUrl: string) {
   return payload.thumbnail_url?.trim() || payload.poster_url?.trim() || null;
 }
 
+function normalizeThumbnailCandidateUrl(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const normalized = trimmed
+    .replace(/\\u002F/gi, "/")
+    .replace(/\\u0026/gi, "&")
+    .replace(/\\u003A/gi, ":")
+    .replace(/\\u003F/gi, "?")
+    .replace(/\\u003D/gi, "=")
+    .replace(/\\u0025/gi, "%")
+    .replace(/\\\//g, "/")
+    .replace(/&amp;/gi, "&")
+    .replace(/&#x2F;/gi, "/")
+    .replace(/&#47;/gi, "/");
+  const withProtocol = normalized.startsWith("//")
+    ? `https:${normalized}`
+    : normalized;
+
+  try {
+    return new URL(withProtocol).href;
+  } catch {
+    return null;
+  }
+}
+
+function extractThumbnailFromHtml(html: string) {
+  const patterns = [
+    /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["'][^>]*>/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["'][^>]*>/i,
+    /<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["'][^>]*>/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["'][^>]*>/i,
+    /"thumbnailUrl"\s*:\s*"([^"]+)"/i,
+    /"thumbnail_url"\s*:\s*"([^"]+)"/i,
+    /"poster"\s*:\s*"([^"]+)"/i,
+    /"image"\s*:\s*"([^"]+)"/i,
+  ] as const;
+
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    const thumbnailUrl = normalizeThumbnailCandidateUrl(match?.[1]);
+    if (thumbnailUrl) {
+      return thumbnailUrl;
+    }
+  }
+
+  return null;
+}
+
+async function resolveVkThumbnailFromHtml(sourceUrl: string) {
+  const candidates = buildVkThumbnailProbeCandidates(sourceUrl);
+
+  for (const candidate of candidates) {
+    try {
+      const response = await fetch(candidate, {
+        headers: THUMBNAIL_HTML_HEADERS,
+        redirect: "follow",
+        signal: AbortSignal.timeout(THUMBNAIL_PROBE_TIMEOUT_MS),
+      });
+
+      if (!response.ok) {
+        continue;
+      }
+
+      const html = await response.text();
+      const thumbnailUrl = extractThumbnailFromHtml(html);
+      if (thumbnailUrl) {
+        return thumbnailUrl;
+      }
+    } catch {
+      // Try the next candidate before giving up on HTML probing.
+    }
+  }
+
+  return null;
+}
+
 async function resolveVkThumbnailUrl(sourceUrl: string) {
   const ytDlpBin = resolveYtDlpBin();
-  const { stdout } = await execFileAsync(
-    ytDlpBin,
-    [
-      "--ignore-config",
-      "--no-playlist",
-      "--no-warnings",
-      "--dump-single-json",
-      sourceUrl,
-    ],
-    {
-      timeout: AUDIO_PROBE_TIMEOUT_MS,
-      windowsHide: true,
-      maxBuffer: 10 * 1024 * 1024,
-    },
-  );
+  const candidates = buildVkThumbnailProbeCandidates(sourceUrl);
 
-  const parsed = JSON.parse(stdout) as YtDlpMetadata;
-  return parsed.thumbnail?.trim() || pickBestThumbnail(parsed.thumbnails);
+  for (const candidate of candidates) {
+    try {
+      const { stdout } = await execFileAsync(
+        ytDlpBin,
+        [
+          "--ignore-config",
+          "--no-playlist",
+          "--no-warnings",
+          "--dump-single-json",
+          candidate,
+        ],
+        {
+          timeout: AUDIO_PROBE_TIMEOUT_MS,
+          windowsHide: true,
+          maxBuffer: 10 * 1024 * 1024,
+        },
+      );
+
+      const parsed = JSON.parse(stdout) as YtDlpMetadata;
+      const thumbnailUrl =
+        normalizeThumbnailCandidateUrl(parsed.thumbnail) ||
+        normalizeThumbnailCandidateUrl(pickBestThumbnail(parsed.thumbnails));
+
+      if (thumbnailUrl) {
+        return thumbnailUrl;
+      }
+    } catch {
+      // Fall through to the next candidate and then to HTML probing.
+    }
+  }
+
+  return resolveVkThumbnailFromHtml(sourceUrl);
 }
 
 export async function resolveMediaThumbnailUrl(sourceUrl: string) {
@@ -377,7 +549,11 @@ export async function resolveMediaThumbnailUrl(sourceUrl: string) {
   }
 
   thumbnailCache.set(trimmed, {
-    expiresAt: Date.now() + THUMBNAIL_CACHE_TTL_MS,
+    expiresAt:
+      Date.now() +
+      (thumbnailUrl
+        ? THUMBNAIL_SUCCESS_CACHE_TTL_MS
+        : THUMBNAIL_FAILURE_CACHE_TTL_MS),
     thumbnailUrl,
   });
 
@@ -452,7 +628,7 @@ export function createConvertedAudioStream(resolvedSource: ResolvedAudioSource) 
     finishWithError(
       error instanceof Error
         ? error.message
-        : "Не удалось запустить конвертацию аудио.",
+        : "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РїСѓСЃС‚РёС‚СЊ РєРѕРЅРІРµСЂС‚Р°С†РёСЋ Р°СѓРґРёРѕ.",
     );
 
     return {
@@ -484,7 +660,7 @@ export function createConvertedAudioStream(resolvedSource: ResolvedAudioSource) 
 
     finishWithError(
       ffmpegErrors.trim() ||
-        `ffmpeg завершился с кодом ${code ?? "unknown"}.`,
+        `ffmpeg Р·Р°РІРµСЂС€РёР»СЃСЏ СЃ РєРѕРґРѕРј ${code ?? "unknown"}.`,
     );
   });
 
@@ -554,7 +730,7 @@ export async function convertAudioSourceToMp3Buffer(
         reject(
           new Error(
             ffmpegErrors.trim() ||
-              `ffmpeg завершился с кодом ${code ?? "unknown"}.`,
+              `ffmpeg Р·Р°РІРµСЂС€РёР»СЃСЏ СЃ РєРѕРґРѕРј ${code ?? "unknown"}.`,
           ),
         );
       });

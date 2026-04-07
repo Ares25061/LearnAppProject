@@ -1,0 +1,12 @@
+
+> learningapps-studio@0.1.0 dev
+> next dev
+
+▲ Next.js 16.2.2 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://10.8.1.6:3000
+✓ Ready in 1065ms
+
+ GET /api/media/audio?source=https%3A%2F%2Fvkvideo.ru%2Fvideo-230182483_456239022 200 in 9.9s (next.js: 714ms, application-code: 9.2s)
+ GET /api/media/audio?source=https%3A%2F%2Frutube.ru%2Fvideo%2Fc45557dfdeed4924b40f49b7e7800a9c%2F 200 in 17.3s (next.js: 862ms, application-code: 16.4s)
+ GET /create/matching-pairs 200 in 4.2s (next.js: 1747ms, application-code: 2.5s)
