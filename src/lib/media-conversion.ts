@@ -26,6 +26,11 @@ const RUTUBE_REQUEST_HEADERS = {
   Referer: "https://rutube.ru/",
   "User-Agent": RUTUBE_USER_AGENT,
 } satisfies Record<string, string>;
+const RUTUBE_STREAM_HEADERS = {
+  Origin: "https://rutube.ru",
+  Referer: "https://rutube.ru/",
+  "User-Agent": RUTUBE_USER_AGENT,
+} satisfies Record<string, string>;
 const thumbnailCache = new Map<
   string,
   { expiresAt: number; thumbnailUrl: string | null }
@@ -39,6 +44,7 @@ type ResolvedAudioSource = {
 
 type YtDlpResolvedAudioMetadata = {
   cookies?: string;
+  formats?: YtDlpResolvedAudioFormat[];
   http_headers?: Record<string, string>;
   requested_downloads?: Array<{
     cookies?: string;
@@ -46,6 +52,18 @@ type YtDlpResolvedAudioMetadata = {
     url?: string;
   }>;
   url?: string;
+};
+
+type YtDlpResolvedAudioFormat = {
+  acodec?: string;
+  cookies?: string;
+  format_id?: string;
+  height?: number;
+  http_headers?: Record<string, string>;
+  protocol?: string;
+  tbr?: number;
+  url?: string;
+  width?: number;
 };
 
 type YtDlpThumbnailInfo = {
@@ -327,10 +345,133 @@ function getRutubeVideoId(sourceUrl: string) {
   return null;
 }
 
+function getRutubeFormatHostPriority(sourceUrl: string) {
+  try {
+    const hostname = new URL(sourceUrl).hostname.replace(/^www\./, "").toLowerCase();
+    if (hostname.endsWith(".rutube.ru")) {
+      return 0;
+    }
+
+    if (hostname.endsWith(".rtbcdn.ru")) {
+      return 1;
+    }
+  } catch {
+    return Number.MAX_SAFE_INTEGER;
+  }
+
+  return 2;
+}
+
+function getYtDlpNumericValue(value: number | undefined) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : Number.MAX_SAFE_INTEGER;
+}
+
+function pickRutubeYtDlpFormat(
+  formats: YtDlpResolvedAudioFormat[] | undefined,
+) {
+  return formats
+    ?.filter(
+      (format): format is YtDlpResolvedAudioFormat & { url: string } =>
+        typeof format.url === "string" &&
+        format.url.trim().length > 0 &&
+        typeof format.acodec === "string" &&
+        format.acodec.trim().length > 0 &&
+        format.acodec !== "none",
+    )
+    .sort((left, right) => {
+      const cookiePriority =
+        Number(Boolean(right.cookies?.trim())) -
+        Number(Boolean(left.cookies?.trim()));
+      if (cookiePriority !== 0) {
+        return cookiePriority;
+      }
+
+      const hostPriority =
+        getRutubeFormatHostPriority(left.url) -
+        getRutubeFormatHostPriority(right.url);
+      if (hostPriority !== 0) {
+        return hostPriority;
+      }
+
+      const bitratePriority =
+        getYtDlpNumericValue(left.tbr) - getYtDlpNumericValue(right.tbr);
+      if (bitratePriority !== 0) {
+        return bitratePriority;
+      }
+
+      const leftArea = getYtDlpNumericValue(left.width) * getYtDlpNumericValue(left.height);
+      const rightArea =
+        getYtDlpNumericValue(right.width) * getYtDlpNumericValue(right.height);
+      return leftArea - rightArea;
+    })[0];
+}
+
+async function resolveRutubeAudioSourceWithYtDlp(sourceUrl: string) {
+  const ytDlpBin = resolveYtDlpBin();
+
+  try {
+    const { stdout } = await execFileAsync(
+      ytDlpBin,
+      [
+        "--ignore-config",
+        "--no-playlist",
+        "--no-warnings",
+        "-f",
+        "bestaudio/best",
+        "--dump-single-json",
+        sourceUrl,
+      ],
+      {
+        timeout: AUDIO_PROBE_TIMEOUT_MS,
+        windowsHide: true,
+        maxBuffer: 16 * 1024 * 1024,
+      },
+    );
+
+    const parsed = JSON.parse(stdout) as YtDlpResolvedAudioMetadata;
+    const selectedFormat = pickRutubeYtDlpFormat(parsed.formats);
+
+    if (selectedFormat?.url?.trim()) {
+      return {
+        cookies: selectedFormat.cookies ?? parsed.cookies,
+        headers: {
+          ...RUTUBE_STREAM_HEADERS,
+          ...(selectedFormat.http_headers ?? parsed.http_headers ?? {}),
+        },
+        url: selectedFormat.url.trim(),
+      } satisfies ResolvedAudioSource;
+    }
+
+    const selectedDownload = parsed.requested_downloads?.[0];
+    const fallbackUrl = selectedDownload?.url?.trim() || parsed.url?.trim() || "";
+    if (!fallbackUrl) {
+      return null;
+    }
+
+    return {
+      cookies: selectedDownload?.cookies ?? parsed.cookies,
+      headers: {
+        ...RUTUBE_STREAM_HEADERS,
+        ...(selectedDownload?.http_headers ?? parsed.http_headers ?? {}),
+      },
+      url: fallbackUrl,
+    } satisfies ResolvedAudioSource;
+  } catch {
+    return null;
+  }
+}
+
 async function resolveRutubeAudioSource(sourceUrl: string) {
   const videoId = getRutubeVideoId(sourceUrl);
   if (!videoId) {
     throw new Error("РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂ РІРёРґРµРѕ Rutube.");
+  }
+
+  const ytDlpResolvedSource = await resolveRutubeAudioSourceWithYtDlp(sourceUrl);
+  if (ytDlpResolvedSource) {
+    return ytDlpResolvedSource;
   }
 
   const response = await fetch(
@@ -357,9 +498,8 @@ async function resolveRutubeAudioSource(sourceUrl: string) {
 
   return {
     headers: {
-      Origin: "https://rutube.ru",
-      Referer: parsed.referer?.trim() || "https://rutube.ru/",
-      "User-Agent": RUTUBE_USER_AGENT,
+      ...RUTUBE_STREAM_HEADERS,
+      Referer: parsed.referer?.trim() || RUTUBE_STREAM_HEADERS.Referer,
     },
     url: resolvedUrl,
   } satisfies ResolvedAudioSource;
@@ -582,13 +722,47 @@ function buildFfmpegHeaderString(resolvedSource: ResolvedAudioSource) {
     .join("\r\n")}\r\n`;
 }
 
+function isHlsSourceUrl(sourceUrl: string) {
+  return /\.m3u8(?:[?#].*)?$/i.test(sourceUrl);
+}
+
+function buildFfmpegInputArgs(resolvedSource: ResolvedAudioSource) {
+  const ffmpegHeaders = buildFfmpegHeaderString(resolvedSource);
+  const isHlsSource = isHlsSourceUrl(resolvedSource.url);
+
+  return [
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-nostdin",
+    ...(isHlsSource
+      ? [
+          "-reconnect",
+          "1",
+          "-reconnect_streamed",
+          "1",
+          "-reconnect_on_network_error",
+          "1",
+          "-reconnect_delay_max",
+          "5",
+          "-http_persistent",
+          "0",
+          "-protocol_whitelist",
+          "file,http,https,tcp,tls,crypto",
+        ]
+      : []),
+    ...(ffmpegHeaders ? ["-headers", ffmpegHeaders] : []),
+    "-i",
+    resolvedSource.url,
+  ];
+}
+
 export function createConvertedAudioStream(resolvedSource: ResolvedAudioSource) {
   const output = new PassThrough();
   const ffmpegBin = resolveFfmpegBin();
   let ffmpeg: ChildProcess | null = null;
   let closed = false;
   let ffmpegErrors = "";
-  const ffmpegHeaders = buildFfmpegHeaderString(resolvedSource);
 
   const finishWithError = (message: string) => {
     if (closed) {
@@ -604,17 +778,16 @@ export function createConvertedAudioStream(resolvedSource: ResolvedAudioSource) 
     ffmpeg = spawn(
       ffmpegBin,
       [
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        ...(ffmpegHeaders ? ["-headers", ffmpegHeaders] : []),
-        "-i",
-        resolvedSource.url,
+        ...buildFfmpegInputArgs(resolvedSource),
+        "-map",
+        "0:a:0",
         "-vn",
+        "-sn",
+        "-dn",
         "-acodec",
         "libmp3lame",
         "-b:a",
-        "192k",
+        "128k",
         "-f",
         "mp3",
         "pipe:1",
@@ -682,7 +855,6 @@ export async function convertAudioSourceToMp3Buffer(
   resolvedSource: ResolvedAudioSource,
 ) {
   const ffmpegBin = resolveFfmpegBin();
-  const ffmpegHeaders = buildFfmpegHeaderString(resolvedSource);
   const tempDir = await mkdtemp(path.join(tmpdir(), "learnapp-audio-"));
   const outputPath = path.join(tempDir, `${randomUUID()}.mp3`);
 
@@ -691,17 +863,16 @@ export async function convertAudioSourceToMp3Buffer(
       const ffmpeg = spawn(
         ffmpegBin,
         [
-          "-hide_banner",
-          "-loglevel",
-          "error",
-          ...(ffmpegHeaders ? ["-headers", ffmpegHeaders] : []),
-          "-i",
-          resolvedSource.url,
+          ...buildFfmpegInputArgs(resolvedSource),
+          "-map",
+          "0:a:0",
           "-vn",
+          "-sn",
+          "-dn",
           "-acodec",
           "libmp3lame",
           "-b:a",
-          "192k",
+          "128k",
           "-f",
           "mp3",
           outputPath,
