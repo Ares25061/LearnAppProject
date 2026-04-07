@@ -2,6 +2,7 @@ import {
   type AnyExerciseDraft,
   type ExerciseDefinition,
   type ExerciseDraft,
+  type GroupAssignmentData,
   type ExerciseTypeId,
 } from "@/lib/types";
 
@@ -54,7 +55,10 @@ export const exerciseDefinitions: ExerciseDefinition[] = [
           { label: "Морковь", groupIndex: 1 },
           { label: "Груша", groupIndex: 0 },
         ],
-      },
+        cardDisplayMode: "sequential",
+        cardOrder: "random",
+        useGroupColors: true,
+      } as unknown as GroupAssignmentData,
     },
   },
   {
