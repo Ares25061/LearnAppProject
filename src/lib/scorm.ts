@@ -24,7 +24,7 @@ import type {
 } from "@/lib/types";
 import { escapeXml } from "@/lib/utils";
 
-type ScormArchiveVariant = "scorm1" | "scorm2";
+type ScormArchiveVariant = "scorm1" | "scorm2" | "scorm3";
 type OfflineAssetKind = "image" | "audio" | "video";
 type ArchiveFile = {
   archivePath: string;
@@ -977,6 +977,263 @@ async function buildOfflineArchive(input: {
   });
 }
 
+async function prepareHostlessDraftForArchive(input: AnyExerciseDraft) {
+  const draft = structuredClone(input);
+  const files: ArchiveFile[] = [];
+  const convertedAudioUrlMap = new Map<string, Promise<string>>();
+  const localizedThumbnailMap = new Map<string, Promise<string | null>>();
+  const mediaThumbnails = new Map<string, string>();
+  let assetCounter = 0;
+
+  const persistArchiveAsset = (
+    kind: OfflineAssetKind,
+    resource: {
+      buffer: Buffer;
+      contentType: string;
+      url?: string;
+    },
+    source: string,
+    preferredExtension?: string | null,
+  ) => {
+    const remoteUrl =
+      "url" in resource && typeof resource.url === "string" ? resource.url : source;
+    const normalizedContentType = resource.contentType || "application/octet-stream";
+    assertContentTypeMatchesKind(kind, normalizedContentType, remoteUrl);
+    const extension =
+      normalizeExtension(preferredExtension) ??
+      getExtensionFromMimeType(normalizedContentType) ??
+      getExtensionFromRemoteUrl(remoteUrl) ??
+      DEFAULT_EXTENSION_BY_KIND[kind];
+    const assetNumber = assetCounter + 1;
+    assetCounter += 1;
+    const fileName = `${kind}-${String(assetNumber).padStart(3, "0")}.${extension}`;
+    const archivePath = `player/assets/${fileName}`;
+
+    files.push({
+      archivePath,
+      data: resource.buffer,
+    });
+
+    return `./assets/${fileName}`;
+  };
+
+  const localizeConvertibleAudioUrl = async (url: string) => {
+    const source = url.trim();
+    if (!source) {
+      return source;
+    }
+
+    const existingPromise = convertedAudioUrlMap.get(source);
+    if (existingPromise) {
+      return existingPromise;
+    }
+
+    const nextPromise = (async () => {
+      const provider = getConvertibleAudioProvider(source);
+      if (!provider) {
+        return source;
+      }
+
+      const storedAsset = await getStoredAudioAsset(source);
+      if (storedAsset) {
+        return persistArchiveAsset(
+          "audio",
+          {
+            buffer: storedAsset.buffer,
+            contentType: storedAsset.contentType,
+            url: source,
+          },
+          source,
+          storedAsset.extension,
+        );
+      }
+
+      try {
+        const resolvedSource = await verifyConvertibleAudioSource(source);
+        const convertedAsset = await convertAudioSourceToPlayableAsset(resolvedSource);
+
+        await storeConvertedAudioAsset(source, provider, convertedAsset).catch(
+          () => undefined,
+        );
+
+        return persistArchiveAsset(
+          "audio",
+          {
+            buffer: convertedAsset.buffer,
+            contentType: convertedAsset.contentType,
+            url: source,
+          },
+          source,
+          convertedAsset.extension,
+        );
+      } catch (error) {
+        throw new ScormArchiveError(
+          error instanceof Error
+            ? `Не удалось подготовить аудио для тестового SCORM без привязки к домену: ${error.message}`
+            : "Не удалось подготовить аудио для тестового SCORM без привязки к домену.",
+          502,
+        );
+      }
+    })();
+
+    convertedAudioUrlMap.set(source, nextPromise);
+    return nextPromise;
+  };
+
+  const localizeVideoThumbnail = async (url: string) => {
+    const source = url.trim();
+    if (!source) {
+      return null;
+    }
+
+    const existingPromise = localizedThumbnailMap.get(source);
+    if (existingPromise) {
+      return existingPromise;
+    }
+
+    const nextPromise = (async () => {
+      let parsedUrl: URL;
+
+      try {
+        parsedUrl = new URL(source);
+      } catch {
+        return null;
+      }
+
+      if (!isExternalVideoServiceHost(parsedUrl.hostname) || isYouTubeHost(parsedUrl.hostname)) {
+        return null;
+      }
+
+      try {
+        const thumbnailUrl = await resolveMediaThumbnailUrl(source);
+        if (!thumbnailUrl) {
+          return null;
+        }
+
+        const thumbnailResource = thumbnailUrl.toLowerCase().startsWith("data:")
+          ? decodeDataUrl(thumbnailUrl)
+          : await downloadRemoteAsset(thumbnailUrl);
+        return persistArchiveAsset("image", thumbnailResource, thumbnailUrl);
+      } catch {
+        return null;
+      }
+    })();
+
+    localizedThumbnailMap.set(source, nextPromise);
+    return nextPromise;
+  };
+
+  const prepareMatchingSide = async (side: MatchingPairSide): Promise<MatchingPairSide> => {
+    if (typeof side === "string") {
+      return side;
+    }
+
+    switch (side.kind) {
+      case "audio":
+        return {
+          ...side,
+          url: await localizeConvertibleAudioUrl(side.url),
+        } satisfies MatchingAudioContent;
+      case "video":
+        {
+          const source = side.url.trim();
+          const thumbnailUrl = await localizeVideoThumbnail(source);
+          if (thumbnailUrl) {
+            mediaThumbnails.set(source, thumbnailUrl);
+          }
+
+          return side;
+        }
+      default:
+        return side;
+    }
+  };
+
+  switch (draft.type) {
+    case "matching-pairs":
+      draft.data.pairs = await Promise.all(
+        draft.data.pairs.map(async (pair) => ({
+          ...pair,
+          left: await prepareMatchingSide(pair.left),
+          right: await prepareMatchingSide(pair.right),
+        })),
+      );
+      draft.data.extras = await Promise.all(
+        (draft.data.extras ?? []).map(async (extra) => ({
+          ...extra,
+          content: await prepareMatchingSide(extra.content),
+        })),
+      );
+      break;
+    case "group-assignment":
+      draft.data.groups = await Promise.all(
+        draft.data.groups.map(async (group) => ({
+          ...group,
+          items: await Promise.all(group.items.map((item) => prepareMatchingSide(item))),
+        })),
+      );
+      break;
+    case "media-notices":
+      if (draft.data.mediaKind === "audio") {
+        draft.data.mediaUrl = await localizeConvertibleAudioUrl(draft.data.mediaUrl);
+      }
+      break;
+    default:
+      break;
+  }
+
+  return {
+    draft,
+    files,
+    mediaThumbnails: Object.fromEntries(mediaThumbnails),
+  };
+}
+
+async function buildHostlessArchive(input: {
+  draft: AnyExerciseDraft;
+  title: string;
+}) {
+  const zip = new JSZip();
+  const assets = await getAssets();
+  const prepared = await prepareHostlessDraftForArchive(input.draft);
+  const manifestFiles = [
+    "index.html",
+    "SCORM_API_wrapper.js",
+    "adlcp_rootv1p2.xsd",
+    "imscp_rootv1p1p2.xsd",
+    "imsmd_rootv1p2p1.xsd",
+    "player/index.html",
+    "player/scorm-player.js",
+    "player/scorm-player.css",
+    ...prepared.files.map((file) => file.archivePath),
+  ];
+
+  zip.file("index.html", buildWrapperIndexHtml(input.title, "player/index.html"));
+  zip.file("imsmanifest.xml", buildManifest(input.title, manifestFiles));
+  zip.file("SCORM_API_wrapper.js", assets.wrapper);
+  zip.file("adlcp_rootv1p2.xsd", assets.adlcp);
+  zip.file("imscp_rootv1p1p2.xsd", assets.imscp);
+  zip.file("imsmd_rootv1p2p1.xsd", assets.imsmd);
+  zip.file(
+    "player/index.html",
+    buildOfflinePlayerHtml(input.title, prepared.draft, prepared.mediaThumbnails),
+  );
+  zip.file("player/scorm-player.js", assets.offlinePlayerJs);
+  zip.file("player/scorm-player.css", assets.offlinePlayerCss);
+
+  for (const file of prepared.files) {
+    zip.file(file.archivePath, file.data);
+  }
+
+  return zip.generateAsync({
+    type: "nodebuffer",
+    compression: "DEFLATE",
+    compressionOptions: {
+      level: 9,
+    },
+  });
+}
+
 export async function generateScormArchive(input: {
   draft: AnyExerciseDraft;
   title: string;
@@ -987,6 +1244,13 @@ export async function generateScormArchive(input: {
 
   if (variant === "scorm2") {
     return buildOfflineArchive({
+      draft: input.draft,
+      title: input.title,
+    });
+  }
+
+  if (variant === "scorm3") {
+    return buildHostlessArchive({
       draft: input.draft,
       title: input.title,
     });

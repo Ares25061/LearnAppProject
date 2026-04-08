@@ -71,7 +71,7 @@ export function StudioEditor({
   const classificationData = isClassification
     ? (draft.data as GroupAssignmentData)
     : null;
-  type ExportVariant = "scorm1" | "scorm2";
+  type ExportVariant = "scorm1" | "scorm2" | "scorm3";
 
   const showNotice = (
     message: string | null,
@@ -190,7 +190,11 @@ export function StudioEditor({
         const anchor = document.createElement("a");
         anchor.href = downloadUrl;
         anchor.download = `${safeFilename(resolvedDraft.title)}${
-          variant === "scorm2" ? "-autonomous-scorm" : ""
+          variant === "scorm2"
+            ? "-autonomous-scorm"
+            : variant === "scorm3"
+              ? "-hostless-test-scorm"
+              : ""
         }.zip`;
         document.body.append(anchor);
         anchor.click();
@@ -211,7 +215,9 @@ export function StudioEditor({
         showNotice(
           variant === "scorm2"
             ? "Автономный архив для МЭШ скачан."
-            : "Архив для МЭШ скачан.",
+            : variant === "scorm3"
+              ? "Тестовый SCORM без привязки к домену проекта скачан."
+              : "Архив для МЭШ скачан.",
           "mesh",
         );
         if (mode === "create" && user && appId) {
@@ -417,12 +423,23 @@ export function StudioEditor({
                 Полностью автономный пакет без зависимости от хостинга проекта.
               </span>
             </button>
+            <button
+              className="ghost-button mesh-export__option"
+              disabled={isPending}
+              type="button"
+              onClick={() => handleExport("scorm3")}
+            >
+              <span className="mesh-export__option-title">Тестовый тип 3</span>
+              <span className="mesh-export__option-text">
+                Обычный SCORM без зависимости от домена проекта.
+              </span>
+            </button>
           </div>
         ) : null}
       </div>
 
       <p className="editor-hint">
-        Автономная версия использует тот же плеер, что и обычный архив, но не зависит от домена проекта.
+        Выберите обычный, автономный или тестовый вариант архива перед скачиванием.
       </p>
       {notice?.scope === "mesh" ? (
         <p className="editor-hint">{notice.message}</p>

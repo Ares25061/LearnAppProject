@@ -13,7 +13,12 @@ export async function POST(request: Request) {
     | { id?: string | null; draft?: unknown; variant?: string | null }
     | null;
   const draft = parseDraft(body?.draft);
-  const variant = body?.variant === "scorm2" ? "scorm2" : "scorm1";
+  const variant =
+    body?.variant === "scorm2"
+      ? "scorm2"
+      : body?.variant === "scorm3"
+        ? "scorm3"
+        : "scorm1";
 
   if (!draft) {
     return Response.json(
@@ -49,7 +54,13 @@ export async function POST(request: Request) {
         "Content-Type": "application/zip",
         "Content-Disposition": `attachment; filename="${safeFilename(
           draft.title,
-        )}${variant === "scorm2" ? "-autonomous-scorm" : ""}.zip"`,
+        )}${
+          variant === "scorm2"
+            ? "-autonomous-scorm"
+            : variant === "scorm3"
+              ? "-hostless-test-scorm"
+              : ""
+        }.zip"`,
         "x-app-id": app.id,
         "x-app-slug": app.slug,
       },
