@@ -8,6 +8,7 @@ import {
 } from "@/lib/media-audio-cache";
 import {
   convertAudioSourceToPlayableAsset,
+  convertVideoSourceToPlayableAsset,
   resolveMediaThumbnailUrl,
   verifyConvertibleAudioSource,
 } from "@/lib/media-conversion";
@@ -981,6 +982,7 @@ async function prepareHostlessDraftForArchive(input: AnyExerciseDraft) {
   const draft = structuredClone(input);
   const files: ArchiveFile[] = [];
   const convertedAudioUrlMap = new Map<string, Promise<string>>();
+  const convertedVideoUrlMap = new Map<string, Promise<string>>();
   const localizedThumbnailMap = new Map<string, Promise<string | null>>();
   const mediaThumbnails = new Map<string, string>();
   let assetCounter = 0;
@@ -1123,6 +1125,60 @@ async function prepareHostlessDraftForArchive(input: AnyExerciseDraft) {
     return nextPromise;
   };
 
+  const localizeHostlessVideoUrl = async (url: string) => {
+    const source = url.trim();
+    if (!source) {
+      return source;
+    }
+
+    const existingPromise = convertedVideoUrlMap.get(source);
+    if (existingPromise) {
+      return existingPromise;
+    }
+
+    const nextPromise = (async () => {
+      let parsedUrl: URL;
+
+      try {
+        parsedUrl = new URL(source);
+      } catch {
+        return source;
+      }
+
+      if (source.toLowerCase().startsWith("data:")) {
+        return persistArchiveAsset("video", decodeDataUrl(source), source);
+      }
+
+      try {
+        if (isExternalVideoServiceHost(parsedUrl.hostname)) {
+          const convertedAsset = await convertVideoSourceToPlayableAsset(source);
+          return persistArchiveAsset(
+            "video",
+            {
+              buffer: convertedAsset.buffer,
+              contentType: convertedAsset.contentType,
+              url: source,
+            },
+            source,
+            convertedAsset.extension,
+          );
+        }
+
+        return persistArchiveAsset("video", await downloadRemoteAsset(source), source);
+      } catch (error) {
+        throw new ScormArchiveError(
+          error instanceof Error
+            ? `Не удалось подготовить видео для тестового SCORM без привязки к домену: ${error.message}`
+            : "Не удалось подготовить видео для тестового SCORM без привязки к домену.",
+          502,
+        );
+      }
+    })();
+
+    convertedVideoUrlMap.set(source, nextPromise);
+    return nextPromise;
+  };
+
   const prepareMatchingSide = async (side: MatchingPairSide): Promise<MatchingPairSide> => {
     if (typeof side === "string") {
       return side;
@@ -1137,12 +1193,16 @@ async function prepareHostlessDraftForArchive(input: AnyExerciseDraft) {
       case "video":
         {
           const source = side.url.trim();
+          const localizedUrl = await localizeHostlessVideoUrl(source);
           const thumbnailUrl = await localizeVideoThumbnail(source);
           if (thumbnailUrl) {
-            mediaThumbnails.set(source, thumbnailUrl);
+            mediaThumbnails.set(localizedUrl, thumbnailUrl);
           }
 
-          return side;
+          return {
+            ...side,
+            url: localizedUrl,
+          } satisfies MatchingVideoContent;
         }
       default:
         return side;
@@ -1176,6 +1236,8 @@ async function prepareHostlessDraftForArchive(input: AnyExerciseDraft) {
     case "media-notices":
       if (draft.data.mediaKind === "audio") {
         draft.data.mediaUrl = await localizeConvertibleAudioUrl(draft.data.mediaUrl);
+      } else {
+        draft.data.mediaUrl = await localizeHostlessVideoUrl(draft.data.mediaUrl);
       }
       break;
     default:

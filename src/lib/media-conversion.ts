@@ -14,6 +14,7 @@ import { getConvertibleAudioProvider } from "@/lib/media-audio";
 const execFileAsync = promisify(execFile);
 const AUDIO_PROBE_TIMEOUT_MS = 45_000;
 const AUDIO_DOWNLOAD_TIMEOUT_MS = 120_000;
+const VIDEO_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 const THUMBNAIL_PROBE_TIMEOUT_MS = 20_000;
 const THUMBNAIL_SUCCESS_CACHE_TTL_MS = 1000 * 60 * 60 * 6;
 const THUMBNAIL_FAILURE_CACHE_TTL_MS = 1000 * 30;
@@ -66,11 +67,14 @@ type ResolvedAudioSource = {
   url: string;
 };
 
-export type ConvertedAudioAsset = {
+type ConvertedPlayableAsset = {
   buffer: Buffer;
   contentType: string;
   extension: string;
 };
+
+export type ConvertedAudioAsset = ConvertedPlayableAsset;
+export type ConvertedVideoAsset = ConvertedPlayableAsset;
 
 type YtDlpResolvedAudioMetadata = {
   cookies?: string;
@@ -1381,6 +1385,57 @@ async function resolveRutubeAudioSource(
   } satisfies ResolvedAudioSource;
 }
 
+async function resolveRutubeVideoSource(
+  sourceUrl: string,
+): Promise<ResolvedAudioSource> {
+  const videoId = getRutubeVideoId(sourceUrl);
+  if (!videoId) {
+    throw new Error("Не удалось определить идентификатор видео Rutube.");
+  }
+
+  const response = await fetch(
+    `https://rutube.ru/api/play/options/${videoId}/`,
+    {
+      headers: RUTUBE_REQUEST_HEADERS,
+      signal: AbortSignal.timeout(AUDIO_PROBE_TIMEOUT_MS),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Rutube вернул статус ${response.status} при запросе видеопотока.`);
+  }
+
+  const parsed = (await response.json()) as RutubePlayOptions;
+  const resolvedUrl =
+    parsed.video_balancer?.default?.trim() ||
+    parsed.video_balancer?.m3u8?.trim() ||
+    "";
+
+  if (!resolvedUrl) {
+    throw new Error("Rutube не вернул ссылку на видеопоток.");
+  }
+
+  return {
+    debug: {
+      host: (() => {
+        try {
+          return new URL(resolvedUrl).hostname;
+        } catch {
+          return undefined;
+        }
+      })(),
+      mode: isHlsSourceUrl(resolvedUrl) ? "hls" : "direct",
+      provider: "rutube",
+    },
+    headers: {
+      ...RUTUBE_STREAM_HEADERS,
+      Referer: parsed.referer?.trim() || RUTUBE_STREAM_HEADERS.Referer,
+    },
+    sourcePageUrl: sourceUrl,
+    url: resolvedUrl,
+  } satisfies ResolvedAudioSource;
+}
+
 function pickBestThumbnail(thumbnails: YtDlpThumbnailInfo[] | undefined) {
   return (
     thumbnails
@@ -1863,6 +1918,22 @@ function getDownloadedAssetContentType(extension: string) {
   }
 }
 
+function getDownloadedVideoContentType(extension: string) {
+  switch (extension) {
+    case "mp4":
+      return "video/mp4";
+    case "webm":
+      return "video/webm";
+    case "ogg":
+    case "ogv":
+      return "video/ogg";
+    case "mov":
+      return "video/quicktime";
+    default:
+      return "video/mp4";
+  }
+}
+
 function canUseYtDlpDownloadFallback(resolvedSource: ResolvedAudioSource) {
   return (
     (resolvedSource.debug?.provider === "youtube" ||
@@ -1953,6 +2024,101 @@ async function downloadAudioSourceWithYtDlp(
       contentType:
         resolvedSource.directAsset?.contentType ||
         getDownloadedAssetContentType(extension),
+      extension,
+    };
+  } finally {
+    await ytDlpContext.cleanup();
+    await rm(tempDir, {
+      force: true,
+      recursive: true,
+    }).catch(() => undefined);
+  }
+}
+
+async function downloadVideoSourceWithYtDlp(options: {
+  extractorArgs?: string | null;
+  provider: "youtube" | "vk" | "rutube";
+  sourcePageUrl: string;
+  useConfiguredYouTubeAuth?: boolean;
+}): Promise<ConvertedVideoAsset> {
+  const ytDlpBin = await ensureYtDlpBin();
+  const ffmpegBin = resolveFfmpegBin();
+  const ytDlpContext =
+    options.provider === "youtube"
+      ? await createYouTubeYtDlpExecutionContext({
+          useConfiguredAuth: options.useConfiguredYouTubeAuth !== false,
+        })
+      : {
+          cleanup: async () => undefined,
+          sharedArgs: [],
+        };
+  const extractorArgs = options.extractorArgs?.trim();
+  const formatSelector =
+    options.provider === "youtube"
+      ? "bestvideo*[height<=480]+bestaudio/best[height<=480]/best"
+      : "best[height<=480]/best";
+  const tempDir = await mkdtemp(path.join(tmpdir(), "learnapp-video-"));
+  const outputTemplate = path.join(tempDir, "asset.%(ext)s");
+
+  try {
+    const { stdout } = await execFileAsync(
+      ytDlpBin,
+      [
+        ...ytDlpContext.sharedArgs,
+        "--ignore-config",
+        "--no-playlist",
+        "--no-warnings",
+        "--no-progress",
+        "--force-overwrites",
+        "--no-part",
+        "--ffmpeg-location",
+        ffmpegBin,
+        ...(extractorArgs ? ["--extractor-args", extractorArgs] : []),
+        "-f",
+        formatSelector,
+        "--recode-video",
+        "mp4",
+        "-o",
+        outputTemplate,
+        "--print",
+        "after_move:filepath",
+        options.sourcePageUrl,
+      ],
+      {
+        timeout: VIDEO_DOWNLOAD_TIMEOUT_MS,
+        windowsHide: true,
+        maxBuffer: 4 * 1024 * 1024,
+      },
+    );
+
+    const outputFilePath =
+      stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .at(-1) ?? "";
+    const resolvedOutputPath = outputFilePath
+      ? path.isAbsolute(outputFilePath)
+        ? outputFilePath
+        : path.join(tempDir, outputFilePath)
+      : "";
+    const filePath =
+      (resolvedOutputPath && isExecutableFile(resolvedOutputPath)
+        ? resolvedOutputPath
+        : "") ||
+      path.join(
+        tempDir,
+        (await readdir(tempDir)).find((name) => name.startsWith("asset.")) ?? "",
+      );
+
+    if (!filePath || !isExecutableFile(filePath)) {
+      throw new Error("yt-dlp did not produce a video file.");
+    }
+
+    const extension = path.extname(filePath).replace(/^\./, "").toLowerCase() || "mp4";
+    return {
+      buffer: await readFile(filePath),
+      contentType: getDownloadedVideoContentType(extension),
       extension,
     };
   } finally {
@@ -2130,6 +2296,69 @@ export async function convertAudioSourceToMp3Buffer(
   }
 }
 
+async function convertVideoSourceToMp4Buffer(
+  resolvedSource: ResolvedAudioSource,
+) {
+  const ffmpegBin = resolveFfmpegBin();
+  const tempDir = await mkdtemp(path.join(tmpdir(), "learnapp-video-"));
+  const outputPath = path.join(tempDir, `${randomUUID()}.mp4`);
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const ffmpeg = spawn(
+        ffmpegBin,
+        [
+          ...buildFfmpegInputArgs(resolvedSource),
+          "-map",
+          "0:v:0",
+          "-map",
+          "0:a:0?",
+          "-c:v",
+          "copy",
+          "-c:a",
+          "aac",
+          "-b:a",
+          "128k",
+          "-movflags",
+          "+faststart",
+          "-f",
+          "mp4",
+          outputPath,
+        ],
+        {
+          windowsHide: true,
+        },
+      );
+
+      let ffmpegErrors = "";
+
+      ffmpeg.stderr?.on("data", (chunk) => {
+        ffmpegErrors = appendLogChunk(ffmpegErrors, chunk);
+      });
+
+      ffmpeg.on("error", (error) => {
+        reject(new Error(`ffmpeg: ${error.message}`));
+      });
+
+      ffmpeg.on("close", (code, signal) => {
+        if (code === 0) {
+          resolve();
+          return;
+        }
+
+        reject(new Error(buildFfmpegExitErrorMessage(ffmpegErrors, code, signal)));
+      });
+    });
+
+    return await readFile(outputPath);
+  } finally {
+    await rm(tempDir, {
+      force: true,
+      recursive: true,
+    }).catch(() => undefined);
+  }
+}
+
 export async function convertAudioSourceToPlayableAsset(
   resolvedSource: ResolvedAudioSource,
 ): Promise<ConvertedAudioAsset> {
@@ -2227,4 +2456,83 @@ export async function convertAudioSourceToPlayableAsset(
 
     throw error;
   }
+}
+
+export async function convertVideoSourceToPlayableAsset(
+  sourceUrl: string,
+): Promise<ConvertedVideoAsset> {
+  const provider = getConvertibleAudioProvider(sourceUrl);
+
+  if (!provider) {
+    throw new Error(
+      "Ссылка не относится к поддерживаемым видеосервисам YouTube, VK Видео или Rutube.",
+    );
+  }
+
+  if (provider === "youtube") {
+    const resolvedSource = await verifyConvertibleAudioSource(sourceUrl);
+    const extractorArgs = resolvedSource.debug?.ytDlpExtractorArgs?.trim() || null;
+    const useConfiguredYouTubeAuth = resolvedSource.debug?.ytDlpUsesCookies !== false;
+
+    try {
+      return await downloadVideoSourceWithYtDlp({
+        extractorArgs,
+        provider,
+        sourcePageUrl: resolvedSource.sourcePageUrl?.trim() || sourceUrl,
+        useConfiguredYouTubeAuth,
+      });
+    } catch (error) {
+      if (useConfiguredYouTubeAuth && shouldRetryYouTubeProbeWithoutAuth(error)) {
+        console.warn("[media/video] Retrying YouTube video download without configured auth", {
+          error: error instanceof Error ? error.message : String(error),
+          sourcePageUrl: resolvedSource.sourcePageUrl,
+        });
+
+        return downloadVideoSourceWithYtDlp({
+          extractorArgs,
+          provider,
+          sourcePageUrl: resolvedSource.sourcePageUrl?.trim() || sourceUrl,
+          useConfiguredYouTubeAuth: false,
+        });
+      }
+
+      throw error;
+    }
+  }
+
+  if (provider === "rutube") {
+    try {
+      return await downloadVideoSourceWithYtDlp({
+        provider,
+        sourcePageUrl: sourceUrl,
+      });
+    } catch (error) {
+      console.warn("[media/video] Rutube yt-dlp download failed, falling back to Rutube API stream", {
+        error: error instanceof Error ? error.message : String(error),
+        sourceUrl,
+      });
+    }
+
+    try {
+      const resolvedSource = await resolveRutubeVideoSource(sourceUrl);
+      const buffer = await convertVideoSourceToMp4Buffer(resolvedSource);
+      return {
+        buffer,
+        contentType: "video/mp4",
+        extension: "mp4",
+      };
+    } catch (error) {
+      console.warn("[media/video] Rutube API video download failed after yt-dlp fallback", {
+        error: error instanceof Error ? error.message : String(error),
+        sourceUrl,
+      });
+
+      throw error;
+    }
+  }
+
+  return downloadVideoSourceWithYtDlp({
+    provider,
+    sourcePageUrl: sourceUrl,
+  });
 }
