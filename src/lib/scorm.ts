@@ -12,8 +12,10 @@ import {
   verifyConvertibleAudioSource,
 } from "@/lib/media-conversion";
 import { getConvertibleAudioProvider } from "@/lib/media-audio";
+import { normalizeMatchingSide } from "@/lib/matching-pairs";
 import type {
   AnyExerciseDraft,
+  ClassificationGroupBackground,
   MatchingAudioContent,
   MatchingContent,
   MatchingImageContent,
@@ -539,33 +541,43 @@ function getMatchingContentUrl(content: MatchingContent) {
   }
 }
 
+function pushMatchingSideResourceUrl(urls: string[], side: MatchingPairSide) {
+  const resourceUrl = getMatchingContentUrl(normalizeMatchingSide(side));
+  if (resourceUrl) {
+    urls.push(resourceUrl);
+  }
+}
+
+function pushClassificationBackgroundResourceUrl(
+  urls: string[],
+  background: ClassificationGroupBackground,
+) {
+  const resourceUrl = getMatchingContentUrl(normalizeMatchingSide(background));
+  if (resourceUrl) {
+    urls.push(resourceUrl);
+  }
+}
+
 function collectDraftResourceUrls(draft: AnyExerciseDraft) {
   const urls: string[] = [];
 
   switch (draft.type) {
     case "matching-pairs":
       for (const pair of draft.data.pairs) {
-        if (typeof pair.left !== "string") {
-          const leftUrl = getMatchingContentUrl(pair.left);
-          if (leftUrl) {
-            urls.push(leftUrl);
-          }
-        }
-
-        if (typeof pair.right !== "string") {
-          const rightUrl = getMatchingContentUrl(pair.right);
-          if (rightUrl) {
-            urls.push(rightUrl);
-          }
-        }
+        pushMatchingSideResourceUrl(urls, pair.left);
+        pushMatchingSideResourceUrl(urls, pair.right);
       }
 
       for (const extra of draft.data.extras ?? []) {
-        if (typeof extra.content !== "string") {
-          const extraUrl = getMatchingContentUrl(extra.content);
-          if (extraUrl) {
-            urls.push(extraUrl);
-          }
+        pushMatchingSideResourceUrl(urls, extra.content);
+      }
+      break;
+    case "group-assignment":
+      for (const group of draft.data.groups) {
+        pushClassificationBackgroundResourceUrl(urls, group.background);
+
+        for (const item of group.items) {
+          pushMatchingSideResourceUrl(urls, item);
         }
       }
       break;
@@ -820,6 +832,19 @@ async function localizeDraftForOfflineExport(input: AnyExerciseDraft) {
     }
   };
 
+  const localizeClassificationBackground = async (
+    background: ClassificationGroupBackground,
+  ): Promise<ClassificationGroupBackground> => {
+    if (typeof background === "string" || background.kind !== "image") {
+      return background;
+    }
+
+    return {
+      ...background,
+      url: await localizeResourceUrl(background.url, "image"),
+    } satisfies MatchingImageContent;
+  };
+
   switch (draft.type) {
     case "matching-pairs":
       draft.data.pairs = await Promise.all(
@@ -833,6 +858,15 @@ async function localizeDraftForOfflineExport(input: AnyExerciseDraft) {
         (draft.data.extras ?? []).map(async (extra) => ({
           ...extra,
           content: await localizeMatchingSide(extra.content),
+        })),
+      );
+      break;
+    case "group-assignment":
+      draft.data.groups = await Promise.all(
+        draft.data.groups.map(async (group) => ({
+          ...group,
+          background: await localizeClassificationBackground(group.background),
+          items: await Promise.all(group.items.map((item) => localizeMatchingSide(item))),
         })),
       );
       break;

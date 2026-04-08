@@ -414,7 +414,7 @@ export function StudioEditor({
                 Автономная версия
               </span>
               <span className="mesh-export__option-text">
-                Полностью автономный пакет. Некоторые ресурсы могут не работать.
+                Полностью автономный пакет без зависимости от хостинга проекта.
               </span>
             </button>
           </div>
@@ -422,7 +422,7 @@ export function StudioEditor({
       </div>
 
       <p className="editor-hint">
-        Выберите обычную или автономную версию архива перед скачиванием.
+        Автономная версия использует тот же плеер, что и обычный архив, но не зависит от домена проекта.
       </p>
       {notice?.scope === "mesh" ? (
         <p className="editor-hint">{notice.message}</p>
