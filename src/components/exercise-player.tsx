@@ -236,7 +236,7 @@ function isScormOfflineRuntime() {
   return IS_SCORM_OFFLINE_BUNDLE || getScormOfflineRuntimeWindow()?.__SCORM_OFFLINE_RUNTIME__ === true;
 }
 
-function canUseMatchingEmbeddedVideoFrame() {
+function hasMatchingHttpFrameContext() {
   if (typeof window === "undefined") {
     return true;
   }
@@ -2585,9 +2585,8 @@ function MatchingMediaDialog({
     media.kind === "video"
       ? getMatchingEmbeddedVideoMeta(media.url)
       : null;
-  const canUseEmbeddedVideoFrame = embeddedVideoMeta
-    ? canUseMatchingEmbeddedVideoFrame()
-    : false;
+  const shouldUseEmbeddedVideoFallback =
+    embeddedVideoMeta?.provider === "youtube" && !hasMatchingHttpFrameContext();
   const canPlayAudio = media.kind === "audio" ? isMatchingAudioPlayable(media.url) : false;
   const audioVolume =
     media.kind === "audio" ? getMatchingAudioVolume(media) : 100;
@@ -2688,7 +2687,7 @@ function MatchingMediaDialog({
               initialVolume={audioVolume}
               src={media.url}
             />
-          ) : embeddedVideoMeta && canUseEmbeddedVideoFrame ? (
+          ) : embeddedVideoMeta && !shouldUseEmbeddedVideoFallback ? (
             <>
               <div className="matching-media-modal__frame-wrap">
                 <iframe
