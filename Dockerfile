@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     librsvg2-2 \
     ca-certificates \
   && python3 -m venv /opt/media-tools \
-  && /opt/media-tools/bin/pip install --no-cache-dir --upgrade pip yt-dlp bgutil-ytdlp-pot-provider==${BGUTIL_POT_PROVIDER_VERSION} \
+  && /opt/media-tools/bin/pip install --no-cache-dir --upgrade pip yt-dlp bgutil-ytdlp-pot-provider==${BGUTIL_POT_PROVIDER_VERSION} yt-dlp-getpot-wpc \
   && rm -rf /var/lib/apt/lists/*
 ENV PATH="/opt/media-tools/bin:${PATH}"
 
@@ -57,6 +57,12 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 ENV YTDLP_YOUTUBE_BGUTIL_ENABLED=1
+ENV YTDLP_YOUTUBE_WPC_ENABLED=1
+ENV YTDLP_YOUTUBE_WPC_BROWSER_PATH=/usr/bin/chromium
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    chromium \
+  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static

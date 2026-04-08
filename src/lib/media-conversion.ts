@@ -383,22 +383,30 @@ function getMultipartEnvValue(name: string) {
 }
 
 function getYouTubePotProviderExtractorArgs() {
-  if (process.env.YTDLP_YOUTUBE_BGUTIL_ENABLED?.trim() !== "1") {
-    return [] as string[];
-  }
-
   const args: string[] = [];
-  const baseUrl =
-    process.env.YTDLP_YOUTUBE_BGUTIL_BASE_URL?.trim() || "http://127.0.0.1:4416";
-  const serverHome =
-    process.env.YTDLP_YOUTUBE_BGUTIL_SERVER_HOME?.trim() || "/opt/bgutil-provider/server";
+  const bgutilEnabled = process.env.YTDLP_YOUTUBE_BGUTIL_ENABLED?.trim() === "1";
+  if (bgutilEnabled) {
+    const baseUrl =
+      process.env.YTDLP_YOUTUBE_BGUTIL_BASE_URL?.trim() || "http://127.0.0.1:4416";
+    const serverHome =
+      process.env.YTDLP_YOUTUBE_BGUTIL_SERVER_HOME?.trim() || "/opt/bgutil-provider/server";
 
-  if (baseUrl) {
-    args.push("--extractor-args", `youtubepot-bgutilhttp:base_url=${baseUrl}`);
+    if (baseUrl) {
+      args.push("--extractor-args", `youtubepot-bgutilhttp:base_url=${baseUrl}`);
+    }
+
+    if (serverHome) {
+      args.push("--extractor-args", `youtubepot-bgutilscript:server_home=${serverHome}`);
+    }
   }
 
-  if (serverHome) {
-    args.push("--extractor-args", `youtubepot-bgutilscript:server_home=${serverHome}`);
+  if (process.env.YTDLP_YOUTUBE_WPC_ENABLED?.trim() === "1") {
+    const browserPath =
+      process.env.YTDLP_YOUTUBE_WPC_BROWSER_PATH?.trim() || "/usr/bin/chromium";
+
+    if (browserPath) {
+      args.push("--extractor-args", `youtubepot-wpc:browser_path=${browserPath}`);
+    }
   }
 
   return args;
