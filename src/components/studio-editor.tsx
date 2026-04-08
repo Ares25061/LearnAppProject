@@ -695,7 +695,7 @@ export function StudioEditor({
               type="button"
               onClick={() => handleExport("scorm3")}
             >
-              <span className="mesh-export__option-title">Автономная версия</span>
+              <span className="mesh-export__option-title">Автономный</span>
               <span className="mesh-export__option-text">
                 Этот архив не зависит от хостинга проекта, все медиа хранятся в архиве.
               </span>

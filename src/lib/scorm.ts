@@ -25,7 +25,7 @@ import type {
 } from "@/lib/types";
 import { escapeXml } from "@/lib/utils";
 
-type ScormArchiveVariant = "scorm1" | "scorm2" | "scorm3";
+type ScormArchiveVariant = "scorm1" | "scorm3";
 type OfflineAssetKind = "image" | "audio" | "video";
 type ArchiveFile = {
   archivePath: string;
@@ -1082,8 +1082,8 @@ async function prepareHostlessDraftForArchive(input: AnyExerciseDraft) {
       } catch (error) {
         throw new ScormArchiveError(
           error instanceof Error
-            ? `Не удалось подготовить аудио для тестового SCORM без привязки к домену: ${error.message}`
-            : "Не удалось подготовить аудио для тестового SCORM без привязки к домену.",
+              ? `Не удалось подготовить аудио для автономного архива: ${error.message}`
+              : "Не удалось подготовить аудио для автономного архива.",
           502,
         );
       }
@@ -1179,8 +1179,8 @@ async function prepareHostlessDraftForArchive(input: AnyExerciseDraft) {
       } catch (error) {
         throw new ScormArchiveError(
           error instanceof Error
-            ? `Не удалось подготовить видео для тестового SCORM без привязки к домену: ${error.message}`
-            : "Не удалось подготовить видео для тестового SCORM без привязки к домену.",
+            ? `Не удалось подготовить видео для автономного архива: ${error.message}`
+            : "Не удалось подготовить видео для автономного архива.",
           502,
         );
       }
@@ -1321,13 +1321,6 @@ export async function generateScormArchive(input: {
   variant?: ScormArchiveVariant;
 }) {
   const variant = input.variant ?? "scorm1";
-
-  if (variant === "scorm2") {
-    return buildOfflineArchive({
-      draft: input.draft,
-      title: input.title,
-    });
-  }
 
   if (variant === "scorm3") {
     return buildHostlessArchive({

@@ -81,11 +81,20 @@ export type ConvertedAudioAsset = ConvertedPlayableAsset;
 export type ConvertedVideoAsset = ConvertedPlayableAsset;
 
 type YtDlpResolvedAudioMetadata = {
+  acodec?: string;
   cookies?: string;
+  ext?: string;
+  format_id?: string;
   formats?: YtDlpResolvedAudioFormat[];
+  height?: number;
   http_headers?: Record<string, string>;
+  protocol?: string;
   requested_downloads?: YtDlpResolvedAudioDownload[];
+  requested_formats?: YtDlpResolvedAudioFormat[];
+  source_preference?: number;
   url?: string;
+  vcodec?: string;
+  width?: number;
 };
 
 type YtDlpResolvedAudioDownload = {
@@ -706,6 +715,152 @@ function getYouTubeVideoDownloadAttempts(): readonly YtDlpVideoDownloadAttempt[]
   }));
 }
 
+function getYouTubeVideoProbeAttempts(): readonly YtDlpAudioProbeAttempt[] {
+  return getYouTubeAudioProbeAttempts().map((attempt) => ({
+    ...attempt,
+    formatSelector: null,
+  }));
+}
+
+function getYtDlpVideoProtocolPriority(protocol: string | undefined) {
+  const normalized = protocol?.trim().toLowerCase() ?? "";
+
+  if (!normalized || normalized === "https" || normalized === "http") {
+    return 0;
+  }
+
+  if (normalized.includes("m3u8") || normalized.includes("hls")) {
+    return 2;
+  }
+
+  if (normalized.includes("dash")) {
+    return 3;
+  }
+
+  return 1;
+}
+
+function getYtDlpVideoContainerPriority(extension: string | undefined) {
+  const normalized = extension?.trim().toLowerCase() ?? "";
+
+  switch (normalized) {
+    case "mp4":
+      return 0;
+    case "webm":
+      return 1;
+    case "mov":
+      return 2;
+    default:
+      return 3;
+  }
+}
+
+function getYtDlpVideoHeightDistance(height: number | undefined, target = 480) {
+  if (typeof height !== "number" || !Number.isFinite(height)) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+
+  return Math.abs(height - target);
+}
+
+function getYtDlpVideoHeightBucket(height: number | undefined, target = 480) {
+  if (typeof height !== "number" || !Number.isFinite(height)) {
+    return 2;
+  }
+
+  return height <= target ? 0 : 1;
+}
+
+function pickYouTubeYtDlpVideoFormat(
+  formats: YtDlpResolvedAudioFormat[] | undefined,
+) {
+  return formats
+    ?.filter(
+      (format): format is YtDlpResolvedAudioFormat & { url: string } =>
+        typeof format.url === "string" &&
+        format.url.trim().length > 0 &&
+        typeof format.vcodec === "string" &&
+        format.vcodec.trim().length > 0 &&
+        format.vcodec !== "none" &&
+        typeof format.acodec === "string" &&
+        format.acodec.trim().length > 0 &&
+        format.acodec !== "none",
+    )
+    .sort((left, right) => {
+      const leftProtocolPriority = getYtDlpVideoProtocolPriority(left.protocol);
+      const rightProtocolPriority = getYtDlpVideoProtocolPriority(right.protocol);
+      if (leftProtocolPriority !== rightProtocolPriority) {
+        return leftProtocolPriority - rightProtocolPriority;
+      }
+
+      const leftHeightBucket = getYtDlpVideoHeightBucket(left.height);
+      const rightHeightBucket = getYtDlpVideoHeightBucket(right.height);
+      if (leftHeightBucket !== rightHeightBucket) {
+        return leftHeightBucket - rightHeightBucket;
+      }
+
+      const leftHeightDistance = getYtDlpVideoHeightDistance(left.height);
+      const rightHeightDistance = getYtDlpVideoHeightDistance(right.height);
+      if (leftHeightDistance !== rightHeightDistance) {
+        return leftHeightDistance - rightHeightDistance;
+      }
+
+      const leftContainerPriority = getYtDlpVideoContainerPriority(left.ext);
+      const rightContainerPriority = getYtDlpVideoContainerPriority(right.ext);
+      if (leftContainerPriority !== rightContainerPriority) {
+        return leftContainerPriority - rightContainerPriority;
+      }
+
+      const sourcePreferencePriority =
+        (typeof right.source_preference === "number" ? -right.source_preference : 0) -
+        (typeof left.source_preference === "number" ? -left.source_preference : 0);
+      if (sourcePreferencePriority !== 0) {
+        return sourcePreferencePriority;
+      }
+
+      return getYtDlpNumericValue(right.tbr) - getYtDlpNumericValue(left.tbr);
+    })[0];
+}
+
+function buildResolvedVideoSourceFromYtDlpFormat(
+  sourceUrl: string,
+  parsed: YtDlpResolvedAudioMetadata,
+  selectedFormat: YtDlpResolvedAudioFormat & { url: string },
+  options?: {
+    extractorArgs?: string;
+    probeStrategy?: string;
+    usesCookies?: boolean;
+  },
+): ResolvedAudioSource {
+  const resolvedUrl = selectedFormat.url.trim();
+
+  return {
+    cookies: selectedFormat.cookies ?? parsed.cookies,
+    debug: {
+      container: selectedFormat.ext?.trim() || undefined,
+      formatId: selectedFormat.format_id?.trim() || undefined,
+      host: (() => {
+        try {
+          return new URL(resolvedUrl).hostname;
+        } catch {
+          return undefined;
+        }
+      })(),
+      mode: isHlsSourceUrl(resolvedUrl) ? "hls" : "transcode",
+      probeStrategy: options?.probeStrategy,
+      protocol: selectedFormat.protocol?.trim() || undefined,
+      provider: "youtube",
+      ytDlpExtractorArgs: options?.extractorArgs,
+      ytDlpUsesCookies: options?.usesCookies,
+    },
+    headers: {
+      ...(selectedFormat.http_headers ?? parsed.http_headers ?? {}),
+    },
+    sourcePageUrl: sourceUrl,
+    url: resolvedUrl,
+  } satisfies ResolvedAudioSource;
+}
+
 async function runYtDlpAudioProbe(
   sourceUrl: string,
   provider: "youtube" | "vk" | "rutube",
@@ -950,6 +1105,30 @@ async function resolveYouTubeAudioSource(
 
     throw error;
   }
+}
+
+async function resolveYouTubeVideoSource(
+  sourceUrl: string,
+): Promise<ResolvedAudioSource | null> {
+  const probe = await runYtDlpAudioProbe(
+    sourceUrl,
+    "youtube",
+    getYouTubeVideoProbeAttempts(),
+  );
+
+  const selectedFormat =
+    pickYouTubeYtDlpVideoFormat(probe.metadata.requested_formats) ??
+    pickYouTubeYtDlpVideoFormat(probe.metadata.formats);
+
+  if (!selectedFormat) {
+    return null;
+  }
+
+  return buildResolvedVideoSourceFromYtDlpFormat(sourceUrl, probe.metadata, selectedFormat, {
+    extractorArgs: probe.extractorArgs,
+    probeStrategy: probe.probeStrategy,
+    usesCookies: probe.usesCookies,
+  });
 }
 
 
@@ -2616,6 +2795,25 @@ export async function convertVideoSourceToPlayableAsset(
   }
 
   if (provider === "youtube") {
+    try {
+      const resolvedSource = await resolveYouTubeVideoSource(sourceUrl);
+      if (resolvedSource) {
+        const buffer = await convertVideoSourceToMp4Buffer(resolvedSource);
+        const asset = {
+          buffer,
+          contentType: "video/mp4",
+          extension: "mp4",
+        } satisfies ConvertedVideoAsset;
+        await storeConvertedVideoAsset(sourceUrl, provider, asset);
+        return asset;
+      }
+    } catch (error) {
+      console.warn("[media/video] YouTube direct video probe failed, falling back to yt-dlp download", {
+        error: error instanceof Error ? error.message : String(error),
+        sourceUrl,
+      });
+    }
+
     const asset = await downloadYouTubeVideoSourceWithYtDlp(sourceUrl);
     await storeConvertedVideoAsset(sourceUrl, provider, asset);
     return asset;
