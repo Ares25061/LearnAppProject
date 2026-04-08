@@ -59,6 +59,7 @@ type ResolvedAudioSource = {
     protocol?: string;
     provider?: string;
     ytDlpExtractorArgs?: string;
+    ytDlpUsesCookies?: boolean;
   };
   headers?: Record<string, string>;
   sourcePageUrl?: string;
@@ -119,6 +120,7 @@ type YtDlpAudioProbeResult = {
   extractorArgs?: string;
   metadata: YtDlpResolvedAudioMetadata;
   probeStrategy: string;
+  usesCookies: boolean;
   ytDlpBin: string;
 };
 
@@ -659,6 +661,7 @@ async function runYtDlpAudioProbe(
             extractorArgs: attempt.extractorArgs,
             metadata: JSON.parse(stdout) as YtDlpResolvedAudioMetadata,
             probeStrategy: attempt.label,
+            usesCookies: ytDlpContext.sharedArgs.includes("--cookies"),
             ytDlpBin,
           } satisfies YtDlpAudioProbeResult;
         } catch (error) {
@@ -731,6 +734,7 @@ function buildResolvedAudioSourceFromYtDlpMetadata(
     extractorArgs?: string;
     extraHeaders?: Record<string, string>;
     probeStrategy?: string;
+    usesCookies?: boolean;
   },
 ): ResolvedAudioSource {
   const selectedFormatFromFormats =
@@ -786,6 +790,7 @@ function buildResolvedAudioSourceFromYtDlpMetadata(
       protocol: formatProtocol ?? undefined,
       provider,
       ytDlpExtractorArgs: options?.extractorArgs,
+      ytDlpUsesCookies: options?.usesCookies,
     },
     directAsset: directAsset ?? undefined,
     headers: {
@@ -814,6 +819,7 @@ async function resolveYouTubeAudioSource(
       {
         extractorArgs: probe.extractorArgs,
         probeStrategy: probe.probeStrategy,
+        usesCookies: probe.usesCookies,
       },
     );
   } catch (error) {
@@ -1826,7 +1832,9 @@ async function downloadAudioSourceWithYtDlp(
   const ytDlpBin = await ensureYtDlpBin();
   const ytDlpContext =
     resolvedSource.debug?.provider === "youtube"
-      ? await createYouTubeYtDlpExecutionContext()
+      ? await createYouTubeYtDlpExecutionContext({
+          useConfiguredAuth: resolvedSource.debug?.ytDlpUsesCookies !== false,
+        })
       : {
           cleanup: async () => undefined,
           sharedArgs: [],
@@ -1913,7 +1921,9 @@ async function downloadAudioSourceAsMp3WithYtDlp(
   const ytDlpBin = await ensureYtDlpBin();
   const ytDlpContext =
     resolvedSource.debug?.provider === "youtube"
-      ? await createYouTubeYtDlpExecutionContext()
+      ? await createYouTubeYtDlpExecutionContext({
+          useConfiguredAuth: resolvedSource.debug?.ytDlpUsesCookies !== false,
+        })
       : {
           cleanup: async () => undefined,
           sharedArgs: [],
