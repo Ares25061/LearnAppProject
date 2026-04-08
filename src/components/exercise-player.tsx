@@ -4,6 +4,7 @@
 import {
   type DragEvent as ReactDragEvent,
   useEffect,
+  useEffectEvent,
   useMemo,
   useRef,
   useState,
@@ -204,34 +205,6 @@ type MatchingOpenableContent =
   | MatchingAudioContent
   | MatchingVideoContent
   | MatchingImageContent;
-type MatchingYouTubePlayer = {
-  destroy: () => void;
-  getCurrentTime?: () => number;
-  getDuration?: () => number;
-  getPlayerState?: () => number;
-  pauseVideo: () => void;
-  playVideo: () => void;
-  seekTo: (seconds: number, allowSeekAhead: boolean) => void;
-  setVolume?: (volume: number) => void;
-};
-type MatchingYouTubeApi = {
-  Player: new (
-    element: HTMLElement,
-    options: {
-      height?: string;
-      width?: string;
-      videoId: string;
-      playerVars?: Record<string, number | string>;
-      events?: {
-        onReady?: (event: { target: MatchingYouTubePlayer }) => void;
-        onStateChange?: (event: {
-          data: number;
-          target: MatchingYouTubePlayer;
-        }) => void;
-      };
-    },
-  ) => MatchingYouTubePlayer;
-};
 type MatchingEmbeddedVideoProvider = "youtube" | "rutube" | "vk";
 type MatchingEmbeddedVideoMeta = {
   embedUrl: string;
@@ -240,15 +213,6 @@ type MatchingEmbeddedVideoMeta = {
   thumbnailUrl?: string;
   videoId?: string;
 };
-
-declare global {
-  interface Window {
-    YT?: MatchingYouTubeApi;
-    onYouTubeIframeAPIReady?: () => void;
-  }
-}
-
-let matchingYouTubeApiPromise: Promise<MatchingYouTubeApi> | null = null;
 
 function getMatchingImageHeight(input: MatchingContent | MatchingImageContent) {
   const content =
@@ -880,7 +844,7 @@ function createMatchingCards(
     ...pairs.map((pair, index) => ({
       id: `left-${index}`,
       content: pair.left,
-      label: getMatchingContentSummary(pair.left),
+      label: getMatchingDragCardLabel(pair.left, "left"),
       role: "pair" as const,
       side: "left" as const,
       pairIndex: index,
@@ -891,7 +855,7 @@ function createMatchingCards(
       .map((item, index) => ({
         id: `extra-left-${index}`,
         content: item.content,
-        label: getMatchingContentSummary(item.content),
+        label: getMatchingDragCardLabel(item.content, "left"),
         role: "extra" as const,
         side: "left" as const,
         pairIndex: null,
@@ -902,7 +866,7 @@ function createMatchingCards(
     ...pairs.map((pair, index) => ({
       pairIndex: index,
       content: pair.right,
-      label: getMatchingContentSummary(pair.right),
+      label: getMatchingDragCardLabel(pair.right, "right"),
       role: "pair" as const,
       side: "right" as const,
       id: `right-${index}`,
@@ -913,7 +877,7 @@ function createMatchingCards(
       .map((item, index) => ({
         id: `extra-right-${index}`,
         content: item.content,
-        label: getMatchingContentSummary(item.content),
+        label: getMatchingDragCardLabel(item.content, "right"),
         role: "extra" as const,
         side: "right" as const,
         pairIndex: null,
@@ -1317,6 +1281,30 @@ function getMatchingConvertedAudioUrl(url: string) {
   return getConvertibleAudioProvider(url) ? buildConvertedAudioPath(url) : null;
 }
 
+function getMatchingSpokenCardTitle(side?: "left" | "right") {
+  if (side === "left") {
+    return "Audio A";
+  }
+
+  if (side === "right") {
+    return "Audio B";
+  }
+
+  return "Audio";
+}
+
+function getMatchingDragCardLabel(
+  content: MatchingContent,
+  side?: "left" | "right",
+) {
+  const normalized = normalizeMatchingSide(content);
+  if (normalized.kind === "spoken-text") {
+    return getMatchingSpokenCardTitle(side);
+  }
+
+  return getMatchingContentSummary(normalized);
+}
+
 const MATCHING_AUDIO_LOADING_HINT =
   "Подготовка и загрузка звука могут занять около 20 секунд.";
 const MATCHING_SESSION_AUDIO_CACHE_MAX_ENTRIES = 8;
@@ -1325,19 +1313,16 @@ const matchingSessionAudioFetches = new Map<string, Promise<string>>();
 
 type MatchingAudioFetchError = Error & {
   code?: string;
-  fallback?: "youtube_embed";
 };
 
 function createMatchingAudioFetchError(
   message: string,
   options?: {
     code?: string;
-    fallback?: "youtube_embed";
   },
 ) {
   const error = new Error(message) as MatchingAudioFetchError;
   error.code = options?.code;
-  error.fallback = options?.fallback;
   return error;
 }
 
@@ -1410,7 +1395,6 @@ async function resolveMatchingSessionAudioUrl(url: string) {
           | {
               code?: string;
               error?: string;
-              fallback?: "youtube_embed";
             }
           | null = null;
 
@@ -1418,7 +1402,6 @@ async function resolveMatchingSessionAudioUrl(url: string) {
           payload = (await response.json()) as {
             code?: string;
             error?: string;
-            fallback?: "youtube_embed";
           };
         } catch {
           payload = null;
@@ -1428,10 +1411,6 @@ async function resolveMatchingSessionAudioUrl(url: string) {
           payload?.error?.trim() || "Не удалось загрузить аудио.",
           {
             code: payload?.code?.trim() || undefined,
-            fallback:
-              payload?.fallback === "youtube_embed"
-                ? "youtube_embed"
-                : undefined,
           },
         );
       }
@@ -1476,62 +1455,10 @@ function buildMatchingVideoThumbnailPath(url: string) {
   return `/api/media/thumbnail?source=${encodeURIComponent(url)}`;
 }
 
-function loadMatchingYouTubeApi() {
-  if (typeof window === "undefined") {
-    return Promise.reject(
-      new Error("API \u0432\u0441\u0442\u0440\u043e\u0435\u043d\u043d\u043e\u0433\u043e \u043f\u043b\u0435\u0435\u0440\u0430 \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d \u043d\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0435."),
-    );
-  }
-
-  if (window.YT?.Player) {
-    return Promise.resolve(window.YT);
-  }
-
-  if (matchingYouTubeApiPromise) {
-    return matchingYouTubeApiPromise;
-  }
-
-  matchingYouTubeApiPromise = new Promise<MatchingYouTubeApi>(
-    (resolve, reject) => {
-      const previousReadyHandler = window.onYouTubeIframeAPIReady;
-
-      window.onYouTubeIframeAPIReady = () => {
-        previousReadyHandler?.();
-        if (window.YT?.Player) {
-          resolve(window.YT);
-        } else {
-          reject(
-            new Error(
-              "API \u0432\u0441\u0442\u0440\u043e\u0435\u043d\u043d\u043e\u0433\u043e \u043f\u043b\u0435\u0435\u0440\u0430 \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u043b\u0441\u044f \u0431\u0435\u0437 Player.",
-            ),
-          );
-        }
-      };
-
-      const existingScript = document.getElementById("matching-youtube-api");
-      if (existingScript) {
-        return;
-      }
-
-      const script = document.createElement("script");
-      script.id = "matching-youtube-api";
-      script.src = "https://www.youtube.com/iframe_api";
-      script.async = true;
-      script.onerror = () =>
-        reject(
-          new Error("\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c API \u0432\u0441\u0442\u0440\u043e\u0435\u043d\u043d\u043e\u0433\u043e \u043f\u043b\u0435\u0435\u0440\u0430."),
-        );
-      document.head.append(script);
-    },
-  );
-
-  return matchingYouTubeApiPromise;
-}
 function isMatchingAudioPlayable(url: string) {
   return Boolean(
     getMatchingMediaType("audio", url) ||
       getMatchingMediaType("video", url) ||
-      getMatchingYouTubeMeta(url) ||
       getMatchingConvertedAudioUrl(url),
   );
 }
@@ -1965,6 +1892,7 @@ function MatchingNativeAudioPlayer({
 
 function MatchingModalAudioPlayerShell({
   duration,
+  errorMessage = null,
   isLoading,
   isReady,
   mediaHost = null,
@@ -1976,6 +1904,7 @@ function MatchingModalAudioPlayerShell({
   volume,
 }: Readonly<{
   duration: number;
+  errorMessage?: string | null;
   isLoading: boolean;
   isReady: boolean;
   mediaHost?: ReactNode;
@@ -2042,6 +1971,7 @@ function MatchingModalAudioPlayerShell({
           </span>
         </div>
       </div>
+      {errorMessage ? <p className="editor-hint">{errorMessage}</p> : null}
     </div>
   );
 }
@@ -2066,6 +1996,7 @@ function MatchingModalAudioPlayer({
   const [isResolvingSrc, setIsResolvingSrc] = useState(
     initialAudioSourceState.isResolvingSrc,
   );
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(Boolean(src.trim()));
   const [isReady, setIsReady] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -2080,17 +2011,18 @@ function MatchingModalAudioPlayer({
     setDuration(0);
     setPlaying(false);
     setIsReady(false);
+    setErrorMessage(null);
     setIsLoading(Boolean(src.trim()));
   }, [initialVolume, src]);
 
-  const reportPlaybackError = (error: MatchingAudioFetchError) => {
+  const reportPlaybackError = useEffectEvent((error: MatchingAudioFetchError) => {
     if (hasReportedErrorRef.current) {
       return;
     }
 
     hasReportedErrorRef.current = true;
     onPlaybackError?.(error);
-  };
+  });
 
   useEffect(() => {
     const nextSourceState = getMatchingModalAudioSourceState(src);
@@ -2122,6 +2054,11 @@ function MatchingModalAudioPlayer({
         setPlaying(false);
         setDuration(0);
         setPosition(0);
+        setErrorMessage(
+          error instanceof Error
+            ? error.message
+            : "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c \u0430\u0443\u0434\u0438\u043e.",
+        );
         reportPlaybackError(
           error instanceof Error
             ? (error as MatchingAudioFetchError)
@@ -2165,6 +2102,7 @@ function MatchingModalAudioPlayer({
     const handleCanPlay = () => {
       setIsReady(true);
       setIsLoading(false);
+      setErrorMessage(null);
       syncState();
     };
 
@@ -2180,6 +2118,7 @@ function MatchingModalAudioPlayer({
     const handlePlaying = () => {
       setIsReady(true);
       setIsLoading(false);
+      setErrorMessage(null);
       syncState();
     };
 
@@ -2192,6 +2131,9 @@ function MatchingModalAudioPlayer({
       setIsReady(false);
       setIsLoading(false);
       syncState();
+      setErrorMessage(
+        "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0432\u043e\u0441\u043f\u0440\u043e\u0438\u0437\u0432\u0435\u0441\u0442\u0438 \u0430\u0443\u0434\u0438\u043e.",
+      );
       reportPlaybackError(
         createMatchingAudioFetchError("Не удалось воспроизвести аудио."),
       );
@@ -2271,6 +2213,7 @@ function MatchingModalAudioPlayer({
   return (
     <MatchingModalAudioPlayerShell
       duration={duration}
+      errorMessage={errorMessage}
       isLoading={isLoading || isResolvingSrc}
       isReady={isReady}
       mediaHost={
@@ -2287,169 +2230,6 @@ function MatchingModalAudioPlayer({
       onSeek={handleSeek}
       onToggle={handleTogglePlayback}
       onVolumeChange={setVolume}
-    />
-  );
-}
-
-function MatchingModalYouTubeAudioPlayer({
-  startSeconds,
-  videoId,
-  volume,
-}: Readonly<{
-  startSeconds: number;
-  videoId: string;
-  volume: number;
-}>) {
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const playerRef = useRef<MatchingYouTubePlayer | null>(null);
-  const intervalRef = useRef<number | null>(null);
-  const currentVolumeRef = useRef(volume);
-  const [isLoading, setIsLoading] = useState(true);
-  const [ready, setReady] = useState(false);
-  const [playing, setPlaying] = useState(false);
-  const [duration, setDuration] = useState(0);
-  const [position, setPosition] = useState(startSeconds);
-  const [currentVolume, setCurrentVolume] = useState(volume);
-
-  useEffect(() => {
-    setCurrentVolume(volume);
-  }, [volume]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setReady(false);
-    setIsLoading(true);
-    setPlaying(false);
-    setDuration(0);
-    setPosition(startSeconds);
-
-    const syncPlayerState = () => {
-      const player = playerRef.current;
-      if (!player) {
-        return;
-      }
-
-      const nextDuration =
-        typeof player.getDuration === "function"
-          ? Math.max(player.getDuration() || 0, 0)
-          : 0;
-      const nextPosition =
-        typeof player.getCurrentTime === "function"
-          ? Math.max(player.getCurrentTime() || 0, 0)
-          : 0;
-      const state =
-        typeof player.getPlayerState === "function" ? player.getPlayerState() : -1;
-
-      setDuration(nextDuration);
-      setPosition(nextPosition);
-      setPlaying(state === 1);
-      setIsLoading(state === 3 || state === -1 || state === 5);
-    };
-
-    void loadMatchingYouTubeApi()
-      .then((yt) => {
-        if (cancelled || !hostRef.current) {
-          return;
-        }
-
-        playerRef.current = new yt.Player(hostRef.current, {
-          height: "1",
-          width: "1",
-          videoId,
-          playerVars: {
-            autoplay: 1,
-            controls: 0,
-            playsinline: 1,
-            rel: 0,
-            start: startSeconds,
-          },
-          events: {
-            onReady: ({ target }) => {
-              if (cancelled) {
-                return;
-              }
-
-              if (startSeconds > 0) {
-                target.seekTo(startSeconds, true);
-              }
-              target.setVolume?.(currentVolumeRef.current);
-              setReady(true);
-              setIsLoading(true);
-              target.playVideo();
-              syncPlayerState();
-            },
-            onStateChange: () => {
-              if (cancelled) {
-                return;
-              }
-              syncPlayerState();
-            },
-          },
-        });
-
-        intervalRef.current = window.setInterval(syncPlayerState, 400);
-      })
-      .catch(() => {
-        setReady(false);
-        setIsLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-      if (intervalRef.current !== null) {
-        window.clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-      playerRef.current?.destroy();
-      playerRef.current = null;
-    };
-  }, [startSeconds, videoId]);
-
-  useEffect(() => {
-    currentVolumeRef.current = currentVolume;
-    playerRef.current?.setVolume?.(currentVolume);
-  }, [currentVolume]);
-
-  const handleTogglePlayback = () => {
-    const player = playerRef.current;
-    if (!player) {
-      return;
-    }
-
-    if (playing) {
-      setIsLoading(false);
-      player.pauseVideo();
-      setPlaying(false);
-      return;
-    }
-
-    setIsLoading(true);
-    player.playVideo();
-    setPlaying(true);
-  };
-
-  const handleSeek = (nextValue: number) => {
-    setIsLoading(true);
-    setPosition(nextValue);
-    playerRef.current?.seekTo(nextValue, true);
-  };
-
-  return (
-    <MatchingModalAudioPlayerShell
-      duration={duration}
-      isLoading={isLoading}
-      isReady={ready}
-      mediaHost={
-        <div className="matching-audio-player__host" aria-hidden="true">
-          <div ref={hostRef} />
-        </div>
-      }
-      playing={playing}
-      position={position}
-      volume={currentVolume}
-      onSeek={handleSeek}
-      onToggle={handleTogglePlayback}
-      onVolumeChange={setCurrentVolume}
     />
   );
 }
@@ -2474,11 +2254,13 @@ function MatchingSpokenCardIcon() {
 }
 
 function MatchingCardContent({
+  cardSide,
   cardHeight,
   cardWidth,
   content,
   onOpenMedia,
 }: Readonly<{
+  cardSide?: "left" | "right";
   cardHeight: number;
   cardWidth: number;
   content: MatchingContent;
@@ -2489,24 +2271,30 @@ function MatchingCardContent({
 
   switch (normalized.kind) {
     case "spoken-text": {
+      const spokenTitle = getMatchingSpokenCardTitle(cardSide);
+      const canSpeak = Boolean(normalized.text.trim());
       return (
         <div className={`${contentClassName} matching-card-content--spoken`}>
-          <span className="matching-spoken-card">
+          <span className="matching-spoken-card" aria-hidden="true">
             <MatchingSpokenCardIcon />
           </span>
-          <button
-            className="ghost-button matching-card-action"
-            data-card-interactive="true"
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              if (normalized.text.trim()) {
-                speakMatchingText(normalized.text);
-              }
-            }}
-          >
-            {"\u041e\u0437\u0432\u0443\u0447\u0438\u0442\u044c"}
-          </button>
+          <div className="matching-spoken-card__body">
+            <strong className="matching-spoken-card__title">{spokenTitle}</strong>
+            <button
+              className="ghost-button matching-card-action"
+              data-card-interactive="true"
+              disabled={!canSpeak}
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                if (canSpeak) {
+                  speakMatchingText(normalized.text);
+                }
+              }}
+            >
+              {"\u041e\u0437\u0432\u0443\u0447\u0438\u0442\u044c"}
+            </button>
+          </div>
         </div>
       );
     }
@@ -2711,199 +2499,6 @@ function MatchingCardContent({
     }
   }
 }
-function MatchingYouTubeAudioPlayer({
-  startSeconds,
-  videoId,
-  volume,
-}: Readonly<{
-  startSeconds: number;
-  videoId: string;
-  volume: number;
-}>) {
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const playerRef = useRef<MatchingYouTubePlayer | null>(null);
-  const intervalRef = useRef<number | null>(null);
-  const currentVolumeRef = useRef(volume);
-  const [ready, setReady] = useState(false);
-  const [playing, setPlaying] = useState(false);
-  const [duration, setDuration] = useState(0);
-  const [position, setPosition] = useState(startSeconds);
-  const [currentVolume, setCurrentVolume] = useState(volume);
-
-  useEffect(() => {
-    setCurrentVolume(volume);
-  }, [volume]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setReady(false);
-    setPlaying(false);
-    setDuration(0);
-    setPosition(startSeconds);
-
-    const syncPlayerState = () => {
-      const player = playerRef.current;
-      if (!player) {
-        return;
-      }
-
-      const nextDuration =
-        typeof player.getDuration === "function"
-          ? Math.max(player.getDuration() || 0, 0)
-          : 0;
-      const nextPosition =
-        typeof player.getCurrentTime === "function"
-          ? Math.max(player.getCurrentTime() || 0, 0)
-          : 0;
-      const state =
-        typeof player.getPlayerState === "function" ? player.getPlayerState() : -1;
-
-      setDuration(nextDuration);
-      setPosition(nextPosition);
-      setPlaying(state === 1 || state === 3);
-    };
-
-    void loadMatchingYouTubeApi()
-      .then((yt) => {
-        if (cancelled || !hostRef.current) {
-          return;
-        }
-
-        playerRef.current = new yt.Player(hostRef.current, {
-          height: "1",
-          width: "1",
-          videoId,
-          playerVars: {
-            autoplay: 1,
-            controls: 0,
-            playsinline: 1,
-            rel: 0,
-            start: startSeconds,
-          },
-          events: {
-            onReady: ({ target }) => {
-              if (cancelled) {
-                return;
-              }
-
-              if (startSeconds > 0) {
-                target.seekTo(startSeconds, true);
-              }
-              target.setVolume?.(currentVolumeRef.current);
-              target.playVideo();
-              setReady(true);
-              syncPlayerState();
-            },
-            onStateChange: () => {
-              if (cancelled) {
-                return;
-              }
-              syncPlayerState();
-            },
-          },
-        });
-
-        intervalRef.current = window.setInterval(syncPlayerState, 400);
-      })
-      .catch(() => {
-        setReady(false);
-      });
-
-    return () => {
-      cancelled = true;
-      if (intervalRef.current !== null) {
-        window.clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-      playerRef.current?.destroy();
-      playerRef.current = null;
-    };
-  }, [startSeconds, videoId]);
-
-  useEffect(() => {
-    currentVolumeRef.current = currentVolume;
-    playerRef.current?.setVolume?.(currentVolume);
-  }, [currentVolume]);
-
-  const handleToggle = () => {
-    const player = playerRef.current;
-    if (!player) {
-      return;
-    }
-
-    if (playing) {
-      player.pauseVideo();
-      setPlaying(false);
-      return;
-    }
-
-    player.playVideo();
-    setPlaying(true);
-  };
-
-  return (
-    <div className="matching-youtube-audio">
-      <div className="matching-youtube-audio__host" aria-hidden="true">
-        <div ref={hostRef} />
-      </div>
-      <div className="matching-youtube-audio__controls">
-        <button
-          className="player-button"
-          disabled={!ready}
-          type="button"
-          onClick={handleToggle}
-        >
-          {ready
-            ? playing
-              ? "\u041f\u0430\u0443\u0437\u0430"
-              : "\u0421\u043b\u0443\u0448\u0430\u0442\u044c"
-            : "\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430..."}
-        </button>
-        <input
-          className="matching-youtube-audio__range"
-          disabled={!ready || duration <= 0}
-          max={Math.max(duration, startSeconds, 1)}
-          min={0}
-          step={1}
-          type="range"
-          value={Math.min(position, Math.max(duration, startSeconds, 1))}
-          onChange={(event) => {
-            const next = Number.parseFloat(event.target.value);
-            setPosition(next);
-            playerRef.current?.seekTo(next, true);
-          }}
-        />
-        <div className="matching-youtube-audio__footer">
-          <label className="matching-youtube-audio__volume" title="Громкость">
-            <span>Громкость</span>
-            <input
-              aria-label="Громкость"
-              max={100}
-              min={0}
-              step={5}
-              type="range"
-              value={currentVolume}
-              onChange={(event) =>
-                setCurrentVolume(
-                  Math.max(
-                    0,
-                    Math.min(
-                      100,
-                      Number.parseInt(event.currentTarget.value, 10) || 0,
-                    ),
-                  ),
-                )
-              }
-            />
-          </label>
-          <span className="matching-youtube-audio__time">
-            {formatMatchingMediaTime(position)} / {formatMatchingMediaTime(duration)}
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
 function MatchingMediaDialog({
   media,
   onClose,
@@ -2911,10 +2506,6 @@ function MatchingMediaDialog({
   media: MatchingOpenableContent | null;
   onClose: () => void;
 }>) {
-  const [audioFallbackMode, setAudioFallbackMode] = useState<
-    "none" | "youtube-iframe"
-  >("none");
-
   useEffect(() => {
     if (!media) {
       return;
@@ -2929,10 +2520,6 @@ function MatchingMediaDialog({
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
   }, [media, onClose]);
-
-  useEffect(() => {
-    setAudioFallbackMode("none");
-  }, [media?.kind, media?.url]);
 
   if (!media) {
     return null;
@@ -2967,10 +2554,6 @@ function MatchingMediaDialog({
             ? "\u0410\u0443\u0434\u0438\u043e"
             : "\u0412\u0438\u0434\u0435\u043e");
   const title = displayTitle;
-  const showYouTubeIframeFallback =
-    media.kind === "audio" &&
-    audioFallbackMode === "youtube-iframe" &&
-    Boolean(audioEmbeddedMeta?.videoId);
 
   return (
     <div
@@ -3033,25 +2616,6 @@ function MatchingMediaDialog({
             <div className="matching-card-placeholder">
               {"\u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u043d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0442\u043a\u0440\u044b\u0442\u044c \u043a\u0430\u043a \u0430\u0443\u0434\u0438\u043e."}
             </div>
-          ) : showYouTubeIframeFallback && audioEmbeddedMeta?.videoId ? (
-            <>
-              <p className="editor-hint">
-                {"YouTube не дал отдельный аудиопоток, поэтому открыт встроенный плеер."}
-              </p>
-              <div className="matching-media-modal__frame-wrap">
-                <iframe
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                  allowFullScreen
-                  className="matching-media-modal__frame"
-                  referrerPolicy="strict-origin-when-cross-origin"
-                  src={buildMatchingYouTubeEmbedUrl(
-                    audioEmbeddedMeta.videoId,
-                    startSeconds,
-                  )}
-                  title={title}
-                />
-              </div>
-            </>
           ) : media.kind === "audio" && convertedAudioUrl ? (
             <>
               <p className="editor-hint">
@@ -3060,32 +2624,8 @@ function MatchingMediaDialog({
               <MatchingModalAudioPlayer
                 autoPlay
                 initialVolume={audioVolume}
-                onPlaybackError={() => {
-                  if (audioEmbeddedMeta?.videoId) {
-                    setAudioFallbackMode("youtube-iframe");
-                  }
-                }}
                 src={convertedAudioUrl}
               />
-            </>
-          ) : media.kind === "audio" && audioEmbeddedMeta?.videoId ? (
-            <>
-              <p className="editor-hint">
-                {"Открыт встроенный плеер YouTube."}
-              </p>
-              <div className="matching-media-modal__frame-wrap">
-                <iframe
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                  allowFullScreen
-                  className="matching-media-modal__frame"
-                  referrerPolicy="strict-origin-when-cross-origin"
-                  src={buildMatchingYouTubeEmbedUrl(
-                    audioEmbeddedMeta.videoId,
-                    startSeconds,
-                  )}
-                  title={title}
-                />
-              </div>
             </>
           ) : media.kind === "audio" ? (
             <MatchingModalAudioPlayer
@@ -3640,7 +3180,7 @@ function MatchingPairsActivity({
               }`}
               key={card.id}
               role="group"
-              aria-label={getMatchingContentAriaLabel(normalizedCardContent)}
+              aria-label={card.label}
               style={{
                 left: `${card.x}px`,
                 top: `${card.y}px`,
@@ -3698,6 +3238,7 @@ function MatchingPairsActivity({
               }}
             >
               <MatchingCardContent
+                cardSide={card.side}
                 cardHeight={card.height}
                 cardWidth={card.width}
                 content={normalizedCardContent}

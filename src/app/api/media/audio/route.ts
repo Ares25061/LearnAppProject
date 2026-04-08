@@ -20,7 +20,6 @@ type CachedAudioEntry = {
 type AudioErrorPayload = {
   code: string;
   error: string;
-  fallback?: "youtube_embed";
 };
 
 const audioCache = new Map<string, CachedAudioEntry>();
@@ -90,7 +89,9 @@ function getAudioFailurePayload(
   error: unknown,
 ): AudioErrorPayload {
   const rawMessage =
-    error instanceof Error ? error.message : "Не удалось подготовить аудио.";
+    error instanceof Error
+      ? error.message
+      : "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u043e\u0434\u0433\u043e\u0442\u043e\u0432\u0438\u0442\u044c \u0430\u0443\u0434\u0438\u043e.";
 
   if (
     provider === "youtube" &&
@@ -101,8 +102,7 @@ function getAudioFailurePayload(
     return {
       code: "youtube_bot_check",
       error:
-        "YouTube временно не дал подготовить отдельный аудиопоток. Открываем встроенный плеер YouTube.",
-      fallback: "youtube_embed",
+        "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u043e\u0434\u0433\u043e\u0442\u043e\u0432\u0438\u0442\u044c mp3 \u0434\u043b\u044f YouTube: \u0441\u0435\u0440\u0432\u0438\u0441 \u0437\u0430\u043f\u0440\u043e\u0441\u0438\u043b \u0434\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u0443\u044e \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0443.",
     };
   }
 
@@ -110,14 +110,14 @@ function getAudioFailurePayload(
     return {
       code: "youtube_audio_prepare_failed",
       error:
-        "Не удалось подготовить отдельный аудиопоток YouTube. Открываем встроенный плеер YouTube.",
-      fallback: "youtube_embed",
+        "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u043e\u0434\u0433\u043e\u0442\u043e\u0432\u0438\u0442\u044c mp3 \u0434\u043b\u044f YouTube.",
     };
   }
 
   return {
     code: "audio_prepare_failed",
-    error: "Не удалось подготовить аудио для воспроизведения.",
+    error:
+      "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u043e\u0434\u0433\u043e\u0442\u043e\u0432\u0438\u0442\u044c \u0430\u0443\u0434\u0438\u043e \u0434\u043b\u044f \u0432\u043e\u0441\u043f\u0440\u043e\u0438\u0437\u0432\u0435\u0434\u0435\u043d\u0438\u044f.",
   };
 }
 
@@ -197,7 +197,7 @@ export async function GET(request: Request) {
       {
         code: "invalid_audio_source",
         error:
-          "Нужна корректная ссылка на YouTube, VK Видео или Rutube для подготовки аудио.",
+          "\u041d\u0443\u0436\u043d\u0430 \u043a\u043e\u0440\u0440\u0435\u043a\u0442\u043d\u0430\u044f \u0441\u0441\u044b\u043b\u043a\u0430 \u043d\u0430 YouTube, VK \u0412\u0438\u0434\u0435\u043e \u0438\u043b\u0438 Rutube \u0434\u043b\u044f \u043f\u043e\u0434\u0433\u043e\u0442\u043e\u0432\u043a\u0438 \u0430\u0443\u0434\u0438\u043e.",
       } satisfies AudioErrorPayload,
       { status: 400 },
     );
@@ -240,7 +240,6 @@ export async function GET(request: Request) {
 
     logAudioRequest("error", requestId, "Audio request failed", {
       errorCode: payload.code,
-      fallback: payload.fallback ?? null,
       message: payload.error,
       provider,
       rawMessage: error instanceof Error ? error.message : String(error),

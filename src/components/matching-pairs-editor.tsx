@@ -48,7 +48,7 @@ function MatchingTypeIcon({
       return (
         <svg aria-hidden="true" viewBox="0 0 24 24">
           <path
-            d="M6 9a3 3 0 1 1 6 0v3a3 3 0 1 1-6 0V9Zm3 9v2m-4-2a4 4 0 0 0 8 0m3-6h2m1-3 2 3-2 3"
+            d="M4 13.5V10a2 2 0 0 1 2-2h1.2A2.8 2.8 0 0 1 10 10.8v5.4A2.8 2.8 0 0 1 7.2 19H6a2 2 0 0 1-2-2v-3.5Zm10 0V10a2 2 0 0 1 2-2h1.2a2.8 2.8 0 0 1 2.8 2.8v5.4a2.8 2.8 0 0 1-2.8 2.8H16a2 2 0 0 1-2-2v-3.5ZM9 9.5a3 3 0 0 1 6 0"
             fill="none"
             stroke="currentColor"
             strokeLinecap="round"

@@ -160,18 +160,23 @@ const YOUTUBE_AUDIO_PROBE_ATTEMPTS: readonly YtDlpAudioProbeAttempt[] = [
     timeoutMs: 20_000,
   },
   {
-    extractorArgs: "youtube:player_client=android,ios,web_safari",
-    label: "android-ios-web-safari",
+    extractorArgs: "youtube:player_client=android_vr",
+    label: "android-vr",
+    timeoutMs: 20_000,
+  },
+  {
+    extractorArgs: "youtube:player_client=web_embedded",
+    label: "web-embedded",
+    timeoutMs: 20_000,
+  },
+  {
+    extractorArgs: "youtube:player_client=web_safari",
+    label: "web-safari",
     timeoutMs: 20_000,
   },
   {
     extractorArgs: "youtube:player_client=android",
-    label: "android-only",
-    timeoutMs: 20_000,
-  },
-  {
-    extractorArgs: "youtube:player_client=mweb,android",
-    label: "mweb-android",
+    label: "android",
     timeoutMs: 20_000,
   },
 ] as const;
@@ -1626,6 +1631,92 @@ async function downloadAudioSourceWithYtDlp(
   }
 }
 
+async function downloadAudioSourceAsMp3WithYtDlp(
+  resolvedSource: ResolvedAudioSource,
+): Promise<ConvertedAudioAsset> {
+  const ytDlpBin = await ensureYtDlpBin();
+  const ffmpegBin = resolveFfmpegBin();
+  const extractorArgs = resolvedSource.debug?.ytDlpExtractorArgs?.trim();
+  const formatId = resolvedSource.debug?.formatId?.trim();
+  const sourcePageUrl = resolvedSource.sourcePageUrl?.trim();
+
+  if (!sourcePageUrl) {
+    throw new Error("Missing source page URL for yt-dlp mp3 extraction.");
+  }
+
+  const tempDir = await mkdtemp(path.join(tmpdir(), "learnapp-audio-"));
+  const outputTemplate = path.join(tempDir, "asset.%(ext)s");
+
+  try {
+    const { stdout } = await execFileAsync(
+      ytDlpBin,
+      [
+        "--ignore-config",
+        "--no-playlist",
+        "--no-warnings",
+        "--no-progress",
+        "--force-overwrites",
+        "--no-part",
+        "--ffmpeg-location",
+        ffmpegBin,
+        ...(extractorArgs ? ["--extractor-args", extractorArgs] : []),
+        "-f",
+        formatId || "bestaudio/best",
+        "-x",
+        "--audio-format",
+        "mp3",
+        "--audio-quality",
+        "0",
+        "-o",
+        outputTemplate,
+        "--print",
+        "after_move:filepath",
+        sourcePageUrl,
+      ],
+      {
+        timeout: AUDIO_DOWNLOAD_TIMEOUT_MS,
+        windowsHide: true,
+        maxBuffer: 4 * 1024 * 1024,
+      },
+    );
+
+    const outputFilePath =
+      stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .at(-1) ?? "";
+    const resolvedOutputPath = outputFilePath
+      ? path.isAbsolute(outputFilePath)
+        ? outputFilePath
+        : path.join(tempDir, outputFilePath)
+      : "";
+    const filePath =
+      (resolvedOutputPath && isExecutableFile(resolvedOutputPath)
+        ? resolvedOutputPath
+        : "") ||
+      path.join(
+        tempDir,
+        (await readdir(tempDir)).find((name) => name.toLowerCase().endsWith(".mp3")) ?? "",
+      );
+
+    if (!filePath || !isExecutableFile(filePath)) {
+      throw new Error("yt-dlp did not produce an mp3 file.");
+    }
+
+    return {
+      buffer: await readFile(filePath),
+      contentType: "audio/mpeg",
+      extension: "mp3",
+    };
+  } finally {
+    await rm(tempDir, {
+      force: true,
+      recursive: true,
+    }).catch(() => undefined);
+  }
+}
+
 export async function convertAudioSourceToMp3Buffer(
   resolvedSource: ResolvedAudioSource,
 ) {
@@ -1698,6 +1789,27 @@ export async function convertAudioSourceToMp3Buffer(
 export async function convertAudioSourceToPlayableAsset(
   resolvedSource: ResolvedAudioSource,
 ): Promise<ConvertedAudioAsset> {
+  if (resolvedSource.debug?.provider === "youtube") {
+    try {
+      return await downloadAudioSourceAsMp3WithYtDlp(resolvedSource);
+    } catch (error) {
+      console.warn("[media/audio] yt-dlp mp3 extraction failed, falling back to ffmpeg transcode", {
+        error: error instanceof Error ? error.message : String(error),
+        formatId: resolvedSource.debug?.formatId,
+        probeStrategy: resolvedSource.debug?.probeStrategy,
+        provider: resolvedSource.debug?.provider,
+        sourcePageUrl: resolvedSource.sourcePageUrl,
+      });
+    }
+
+    const buffer = await convertAudioSourceToMp3Buffer(resolvedSource);
+    return {
+      buffer,
+      contentType: "audio/mpeg",
+      extension: "mp3",
+    };
+  }
+
   if (resolvedSource.directAsset) {
     try {
       const downloadedAsset = await downloadAudioSourceBuffer(resolvedSource);

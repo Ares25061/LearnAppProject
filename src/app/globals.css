@@ -4483,11 +4483,11 @@ body {
 }
 
 .matching-card-content--spoken {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  justify-content: center;
+  justify-content: start;
   gap: 12px;
-  flex-wrap: nowrap;
   min-height: 100%;
 }
 
@@ -4507,8 +4507,23 @@ body {
   height: 24px;
 }
 
+.matching-spoken-card__body {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.matching-spoken-card__title {
+  color: var(--accent-deep);
+  font-size: 0.86rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.15;
+  text-transform: uppercase;
+}
+
 .matching-card-content--spoken .matching-card-action {
-  justify-self: auto;
+  justify-self: start;
   display: inline-flex;
   align-items: center;
   gap: 8px;
