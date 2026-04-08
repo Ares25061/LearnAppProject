@@ -100,6 +100,22 @@ async function initialize(pool: Pool) {
         ON DELETE SET NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS media_audio_cache (
+      id CHAR(64) PRIMARY KEY,
+      source_url TEXT NOT NULL,
+      provider VARCHAR(32) NOT NULL,
+      content_type VARCHAR(128) NOT NULL,
+      extension VARCHAR(16) NOT NULL,
+      audio_blob LONGBLOB NOT NULL,
+      byte_length INT UNSIGNED NOT NULL,
+      created_at VARCHAR(40) NOT NULL,
+      updated_at VARCHAR(40) NOT NULL,
+      last_accessed_at VARCHAR(40) NOT NULL,
+      INDEX idx_media_audio_cache_provider_updated (provider, updated_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
 }
 
 export async function getDb() {

@@ -3,6 +3,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import JSZip from "jszip";
 import {
+  getStoredAudioAsset,
+  storeConvertedAudioAsset,
+} from "@/lib/media-audio-cache";
+import {
   convertAudioSourceToPlayableAsset,
   resolveMediaThumbnailUrl,
   verifyConvertibleAudioSource,
@@ -667,9 +671,34 @@ async function localizeDraftForOfflineExport(input: AnyExerciseDraft) {
 
     const nextPromise = (async () => {
       if (kind === "audio" && getConvertibleAudioProvider(source)) {
+        const provider = getConvertibleAudioProvider(source);
+
+        if (provider) {
+          const storedAsset = await getStoredAudioAsset(source);
+          if (storedAsset) {
+            return persistArchiveAsset(
+              "audio",
+              {
+                buffer: storedAsset.buffer,
+                contentType: storedAsset.contentType,
+                url: source,
+              },
+              source,
+              storedAsset.extension,
+            );
+          }
+        }
+
         try {
           const resolvedSource = await verifyConvertibleAudioSource(source);
           const convertedAsset = await convertAudioSourceToPlayableAsset(resolvedSource);
+
+          if (provider) {
+            await storeConvertedAudioAsset(source, provider, convertedAsset).catch(
+              () => undefined,
+            );
+          }
+
           return persistArchiveAsset(
             "audio",
             {

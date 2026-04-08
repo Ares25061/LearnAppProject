@@ -1475,10 +1475,9 @@ function getMatchingModalAudioSourceState(url: string) {
     };
   }
 
-  const cachedUrl = getMatchingCachedSessionAudioUrl(trimmed);
   return {
-    playbackSrc: cachedUrl ?? "",
-    isResolvingSrc: !cachedUrl,
+    playbackSrc: trimmed,
+    isResolvingSrc: false,
   };
 }
 

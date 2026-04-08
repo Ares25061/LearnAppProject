@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
 import {
+  buildMediaAudioCacheId,
+  getStoredAudioAsset,
+  storeConvertedAudioAsset,
+} from "@/lib/media-audio-cache";
+import {
   convertAudioSourceToPlayableAsset,
   type ConvertedAudioAsset,
   verifyConvertibleAudioSource,
@@ -149,6 +154,19 @@ async function getAudioBufferForSource(
   }
 
   const conversionPromise = (async () => {
+    const storedAsset = await getStoredAudioAsset(sourceUrl);
+    if (storedAsset) {
+      setCachedAudioBuffer(sourceUrl, storedAsset);
+      logAudioRequest("info", requestId, "Serving audio from persistent cache", {
+        contentType: storedAsset.contentType,
+        extension: storedAsset.extension,
+        provider,
+        size: storedAsset.buffer.byteLength,
+        sourceHost,
+      });
+      return storedAsset;
+    }
+
     const resolvedSource = await verifyConvertibleAudioSource(sourceUrl);
     logAudioRequest("info", requestId, "Resolved audio source", {
       directAsset: resolvedSource.directAsset?.extension ?? null,
@@ -165,6 +183,15 @@ async function getAudioBufferForSource(
     });
 
     const asset = await convertAudioSourceToPlayableAsset(resolvedSource);
+    try {
+      await storeConvertedAudioAsset(sourceUrl, provider, asset);
+    } catch (error) {
+      logAudioRequest("warn", requestId, "Failed to store prepared audio in persistent cache", {
+        message: error instanceof Error ? error.message : String(error),
+        provider,
+        sourceHost,
+      });
+    }
     setCachedAudioBuffer(sourceUrl, asset);
     return asset;
   })();
@@ -230,9 +257,10 @@ export async function GET(request: Request) {
     return new Response(responseBody, {
       headers: {
         "Content-Type": audioAsset.contentType,
-        "Cache-Control": "private, max-age=1800",
+        "Cache-Control": "private, max-age=31536000, immutable",
         "Content-Disposition": `inline; filename="${provider}-audio.${audioAsset.extension}"`,
         "Content-Length": String(audioAsset.buffer.byteLength),
+        ETag: `"${buildMediaAudioCacheId(sourceUrl)}-${audioAsset.buffer.byteLength}"`,
       },
     });
   } catch (error) {

@@ -110,6 +110,7 @@ type YtDlpResolvedAudioFormat = {
 
 type YtDlpAudioProbeAttempt = {
   extractorArgs?: string;
+  formatSelector?: string;
   label: string;
   timeoutMs?: number;
 };
@@ -150,44 +151,64 @@ const YT_DLP_AUDIO_PROBE_BASE_ARGS = [
   "--ignore-config",
   "--no-playlist",
   "--no-warnings",
-  "-f",
-  "bestaudio/best",
   "--dump-single-json",
 ] as const;
+const DEFAULT_YT_DLP_AUDIO_FORMAT_SELECTOR = "bestaudio/best";
+const HLS_FRIENDLY_YT_DLP_AUDIO_FORMAT_SELECTOR =
+  "bestaudio[protocol*=m3u8]/bestaudio[protocol*=https]/bestaudio/best";
 const YOUTUBE_AUDIO_PROBE_ATTEMPTS: readonly YtDlpAudioProbeAttempt[] = [
   {
+    extractorArgs:
+      "youtube:player_client=default,ios,web_safari,web_embedded,tv_simply,tv,android_sdkless,android_vr,android;formats=incomplete",
+    formatSelector: HLS_FRIENDLY_YT_DLP_AUDIO_FORMAT_SELECTOR,
+    label: "multi-client-hls",
+    timeoutMs: 12_000,
+  },
+  {
     label: "default",
-    timeoutMs: 20_000,
+    timeoutMs: 12_000,
   },
   {
-    extractorArgs: "youtube:player_client=android_vr",
-    label: "android-vr",
-    timeoutMs: 20_000,
-  },
-  {
-    extractorArgs: "youtube:player_client=web_embedded",
-    label: "web-embedded",
-    timeoutMs: 20_000,
-  },
-  {
-    extractorArgs: "youtube:player_client=web_safari",
-    label: "web-safari",
-    timeoutMs: 20_000,
-  },
-  {
-    extractorArgs: "youtube:player_client=tv_simply",
+    extractorArgs: "youtube:player_client=tv_simply;formats=incomplete",
     label: "tv-simply",
-    timeoutMs: 20_000,
+    timeoutMs: 10_000,
   },
   {
-    extractorArgs: "youtube:player_client=tv",
+    extractorArgs: "youtube:player_client=ios;formats=incomplete",
+    formatSelector: HLS_FRIENDLY_YT_DLP_AUDIO_FORMAT_SELECTOR,
+    label: "ios",
+    timeoutMs: 10_000,
+  },
+  {
+    extractorArgs: "youtube:player_client=android_sdkless;formats=incomplete",
+    label: "android-sdkless",
+    timeoutMs: 10_000,
+  },
+  {
+    extractorArgs: "youtube:player_client=web_safari;formats=incomplete",
+    formatSelector: HLS_FRIENDLY_YT_DLP_AUDIO_FORMAT_SELECTOR,
+    label: "web-safari",
+    timeoutMs: 10_000,
+  },
+  {
+    extractorArgs: "youtube:player_client=web_embedded;formats=incomplete",
+    label: "web-embedded",
+    timeoutMs: 10_000,
+  },
+  {
+    extractorArgs: "youtube:player_client=tv;formats=incomplete",
     label: "tv",
-    timeoutMs: 20_000,
+    timeoutMs: 10_000,
   },
   {
-    extractorArgs: "youtube:player_client=android",
+    extractorArgs: "youtube:player_client=android_vr;formats=incomplete",
+    label: "android-vr",
+    timeoutMs: 10_000,
+  },
+  {
+    extractorArgs: "youtube:player_client=android;formats=incomplete",
     label: "android",
-    timeoutMs: 20_000,
+    timeoutMs: 10_000,
   },
 ] as const;
 
@@ -521,6 +542,8 @@ function buildYtDlpAudioProbeArgs(
 ) {
   return [
     ...YT_DLP_AUDIO_PROBE_BASE_ARGS,
+    "-f",
+    attempt.formatSelector || DEFAULT_YT_DLP_AUDIO_FORMAT_SELECTOR,
     ...(attempt.extractorArgs ? ["--extractor-args", attempt.extractorArgs] : []),
     sourceUrl,
   ];
