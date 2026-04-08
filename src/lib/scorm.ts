@@ -880,10 +880,21 @@ async function localizeDraftForOfflineExport(input: AnyExerciseDraft) {
       );
       break;
     case "media-notices":
-      draft.data.mediaUrl = await localizeResourceUrl(
-        draft.data.mediaUrl,
-        draft.data.mediaKind === "audio" ? "audio" : "video",
-      );
+      {
+        const source = draft.data.mediaUrl.trim();
+        const localizedMediaUrl = await localizeResourceUrl(
+          draft.data.mediaUrl,
+          draft.data.mediaKind === "audio" ? "audio" : "video",
+        );
+        draft.data.mediaUrl = localizedMediaUrl;
+
+        if (draft.data.mediaKind === "video") {
+          const thumbnailUrl = await localizeVideoThumbnail(source);
+          if (thumbnailUrl) {
+            mediaThumbnails.set(localizedMediaUrl, thumbnailUrl);
+          }
+        }
+      }
       break;
     case "group-puzzle":
       draft.data.imageUrl = await localizeResourceUrl(draft.data.imageUrl, "image");
@@ -1237,7 +1248,14 @@ async function prepareHostlessDraftForArchive(input: AnyExerciseDraft) {
       if (draft.data.mediaKind === "audio") {
         draft.data.mediaUrl = await localizeConvertibleAudioUrl(draft.data.mediaUrl);
       } else {
-        draft.data.mediaUrl = await localizeHostlessVideoUrl(draft.data.mediaUrl);
+        const source = draft.data.mediaUrl.trim();
+        const localizedMediaUrl = await localizeHostlessVideoUrl(draft.data.mediaUrl);
+        draft.data.mediaUrl = localizedMediaUrl;
+
+        const thumbnailUrl = await localizeVideoThumbnail(source);
+        if (thumbnailUrl) {
+          mediaThumbnails.set(localizedMediaUrl, thumbnailUrl);
+        }
       }
       break;
     default:

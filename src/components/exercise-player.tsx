@@ -4595,6 +4595,10 @@ function MediaNoticesActivity({
 }: ActivityProps<"media-notices">) {
   const mediaRef = useRef<HTMLMediaElement | null>(null);
   const [answers, setAnswers] = useState<string[]>([]);
+  const videoPoster =
+    draft.data.mediaKind === "video"
+      ? getScormOfflineThumbnailUrl(draft.data.mediaUrl)
+      : undefined;
 
   useEffect(() => {
     setAnswers(Array.from({ length: draft.data.notices.length }, () => ""));
@@ -4621,6 +4625,7 @@ function MediaNoticesActivity({
         {draft.data.mediaKind === "video" ? (
           <video
             controls
+            poster={videoPoster}
             ref={(node) => {
               mediaRef.current = node;
             }}
