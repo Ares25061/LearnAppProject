@@ -48,12 +48,8 @@ function MatchingTypeIcon({
       return (
         <svg aria-hidden="true" viewBox="0 0 24 24">
           <path
-            d="M4 13.5V10a2 2 0 0 1 2-2h1.2A2.8 2.8 0 0 1 10 10.8v5.4A2.8 2.8 0 0 1 7.2 19H6a2 2 0 0 1-2-2v-3.5Zm10 0V10a2 2 0 0 1 2-2h1.2a2.8 2.8 0 0 1 2.8 2.8v5.4a2.8 2.8 0 0 1-2.8 2.8H16a2 2 0 0 1-2-2v-3.5ZM9 9.5a3 3 0 0 1 6 0"
-            fill="none"
-            stroke="currentColor"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth="1.8"
+            d="M12 3.25A7.75 7.75 0 0 0 4.25 11v4.25A3.75 3.75 0 0 0 8 19h.5A2.5 2.5 0 0 0 11 16.5v-3A2.5 2.5 0 0 0 8.5 11H6.75a5.25 5.25 0 0 1 10.5 0H15.5A2.5 2.5 0 0 0 13 13.5v3A2.5 2.5 0 0 0 15.5 19H16a3.75 3.75 0 0 0 3.75-3.75V11A7.75 7.75 0 0 0 12 3.25Z"
+            fill="currentColor"
           />
         </svg>
       );

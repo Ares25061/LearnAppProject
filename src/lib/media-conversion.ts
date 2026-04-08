@@ -175,11 +175,135 @@ const YOUTUBE_AUDIO_PROBE_ATTEMPTS: readonly YtDlpAudioProbeAttempt[] = [
     timeoutMs: 20_000,
   },
   {
+    extractorArgs: "youtube:player_client=tv_simply",
+    label: "tv-simply",
+    timeoutMs: 20_000,
+  },
+  {
+    extractorArgs: "youtube:player_client=tv",
+    label: "tv",
+    timeoutMs: 20_000,
+  },
+  {
     extractorArgs: "youtube:player_client=android",
     label: "android",
     timeoutMs: 20_000,
   },
 ] as const;
+
+type YtDlpExecutionContext = {
+  cleanup: () => Promise<void>;
+  sharedArgs: string[];
+};
+
+function normalizeYouTubeExtractorArgsSegment(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  return trimmed.replace(/^youtube:/i, "").trim() || null;
+}
+
+function combineYouTubeExtractorArgs(
+  ...values: Array<string | null | undefined>
+) {
+  const segments = values
+    .map((value) => normalizeYouTubeExtractorArgsSegment(value))
+    .filter((value): value is string => Boolean(value));
+
+  if (segments.length === 0) {
+    return null;
+  }
+
+  return `youtube:${segments.join(";")}`;
+}
+
+function getConfiguredYouTubeExtractorArgs() {
+  const explicitExtractorArgs = combineYouTubeExtractorArgs(
+    process.env.YTDLP_YOUTUBE_EXTRACTOR_ARGS,
+  );
+  if (explicitExtractorArgs) {
+    return explicitExtractorArgs;
+  }
+
+  const playerClient =
+    process.env.YTDLP_YOUTUBE_PLAYER_CLIENT?.trim() ||
+    (process.env.YTDLP_YOUTUBE_PO_TOKEN?.trim() ? "mweb" : "");
+
+  return combineYouTubeExtractorArgs(
+    playerClient ? `player_client=${playerClient}` : null,
+    process.env.YTDLP_YOUTUBE_PLAYER_SKIP?.trim()
+      ? `player_skip=${process.env.YTDLP_YOUTUBE_PLAYER_SKIP.trim()}`
+      : null,
+    process.env.YTDLP_YOUTUBE_WEBPAGE_CLIENT?.trim()
+      ? `webpage_client=${process.env.YTDLP_YOUTUBE_WEBPAGE_CLIENT.trim()}`
+      : null,
+    process.env.YTDLP_YOUTUBE_VISITOR_DATA?.trim()
+      ? `visitor_data=${process.env.YTDLP_YOUTUBE_VISITOR_DATA.trim()}`
+      : null,
+    process.env.YTDLP_YOUTUBE_PO_TOKEN?.trim()
+      ? `po_token=${process.env.YTDLP_YOUTUBE_PO_TOKEN.trim()}`
+      : null,
+    process.env.YTDLP_YOUTUBE_FETCH_POT?.trim()
+      ? `fetch_pot=${process.env.YTDLP_YOUTUBE_FETCH_POT.trim()}`
+      : null,
+  );
+}
+
+function getYouTubeAudioProbeAttempts() {
+  const configuredExtractorArgs = getConfiguredYouTubeExtractorArgs();
+
+  if (!configuredExtractorArgs) {
+    return YOUTUBE_AUDIO_PROBE_ATTEMPTS;
+  }
+
+  return [
+    {
+      extractorArgs: configuredExtractorArgs,
+      label: "env-configured",
+      timeoutMs: 20_000,
+    },
+    ...YOUTUBE_AUDIO_PROBE_ATTEMPTS,
+  ] satisfies readonly YtDlpAudioProbeAttempt[];
+}
+
+async function createYouTubeYtDlpExecutionContext(): Promise<YtDlpExecutionContext> {
+  const cookiesFilePath = process.env.YTDLP_YOUTUBE_COOKIES_FILE?.trim();
+  if (cookiesFilePath) {
+    return {
+      cleanup: async () => undefined,
+      sharedArgs: ["--cookies", cookiesFilePath],
+    };
+  }
+
+  const encodedCookies = process.env.YTDLP_YOUTUBE_COOKIES_B64?.trim();
+  const rawCookies = process.env.YTDLP_YOUTUBE_COOKIES ?? "";
+  const cookiesContent = encodedCookies
+    ? Buffer.from(encodedCookies, "base64").toString("utf8")
+    : rawCookies.trim();
+
+  if (!cookiesContent) {
+    return {
+      cleanup: async () => undefined,
+      sharedArgs: [],
+    };
+  }
+
+  const tempDir = await mkdtemp(path.join(tmpdir(), "learnapp-youtube-cookies-"));
+  const cookiesPath = path.join(tempDir, "youtube-cookies.txt");
+  await writeFile(cookiesPath, cookiesContent, "utf8");
+
+  return {
+    cleanup: async () => {
+      await rm(tempDir, {
+        force: true,
+        recursive: true,
+      }).catch(() => undefined);
+    },
+    sharedArgs: ["--cookies", cookiesPath],
+  };
+}
 
 function getDirectAudioAssetDescriptor(
   extension: string | null | undefined,
@@ -408,54 +532,69 @@ async function runYtDlpAudioProbe(
   attempts: readonly YtDlpAudioProbeAttempt[],
 ): Promise<YtDlpAudioProbeResult> {
   const ytDlpBin = await ensureYtDlpBin();
+  const ytDlpContext =
+    provider === "youtube"
+      ? await createYouTubeYtDlpExecutionContext()
+      : {
+          cleanup: async () => undefined,
+          sharedArgs: [],
+        };
   let lastError: unknown = null;
   let lastAttemptLabel = "unknown";
 
-  for (const attempt of attempts) {
-    lastAttemptLabel = attempt.label;
+  try {
+    for (const attempt of attempts) {
+      lastAttemptLabel = attempt.label;
 
-    try {
-      console.info("[media/yt-dlp] Probing audio source", {
-        extractorArgs: attempt.extractorArgs ?? null,
-        provider,
-        sourceUrl,
-        strategy: attempt.label,
-      });
+      try {
+        console.info("[media/yt-dlp] Probing audio source", {
+          extractorArgs: attempt.extractorArgs ?? null,
+          provider,
+          sourceUrl,
+          strategy: attempt.label,
+          usesCookies: ytDlpContext.sharedArgs.includes("--cookies"),
+        });
 
-      const { stdout } = await execFileAsync(
-        ytDlpBin,
-        buildYtDlpAudioProbeArgs(sourceUrl, attempt),
-        {
-          timeout: attempt.timeoutMs ?? AUDIO_PROBE_TIMEOUT_MS,
-          windowsHide: true,
-          maxBuffer: 16 * 1024 * 1024,
-        },
-      );
+        const { stdout } = await execFileAsync(
+          ytDlpBin,
+          [
+            ...ytDlpContext.sharedArgs,
+            ...buildYtDlpAudioProbeArgs(sourceUrl, attempt),
+          ],
+          {
+            timeout: attempt.timeoutMs ?? AUDIO_PROBE_TIMEOUT_MS,
+            windowsHide: true,
+            maxBuffer: 16 * 1024 * 1024,
+          },
+        );
 
-      console.info("[media/yt-dlp] Audio probe succeeded", {
-        extractorArgs: attempt.extractorArgs ?? null,
-        provider,
-        sourceUrl,
-        strategy: attempt.label,
-      });
+        console.info("[media/yt-dlp] Audio probe succeeded", {
+          extractorArgs: attempt.extractorArgs ?? null,
+          provider,
+          sourceUrl,
+          strategy: attempt.label,
+        });
 
-      return {
-        extractorArgs: attempt.extractorArgs,
-        metadata: JSON.parse(stdout) as YtDlpResolvedAudioMetadata,
-        probeStrategy: attempt.label,
-        ytDlpBin,
-      } satisfies YtDlpAudioProbeResult;
-    } catch (error) {
-      lastError = error;
+        return {
+          extractorArgs: attempt.extractorArgs,
+          metadata: JSON.parse(stdout) as YtDlpResolvedAudioMetadata,
+          probeStrategy: attempt.label,
+          ytDlpBin,
+        } satisfies YtDlpAudioProbeResult;
+      } catch (error) {
+        lastError = error;
 
-      console.warn("[media/yt-dlp] Audio probe failed", {
-        extractorArgs: attempt.extractorArgs ?? null,
-        message: error instanceof Error ? error.message : String(error),
-        provider,
-        sourceUrl,
-        strategy: attempt.label,
-      });
+        console.warn("[media/yt-dlp] Audio probe failed", {
+          extractorArgs: attempt.extractorArgs ?? null,
+          message: error instanceof Error ? error.message : String(error),
+          provider,
+          sourceUrl,
+          strategy: attempt.label,
+        });
+      }
     }
+  } finally {
+    await ytDlpContext.cleanup();
   }
 
   const lastMessage =
@@ -536,7 +675,7 @@ async function resolveYouTubeAudioSource(
   const probe = await runYtDlpAudioProbe(
     sourceUrl,
     "youtube",
-    YOUTUBE_AUDIO_PROBE_ATTEMPTS,
+    getYouTubeAudioProbeAttempts(),
   );
 
   try {
@@ -1557,6 +1696,13 @@ async function downloadAudioSourceWithYtDlp(
   resolvedSource: ResolvedAudioSource,
 ): Promise<ConvertedAudioAsset> {
   const ytDlpBin = await ensureYtDlpBin();
+  const ytDlpContext =
+    resolvedSource.debug?.provider === "youtube"
+      ? await createYouTubeYtDlpExecutionContext()
+      : {
+          cleanup: async () => undefined,
+          sharedArgs: [],
+        };
   const extractorArgs = resolvedSource.debug?.ytDlpExtractorArgs?.trim();
   const formatId = resolvedSource.debug?.formatId?.trim();
   const sourcePageUrl = resolvedSource.sourcePageUrl?.trim();
@@ -1572,6 +1718,7 @@ async function downloadAudioSourceWithYtDlp(
     const { stdout } = await execFileAsync(
       ytDlpBin,
       [
+        ...ytDlpContext.sharedArgs,
         "--ignore-config",
         "--no-playlist",
         "--no-warnings",
@@ -1624,6 +1771,7 @@ async function downloadAudioSourceWithYtDlp(
       extension,
     };
   } finally {
+    await ytDlpContext.cleanup();
     await rm(tempDir, {
       force: true,
       recursive: true,
@@ -1635,6 +1783,13 @@ async function downloadAudioSourceAsMp3WithYtDlp(
   resolvedSource: ResolvedAudioSource,
 ): Promise<ConvertedAudioAsset> {
   const ytDlpBin = await ensureYtDlpBin();
+  const ytDlpContext =
+    resolvedSource.debug?.provider === "youtube"
+      ? await createYouTubeYtDlpExecutionContext()
+      : {
+          cleanup: async () => undefined,
+          sharedArgs: [],
+        };
   const ffmpegBin = resolveFfmpegBin();
   const extractorArgs = resolvedSource.debug?.ytDlpExtractorArgs?.trim();
   const formatId = resolvedSource.debug?.formatId?.trim();
@@ -1651,6 +1806,7 @@ async function downloadAudioSourceAsMp3WithYtDlp(
     const { stdout } = await execFileAsync(
       ytDlpBin,
       [
+        ...ytDlpContext.sharedArgs,
         "--ignore-config",
         "--no-playlist",
         "--no-warnings",
@@ -1710,6 +1866,7 @@ async function downloadAudioSourceAsMp3WithYtDlp(
       extension: "mp3",
     };
   } finally {
+    await ytDlpContext.cleanup();
     await rm(tempDir, {
       force: true,
       recursive: true,
