@@ -9,7 +9,10 @@ import {
   type ConvertedAudioAsset,
   verifyConvertibleAudioSource,
 } from "@/lib/media-conversion";
-import { getConvertibleAudioProvider } from "@/lib/media-audio";
+import {
+  getConvertibleAudioProvider,
+  normalizeConvertibleAudioSourceUrl,
+} from "@/lib/media-audio";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -132,7 +135,8 @@ async function getAudioBufferForSource(
   sourceUrl: string,
   sourceHost: string | null,
 ) {
-  const cachedAsset = getCachedAudioBuffer(sourceUrl);
+  const cacheKey = normalizeConvertibleAudioSourceUrl(sourceUrl);
+  const cachedAsset = getCachedAudioBuffer(cacheKey);
   if (cachedAsset) {
     logAudioRequest("info", requestId, "Serving audio from in-memory cache", {
       contentType: cachedAsset.contentType,
@@ -144,7 +148,7 @@ async function getAudioBufferForSource(
     return cachedAsset;
   }
 
-  const pendingConversion = pendingConversions.get(sourceUrl);
+  const pendingConversion = pendingConversions.get(cacheKey);
   if (pendingConversion) {
     logAudioRequest("info", requestId, "Joining pending audio conversion", {
       provider,
@@ -156,7 +160,7 @@ async function getAudioBufferForSource(
   const conversionPromise = (async () => {
     const storedAsset = await getStoredAudioAsset(sourceUrl);
     if (storedAsset) {
-      setCachedAudioBuffer(sourceUrl, storedAsset);
+      setCachedAudioBuffer(cacheKey, storedAsset);
       logAudioRequest("info", requestId, "Serving audio from persistent cache", {
         contentType: storedAsset.contentType,
         extension: storedAsset.extension,
@@ -192,16 +196,16 @@ async function getAudioBufferForSource(
         sourceHost,
       });
     }
-    setCachedAudioBuffer(sourceUrl, asset);
+    setCachedAudioBuffer(cacheKey, asset);
     return asset;
   })();
 
-  pendingConversions.set(sourceUrl, conversionPromise);
+  pendingConversions.set(cacheKey, conversionPromise);
 
   try {
     return await conversionPromise;
   } finally {
-    pendingConversions.delete(sourceUrl);
+    pendingConversions.delete(cacheKey);
   }
 }
 

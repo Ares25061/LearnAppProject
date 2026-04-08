@@ -50,6 +50,55 @@ export function getConvertibleAudioProvider(
   return null;
 }
 
+function getYouTubeVideoId(parsed: URL) {
+  const host = parsed.hostname.replace(/^www\./, "").toLowerCase();
+
+  if (host === "youtu.be") {
+    const pathnameSegments = parsed.pathname.split("/").filter(Boolean);
+    return pathnameSegments[0] ?? "";
+  }
+
+  const pathnameSegments = parsed.pathname.split("/").filter(Boolean);
+  const leadingSegment = pathnameSegments[0] ?? "";
+
+  if (leadingSegment === "watch") {
+    return parsed.searchParams.get("v")?.trim() ?? "";
+  }
+
+  if (
+    leadingSegment === "embed" ||
+    leadingSegment === "shorts" ||
+    leadingSegment === "live" ||
+    leadingSegment === "v"
+  ) {
+    return pathnameSegments[1] ?? "";
+  }
+
+  return parsed.searchParams.get("v")?.trim() ?? "";
+}
+
+export function normalizeConvertibleAudioSourceUrl(sourceUrl: string) {
+  const parsed = parseMediaSourceUrl(sourceUrl);
+  if (!parsed) {
+    return sourceUrl.trim();
+  }
+
+  const provider = getConvertibleAudioProvider(parsed.toString());
+  if (provider === "youtube") {
+    const videoId = getYouTubeVideoId(parsed);
+    if (videoId) {
+      const normalized = new URL("https://www.youtube.com/watch");
+      normalized.searchParams.set("v", videoId);
+      return normalized.toString();
+    }
+  }
+
+  parsed.hash = "";
+  return parsed.toString();
+}
+
 export function buildConvertedAudioPath(sourceUrl: string) {
-  return `/api/media/audio?source=${encodeURIComponent(sourceUrl)}`;
+  return `/api/media/audio?source=${encodeURIComponent(
+    normalizeConvertibleAudioSourceUrl(sourceUrl),
+  )}`;
 }
