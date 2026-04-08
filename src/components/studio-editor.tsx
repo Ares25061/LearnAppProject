@@ -32,6 +32,67 @@ type EditorNotice = {
   scope: EditorNoticeScope;
 };
 
+type ExportVariant = "scorm1" | "scorm2" | "scorm3";
+type ExportTaskState = {
+  downloadedBytes: number;
+  fileName: string;
+  phase: "preparing" | "downloading";
+  totalBytes: number | null;
+  variant: ExportVariant;
+};
+
+function getExportArchiveFilename(title: string, variant: ExportVariant) {
+  return `${safeFilename(title)}${
+    variant === "scorm2"
+      ? "-autonomous-scorm"
+      : variant === "scorm3"
+        ? "-hostless-test-scorm"
+        : ""
+  }.zip`;
+}
+
+function parseContentDispositionFilename(value: string | null) {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const utf8Match = trimmed.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]).trim();
+    } catch {
+      return utf8Match[1].trim();
+    }
+  }
+
+  const quotedMatch = trimmed.match(/filename\s*=\s*"([^"]+)"/i);
+  if (quotedMatch?.[1]) {
+    return quotedMatch[1].trim();
+  }
+
+  const plainMatch = trimmed.match(/filename\s*=\s*([^;]+)/i);
+  return plainMatch?.[1]?.trim() || null;
+}
+
+function formatByteSize(value: number) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0 Б";
+  }
+
+  const units = ["Б", "КБ", "МБ", "ГБ"];
+  let size = value;
+  let unitIndex = 0;
+
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+
+  const digits = size >= 100 || unitIndex === 0 ? 0 : size >= 10 ? 1 : 2;
+  return `${size.toFixed(digits)} ${units[unitIndex]}`;
+}
+
 export function StudioEditor({
   initialDraft,
   user,
@@ -49,6 +110,7 @@ export function StudioEditor({
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const previewHostRef = useRef<HTMLDivElement | null>(null);
   const meshExportRef = useRef<HTMLDivElement | null>(null);
+  const exportAbortRef = useRef<AbortController | null>(null);
   const [draft, setDraft] = useState(initialDraft);
   const [currentId, setCurrentId] = useState(existingId);
   const [currentSlug, setCurrentSlug] = useState(existingSlug);
@@ -57,6 +119,7 @@ export function StudioEditor({
   );
   const [dataError, setDataError] = useState<string | null>(null);
   const [notice, setNotice] = useState<EditorNotice | null>(null);
+  const [exportTask, setExportTask] = useState<ExportTaskState | null>(null);
   const [isPreviewFullscreen, setIsPreviewFullscreen] = useState(false);
   const [isMeshExportOpen, setIsMeshExportOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -65,20 +128,184 @@ export function StudioEditor({
   const isMatchingPairs = draft.type === "matching-pairs";
   const isClassification = draft.type === "group-assignment";
   const isCustomVisualEditor = isMatchingPairs || isClassification;
+  const isEditorBusy = isPending || Boolean(exportTask);
   const matchingPairsData = isMatchingPairs
     ? (draft.data as MatchingPairsData)
     : null;
   const classificationData = isClassification
     ? (draft.data as GroupAssignmentData)
     : null;
-  type ExportVariant = "scorm1" | "scorm2" | "scorm3";
-
   const showNotice = (
     message: string | null,
     scope: EditorNoticeScope = "draft",
   ) => {
     setNotice(message ? { message, scope } : null);
   };
+
+  const cancelExportDownload = () => {
+    exportAbortRef.current?.abort();
+  };
+
+  const downloadExportArchive = async (
+    endpoint: string,
+    payload: {
+      id: string | null;
+      draft: AnyExerciseDraft;
+      action: "export";
+      variant: ExportVariant;
+    },
+  ) => {
+    const fallbackFileName = getExportArchiveFilename(payload.draft.title, payload.variant);
+    const controller = new AbortController();
+    exportAbortRef.current = controller;
+    setExportTask({
+      downloadedBytes: 0,
+      fileName: fallbackFileName,
+      phase: "preparing",
+      totalBytes: null,
+      variant: payload.variant,
+    });
+
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const result = (await response.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        showNotice(
+          result?.error ?? "Операция завершилась с ошибкой.",
+          "mesh",
+        );
+        return;
+      }
+
+      const fileName =
+        parseContentDispositionFilename(response.headers.get("Content-Disposition")) ||
+        fallbackFileName;
+      const totalBytesHeader = response.headers.get("Content-Length");
+      const totalBytes = totalBytesHeader ? Number.parseInt(totalBytesHeader, 10) : Number.NaN;
+      const normalizedTotalBytes =
+        Number.isFinite(totalBytes) && totalBytes > 0 ? totalBytes : null;
+
+      setExportTask((current) =>
+        current
+          ? {
+              ...current,
+              fileName,
+              phase: "downloading",
+              totalBytes: normalizedTotalBytes,
+            }
+          : current,
+      );
+
+      let blob: Blob;
+      if (!response.body) {
+        blob = await response.blob();
+        setExportTask((current) =>
+          current
+            ? {
+                ...current,
+                downloadedBytes: blob.size,
+                totalBytes: blob.size,
+              }
+            : current,
+        );
+      } else {
+        const reader = response.body.getReader();
+        const chunks: Uint8Array[] = [];
+        let downloadedBytes = 0;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+
+          if (!value) {
+            continue;
+          }
+
+          chunks.push(value);
+          downloadedBytes += value.byteLength;
+          setExportTask((current) =>
+            current
+              ? {
+                  ...current,
+                  downloadedBytes,
+                }
+              : current,
+          );
+        }
+
+        blob = new Blob(
+          chunks.map((chunk) => chunk.slice().buffer as ArrayBuffer),
+          { type: "application/zip" },
+        );
+      }
+
+      const downloadUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = downloadUrl;
+      anchor.download = fileName;
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(downloadUrl);
+
+      const appId = response.headers.get("x-app-id");
+      const appSlug = response.headers.get("x-app-slug");
+
+      if (appId) {
+        setCurrentId(appId);
+      }
+
+      if (appSlug) {
+        setCurrentSlug(appSlug);
+      }
+
+      showNotice(
+        payload.variant === "scorm2"
+          ? "Автономный архив для МЭШ скачан."
+          : payload.variant === "scorm3"
+            ? "Тестовый SCORM без привязки к домену проекта скачан."
+            : "Архив для МЭШ скачан.",
+        "mesh",
+      );
+
+      if (mode === "create" && user && appId) {
+        router.replace(`/edit/${appId}`);
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        showNotice("Скачивание архива отменено.", "mesh");
+        return;
+      }
+
+      showNotice(
+        error instanceof Error ? error.message : "Операция не завершилась.",
+        "mesh",
+      );
+    } finally {
+      if (exportAbortRef.current === controller) {
+        exportAbortRef.current = null;
+      }
+      setExportTask(null);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      exportAbortRef.current?.abort();
+    };
+  }, []);
 
   const setDraftData = (
     nextData: AnyExerciseDraft["data"],
@@ -143,6 +370,16 @@ export function StudioEditor({
       variant: action === "export" ? variant : undefined,
     };
 
+    if (action === "export") {
+      void downloadExportArchive(endpoint, {
+        id: currentId,
+        draft: resolvedDraft,
+        action: "export",
+        variant,
+      });
+      return;
+    }
+
     startTransition(async () => {
       try {
         const response = await fetch(endpoint, {
@@ -159,7 +396,7 @@ export function StudioEditor({
             | null;
           showNotice(
             result?.error ?? "Операция завершилась с ошибкой.",
-            action === "export" ? "mesh" : "draft",
+            "draft",
           );
           return;
         }
@@ -226,7 +463,7 @@ export function StudioEditor({
       } catch (error) {
         showNotice(
           error instanceof Error ? error.message : "Операция не завершилась.",
-          action === "export" ? "mesh" : "draft",
+          "draft",
         );
       }
     });
@@ -379,6 +616,60 @@ export function StudioEditor({
     await target?.requestFullscreen();
   };
 
+  const exportProgressPercent =
+    exportTask && exportTask.totalBytes && exportTask.totalBytes > 0
+      ? Math.min(100, Math.round((exportTask.downloadedBytes / exportTask.totalBytes) * 100))
+      : null;
+  const exportProgressSummary = exportTask
+    ? exportTask.totalBytes && exportTask.totalBytes > 0
+      ? `${formatByteSize(exportTask.downloadedBytes)} из ${formatByteSize(exportTask.totalBytes)}`
+      : exportTask.phase === "preparing"
+        ? "Сервер собирает архив"
+        : formatByteSize(exportTask.downloadedBytes)
+    : "";
+  const exportTaskBlock = exportTask ? (
+    <div className="mesh-export-progress" data-card-interactive="true" role="status" aria-live="polite">
+      <div className="mesh-export-progress__dialog">
+        <div className="stack">
+          <strong>
+            {exportTask.phase === "preparing"
+              ? "Подготавливаем архив"
+              : "Скачиваем архив"}
+          </strong>
+          <span className="editor-hint">{exportTask.fileName}</span>
+        </div>
+        <div
+          className={`mesh-export-progress__bar ${
+            exportProgressPercent === null ? "mesh-export-progress__bar--indeterminate" : ""
+          }`}
+          aria-hidden="true"
+        >
+          <span
+            className="mesh-export-progress__fill"
+            style={
+              exportProgressPercent === null
+                ? undefined
+                : { width: `${Math.max(exportProgressPercent, 4)}%` }
+            }
+          />
+        </div>
+        <div className="mesh-export-progress__meta">
+          <span>
+            {exportTask.phase === "preparing"
+              ? "Создаём SCORM-архив и собираем вложенные файлы."
+              : exportProgressPercent !== null
+                ? `${exportProgressPercent}%`
+                : "Скачиваем ответ сервера."}
+          </span>
+          <span>{exportProgressSummary}</span>
+        </div>
+        <button className="ghost-button" type="button" onClick={cancelExportDownload}>
+          Отменить скачивание
+        </button>
+      </div>
+    </div>
+  ) : null;
+
   const meshExportBlock = (
     <div className="editor-block">
       <div className="editor-block__head">
@@ -390,7 +681,7 @@ export function StudioEditor({
       <div className="mesh-export" ref={meshExportRef}>
         <button
           className="primary-button"
-          disabled={isPending}
+          disabled={isEditorBusy}
           type="button"
           onClick={() => setIsMeshExportOpen((current) => !current)}
         >
@@ -401,7 +692,7 @@ export function StudioEditor({
           <div className="mesh-export__menu">
             <button
               className="ghost-button mesh-export__option"
-              disabled={isPending}
+              disabled={isEditorBusy}
               type="button"
               onClick={() => handleExport("scorm1")}
             >
@@ -412,7 +703,7 @@ export function StudioEditor({
             </button>
             <button
               className="ghost-button mesh-export__option"
-              disabled={isPending}
+              disabled={isEditorBusy}
               type="button"
               onClick={() => handleExport("scorm2")}
             >
@@ -425,7 +716,7 @@ export function StudioEditor({
             </button>
             <button
               className="ghost-button mesh-export__option"
-              disabled={isPending}
+              disabled={isEditorBusy}
               type="button"
               onClick={() => handleExport("scorm3")}
             >
@@ -454,7 +745,7 @@ export function StudioEditor({
       <div className="inline-actions">
         <button
           className="primary-button"
-          disabled={isPending}
+          disabled={isEditorBusy}
           type="button"
           onClick={handlePublish}
         >
@@ -462,7 +753,7 @@ export function StudioEditor({
         </button>
         <button
           className="ghost-button"
-          disabled={isPending}
+          disabled={isEditorBusy}
           type="button"
           onClick={handleSave}
         >
@@ -470,7 +761,7 @@ export function StudioEditor({
         </button>
         <button
           className="ghost-button"
-          disabled={isPending}
+          disabled={isEditorBusy}
           type="button"
           onClick={handleJsonExport}
         >
@@ -478,7 +769,7 @@ export function StudioEditor({
         </button>
         <button
           className="ghost-button"
-          disabled={isPending}
+          disabled={isEditorBusy}
           type="button"
           onClick={() => importInputRef.current?.click()}
         >
@@ -724,6 +1015,7 @@ export function StudioEditor({
           {previewBlock}
         </section>
       ) : null}
+      {exportTaskBlock}
     </div>
   );
 }

@@ -120,6 +120,12 @@ type YtDlpAudioProbeAttempt = {
   timeoutMs?: number;
 };
 
+type YtDlpVideoDownloadAttempt = {
+  extractorArgs?: string;
+  label: string;
+  timeoutMs?: number;
+};
+
 type YtDlpAudioProbeResult = {
   extractorArgs?: string;
   metadata: YtDlpResolvedAudioMetadata;
@@ -639,6 +645,14 @@ function buildYtDlpAudioProbeArgs(
     ...(attempt.extractorArgs ? ["--extractor-args", attempt.extractorArgs] : []),
     sourceUrl,
   ];
+}
+
+function getYouTubeVideoDownloadAttempts(): readonly YtDlpVideoDownloadAttempt[] {
+  return getYouTubeAudioProbeAttempts().map((attempt) => ({
+    extractorArgs: attempt.extractorArgs,
+    label: attempt.label,
+    timeoutMs: attempt.timeoutMs,
+  }));
 }
 
 async function runYtDlpAudioProbe(
@@ -2039,6 +2053,7 @@ async function downloadVideoSourceWithYtDlp(options: {
   extractorArgs?: string | null;
   provider: "youtube" | "vk" | "rutube";
   sourcePageUrl: string;
+  timeoutMs?: number;
   useConfiguredYouTubeAuth?: boolean;
 }): Promise<ConvertedVideoAsset> {
   const ytDlpBin = await ensureYtDlpBin();
@@ -2085,7 +2100,7 @@ async function downloadVideoSourceWithYtDlp(options: {
         options.sourcePageUrl,
       ],
       {
-        timeout: VIDEO_DOWNLOAD_TIMEOUT_MS,
+        timeout: options.timeoutMs ?? VIDEO_DOWNLOAD_TIMEOUT_MS,
         windowsHide: true,
         maxBuffer: 4 * 1024 * 1024,
       },
@@ -2128,6 +2143,74 @@ async function downloadVideoSourceWithYtDlp(options: {
       recursive: true,
     }).catch(() => undefined);
   }
+}
+
+async function downloadYouTubeVideoSourceWithYtDlp(
+  sourceUrl: string,
+): Promise<ConvertedVideoAsset> {
+  const attempts = getYouTubeVideoDownloadAttempts();
+  let lastError: unknown = null;
+  let lastAttemptLabel = "unknown";
+  let attemptedWithoutAuth = false;
+
+  const tryAttempts = async (useConfiguredYouTubeAuth: boolean) => {
+    for (const attempt of attempts) {
+      lastAttemptLabel = attempt.label;
+
+      try {
+        console.info("[media/video] Downloading YouTube video", {
+          extractorArgs: attempt.extractorArgs ?? null,
+          sourceUrl,
+          strategy: attempt.label,
+          usesConfiguredAuth: useConfiguredYouTubeAuth,
+        });
+
+        return await downloadVideoSourceWithYtDlp({
+          extractorArgs: attempt.extractorArgs ?? null,
+          provider: "youtube",
+          sourcePageUrl: sourceUrl,
+          timeoutMs: VIDEO_DOWNLOAD_TIMEOUT_MS,
+          useConfiguredYouTubeAuth,
+        });
+      } catch (error) {
+        lastError = error;
+        console.warn("[media/video] YouTube video download attempt failed", {
+          extractorArgs: attempt.extractorArgs ?? null,
+          error: error instanceof Error ? error.message : String(error),
+          sourceUrl,
+          strategy: attempt.label,
+          usesConfiguredAuth: useConfiguredYouTubeAuth,
+        });
+      }
+    }
+
+    return null;
+  };
+
+  if (process.env.YTDLP_YOUTUBE_BGUTIL_ENABLED?.trim() === "1") {
+    attemptedWithoutAuth = true;
+    const bgutilResult = await tryAttempts(false);
+    if (bgutilResult) {
+      return bgutilResult;
+    }
+  }
+
+  const authedResult = await tryAttempts(true);
+  if (authedResult) {
+    return authedResult;
+  }
+
+  if (!attemptedWithoutAuth && shouldRetryYouTubeProbeWithoutAuth(lastError)) {
+    const unauthenticatedResult = await tryAttempts(false);
+    if (unauthenticatedResult) {
+      return unauthenticatedResult;
+    }
+  }
+
+  const lastMessage = getYtDlpProbeErrorMessage(lastError);
+  throw new Error(
+    `yt-dlp не смог подготовить видеофайл YouTube. Последняя стратегия: ${lastAttemptLabel}. ${lastMessage}`,
+  );
 }
 
 async function downloadAudioSourceAsMp3WithYtDlp(
@@ -2470,34 +2553,7 @@ export async function convertVideoSourceToPlayableAsset(
   }
 
   if (provider === "youtube") {
-    const resolvedSource = await verifyConvertibleAudioSource(sourceUrl);
-    const extractorArgs = resolvedSource.debug?.ytDlpExtractorArgs?.trim() || null;
-    const useConfiguredYouTubeAuth = resolvedSource.debug?.ytDlpUsesCookies !== false;
-
-    try {
-      return await downloadVideoSourceWithYtDlp({
-        extractorArgs,
-        provider,
-        sourcePageUrl: resolvedSource.sourcePageUrl?.trim() || sourceUrl,
-        useConfiguredYouTubeAuth,
-      });
-    } catch (error) {
-      if (useConfiguredYouTubeAuth && shouldRetryYouTubeProbeWithoutAuth(error)) {
-        console.warn("[media/video] Retrying YouTube video download without configured auth", {
-          error: error instanceof Error ? error.message : String(error),
-          sourcePageUrl: resolvedSource.sourcePageUrl,
-        });
-
-        return downloadVideoSourceWithYtDlp({
-          extractorArgs,
-          provider,
-          sourcePageUrl: resolvedSource.sourcePageUrl?.trim() || sourceUrl,
-          useConfiguredYouTubeAuth: false,
-        });
-      }
-
-      throw error;
-    }
+    return downloadYouTubeVideoSourceWithYtDlp(sourceUrl);
   }
 
   if (provider === "rutube") {
