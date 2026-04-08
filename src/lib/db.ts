@@ -6,12 +6,38 @@ let databasePromise: Promise<Pool> | null = null;
 
 function parsePoolLimit() {
   const configured = Number.parseInt(
-    process.env.DATABASE_POOL_LIMIT?.trim() ?? "10",
+    process.env.DATABASE_POOL_LIMIT?.trim() ?? "4",
     10,
   );
 
   if (Number.isNaN(configured) || configured < 1) {
-    return 10;
+    return 4;
+  }
+
+  return configured;
+}
+
+function parsePoolMinimumIdle(connectionLimit: number) {
+  const configured = Number.parseInt(
+    process.env.DATABASE_POOL_MIN_IDLE?.trim() ?? "0",
+    10,
+  );
+
+  if (Number.isNaN(configured) || configured < 0) {
+    return 0;
+  }
+
+  return Math.min(configured, connectionLimit);
+}
+
+function parsePoolIdleTimeout() {
+  const configured = Number.parseInt(
+    process.env.DATABASE_POOL_IDLE_TIMEOUT?.trim() ?? "60",
+    10,
+  );
+
+  if (Number.isNaN(configured) || configured < 1) {
+    return 60;
   }
 
   return configured;
@@ -87,10 +113,13 @@ export async function getDb() {
 
   databasePromise = (async () => {
     const config = resolveDatabaseConfig();
+    const connectionLimit = parsePoolLimit();
     const pool = createPool({
       ...config,
       charset: "utf8mb4",
-      connectionLimit: parsePoolLimit(),
+      connectionLimit,
+      minimumIdle: parsePoolMinimumIdle(connectionLimit),
+      idleTimeout: parsePoolIdleTimeout(),
       acquireTimeout: 10000,
       keepAliveDelay: 10000,
     });
