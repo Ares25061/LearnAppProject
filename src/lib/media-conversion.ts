@@ -110,7 +110,7 @@ type YtDlpResolvedAudioFormat = {
 
 type YtDlpAudioProbeAttempt = {
   extractorArgs?: string;
-  formatSelector?: string;
+  formatSelector?: string | null;
   label: string;
   timeoutMs?: number;
 };
@@ -154,13 +154,17 @@ const YT_DLP_AUDIO_PROBE_BASE_ARGS = [
   "--dump-single-json",
 ] as const;
 const DEFAULT_YT_DLP_AUDIO_FORMAT_SELECTOR = "bestaudio/best";
-const HLS_FRIENDLY_YT_DLP_AUDIO_FORMAT_SELECTOR =
-  "bestaudio[protocol*=m3u8]/bestaudio[protocol*=https]/bestaudio/best";
 const YOUTUBE_AUDIO_PROBE_ATTEMPTS: readonly YtDlpAudioProbeAttempt[] = [
   {
     extractorArgs:
       "youtube:player_client=default,ios,web_safari,web_embedded,tv_simply,tv,android_sdkless,android_vr,android;formats=incomplete",
-    formatSelector: HLS_FRIENDLY_YT_DLP_AUDIO_FORMAT_SELECTOR,
+    formatSelector: null,
+    label: "metadata-only",
+    timeoutMs: 12_000,
+  },
+  {
+    extractorArgs:
+      "youtube:player_client=default,ios,web_safari,web_embedded,tv_simply,tv,android_sdkless,android_vr,android;formats=incomplete",
     label: "multi-client-hls",
     timeoutMs: 12_000,
   },
@@ -175,7 +179,6 @@ const YOUTUBE_AUDIO_PROBE_ATTEMPTS: readonly YtDlpAudioProbeAttempt[] = [
   },
   {
     extractorArgs: "youtube:player_client=ios;formats=incomplete",
-    formatSelector: HLS_FRIENDLY_YT_DLP_AUDIO_FORMAT_SELECTOR,
     label: "ios",
     timeoutMs: 10_000,
   },
@@ -186,7 +189,6 @@ const YOUTUBE_AUDIO_PROBE_ATTEMPTS: readonly YtDlpAudioProbeAttempt[] = [
   },
   {
     extractorArgs: "youtube:player_client=web_safari;formats=incomplete",
-    formatSelector: HLS_FRIENDLY_YT_DLP_AUDIO_FORMAT_SELECTOR,
     label: "web-safari",
     timeoutMs: 10_000,
   },
@@ -282,6 +284,7 @@ function getYouTubeAudioProbeAttempts() {
   return [
     {
       extractorArgs: configuredExtractorArgs,
+      formatSelector: null,
       label: "env-configured",
       timeoutMs: 20_000,
     },
@@ -542,8 +545,9 @@ function buildYtDlpAudioProbeArgs(
 ) {
   return [
     ...YT_DLP_AUDIO_PROBE_BASE_ARGS,
-    "-f",
-    attempt.formatSelector || DEFAULT_YT_DLP_AUDIO_FORMAT_SELECTOR,
+    ...(attempt.formatSelector === null
+      ? []
+      : ["-f", attempt.formatSelector || DEFAULT_YT_DLP_AUDIO_FORMAT_SELECTOR]),
     ...(attempt.extractorArgs ? ["--extractor-args", attempt.extractorArgs] : []),
     sourceUrl,
   ];
@@ -637,7 +641,14 @@ function buildResolvedAudioSourceFromYtDlpMetadata(
     probeStrategy?: string;
   },
 ): ResolvedAudioSource {
-  const selected = parsed.requested_downloads?.[0] ?? null;
+  const selectedFormatFromFormats =
+    provider === "youtube" || provider === "vk"
+      ? pickVkYtDlpFormat(parsed.formats)
+      : provider === "rutube"
+        ? pickRutubeYtDlpFormat(parsed.formats)
+        : null;
+  const selected =
+    selectedFormatFromFormats ?? parsed.requested_downloads?.[0] ?? null;
   const resolvedUrl = selected?.url?.trim() || parsed.url?.trim() || "";
 
   if (!resolvedUrl) {
@@ -645,7 +656,9 @@ function buildResolvedAudioSourceFromYtDlpMetadata(
   }
 
   const selectedFormat =
-    (parsed.formats ?? []).find((format) => format.url?.trim() === resolvedUrl) ?? null;
+    selected === selectedFormatFromFormats
+      ? selectedFormatFromFormats
+      : (parsed.formats ?? []).find((format) => format.url?.trim() === resolvedUrl) ?? null;
   const formatExtension =
     selected?.audio_ext?.trim() ||
     selected?.ext?.trim() ||
