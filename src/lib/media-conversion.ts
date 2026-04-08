@@ -318,6 +318,37 @@ function getYouTubeAudioProbeAttempts() {
   ] satisfies readonly YtDlpAudioProbeAttempt[];
 }
 
+function getMultipartEnvValue(name: string) {
+  const partPattern = new RegExp(`^${name}_PART_(\\d+)$`);
+  const parts = Object.entries(process.env)
+    .map(([key, value]) => {
+      const match = key.match(partPattern);
+      if (!match || typeof value !== "string" || value.length === 0) {
+        return null;
+      }
+
+      return {
+        index: Number.parseInt(match[1] ?? "", 10),
+        value,
+      };
+    })
+    .filter(
+      (
+        part,
+      ): part is {
+        index: number;
+        value: string;
+      } => part !== null && Number.isFinite(part.index),
+    )
+    .sort((left, right) => left.index - right.index);
+
+  if (parts.length === 0) {
+    return "";
+  }
+
+  return parts.map((part) => part.value).join("");
+}
+
 async function createYouTubeYtDlpExecutionContext(options?: {
   useConfiguredAuth?: boolean;
 }): Promise<YtDlpExecutionContext> {
@@ -336,8 +367,11 @@ async function createYouTubeYtDlpExecutionContext(options?: {
     };
   }
 
-  const encodedCookies = process.env.YTDLP_YOUTUBE_COOKIES_B64?.trim();
-  const rawCookies = process.env.YTDLP_YOUTUBE_COOKIES ?? "";
+  const encodedCookies =
+    process.env.YTDLP_YOUTUBE_COOKIES_B64?.trim() ||
+    getMultipartEnvValue("YTDLP_YOUTUBE_COOKIES_B64").trim();
+  const rawCookies =
+    process.env.YTDLP_YOUTUBE_COOKIES ?? getMultipartEnvValue("YTDLP_YOUTUBE_COOKIES");
   const decodedCookies = encodedCookies
     ? Buffer.from(encodedCookies, "base64").toString("utf8")
     : rawCookies.trim();
