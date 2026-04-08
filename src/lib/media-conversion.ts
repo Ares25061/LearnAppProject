@@ -303,9 +303,13 @@ async function createYouTubeYtDlpExecutionContext(): Promise<YtDlpExecutionConte
 
   const encodedCookies = process.env.YTDLP_YOUTUBE_COOKIES_B64?.trim();
   const rawCookies = process.env.YTDLP_YOUTUBE_COOKIES ?? "";
-  const cookiesContent = encodedCookies
+  const decodedCookies = encodedCookies
     ? Buffer.from(encodedCookies, "base64").toString("utf8")
     : rawCookies.trim();
+  const cookiesContent =
+    process.platform === "win32"
+      ? decodedCookies.replace(/\r?\n/g, "\r\n")
+      : decodedCookies.replace(/\r\n?/g, "\n");
 
   if (!cookiesContent) {
     return {
