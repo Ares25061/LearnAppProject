@@ -154,6 +154,19 @@ const YT_DLP_AUDIO_PROBE_BASE_ARGS = [
   "--dump-single-json",
 ] as const;
 const DEFAULT_YT_DLP_AUDIO_FORMAT_SELECTOR = "bestaudio/best";
+const YOUTUBE_BGUTIL_AUDIO_PROBE_ATTEMPTS: readonly YtDlpAudioProbeAttempt[] = [
+  {
+    extractorArgs: "youtube:player_client=mweb;formats=incomplete",
+    formatSelector: null,
+    label: "mweb-pot-metadata",
+    timeoutMs: 18_000,
+  },
+  {
+    extractorArgs: "youtube:player_client=mweb;formats=incomplete",
+    label: "mweb-pot",
+    timeoutMs: 18_000,
+  },
+] as const;
 const YOUTUBE_AUDIO_PROBE_ATTEMPTS: readonly YtDlpAudioProbeAttempt[] = [
   {
     extractorArgs:
@@ -280,10 +293,16 @@ function getConfiguredYouTubeExtractorArgs() {
 }
 
 function getYouTubeAudioProbeAttempts() {
+  const baseAttempts = [
+    ...(process.env.YTDLP_YOUTUBE_BGUTIL_ENABLED?.trim() === "1"
+      ? YOUTUBE_BGUTIL_AUDIO_PROBE_ATTEMPTS
+      : []),
+    ...YOUTUBE_AUDIO_PROBE_ATTEMPTS,
+  ] satisfies readonly YtDlpAudioProbeAttempt[];
   const configuredExtractorArgs = getConfiguredYouTubeExtractorArgs();
 
   if (!configuredExtractorArgs) {
-    return YOUTUBE_AUDIO_PROBE_ATTEMPTS;
+    return baseAttempts;
   }
 
   return [
@@ -293,7 +312,7 @@ function getYouTubeAudioProbeAttempts() {
       label: "env-configured",
       timeoutMs: 20_000,
     },
-    ...YOUTUBE_AUDIO_PROBE_ATTEMPTS,
+    ...baseAttempts,
   ] satisfies readonly YtDlpAudioProbeAttempt[];
 }
 
