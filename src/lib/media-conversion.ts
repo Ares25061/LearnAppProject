@@ -280,9 +280,12 @@ function getConfiguredYouTubeExtractorArgs() {
     return explicitExtractorArgs;
   }
 
+  const bgutilEnabled = process.env.YTDLP_YOUTUBE_BGUTIL_ENABLED?.trim() === "1";
   const playerClient =
     process.env.YTDLP_YOUTUBE_PLAYER_CLIENT?.trim() ||
     (process.env.YTDLP_YOUTUBE_PO_TOKEN?.trim() ? "mweb" : "");
+  const fetchPotPolicy =
+    process.env.YTDLP_YOUTUBE_FETCH_POT?.trim() || (bgutilEnabled ? "always" : "");
 
   return combineYouTubeExtractorArgs(
     playerClient ? `player_client=${playerClient}` : null,
@@ -298,9 +301,7 @@ function getConfiguredYouTubeExtractorArgs() {
     process.env.YTDLP_YOUTUBE_PO_TOKEN?.trim()
       ? `po_token=${process.env.YTDLP_YOUTUBE_PO_TOKEN.trim()}`
       : null,
-    process.env.YTDLP_YOUTUBE_FETCH_POT?.trim()
-      ? `fetch_pot=${process.env.YTDLP_YOUTUBE_FETCH_POT.trim()}`
-      : null,
+    fetchPotPolicy ? `fetch_pot=${fetchPotPolicy}` : null,
   );
 }
 
@@ -312,6 +313,14 @@ function getYouTubeAudioProbeAttempts() {
     ...YOUTUBE_AUDIO_PROBE_ATTEMPTS,
   ] satisfies readonly YtDlpAudioProbeAttempt[];
   const configuredExtractorArgs = getConfiguredYouTubeExtractorArgs();
+  const attemptsWithConfiguredArgs = baseAttempts.map((attempt) => ({
+    ...attempt,
+    extractorArgs:
+      combineYouTubeExtractorArgs(
+        attempt.extractorArgs,
+        configuredExtractorArgs,
+      ) || undefined,
+  }));
 
   if (!configuredExtractorArgs) {
     return baseAttempts;
@@ -324,7 +333,7 @@ function getYouTubeAudioProbeAttempts() {
       label: "env-configured",
       timeoutMs: 20_000,
     },
-    ...baseAttempts,
+    ...attemptsWithConfiguredArgs,
   ] satisfies readonly YtDlpAudioProbeAttempt[];
 }
 
@@ -359,13 +368,37 @@ function getMultipartEnvValue(name: string) {
   return parts.map((part) => part.value).join("");
 }
 
+function getYouTubePotProviderExtractorArgs() {
+  if (process.env.YTDLP_YOUTUBE_BGUTIL_ENABLED?.trim() !== "1") {
+    return [] as string[];
+  }
+
+  const args: string[] = [];
+  const baseUrl =
+    process.env.YTDLP_YOUTUBE_BGUTIL_BASE_URL?.trim() || "http://127.0.0.1:4416";
+  const serverHome =
+    process.env.YTDLP_YOUTUBE_BGUTIL_SERVER_HOME?.trim() || "/opt/bgutil-provider/server";
+
+  if (baseUrl) {
+    args.push("--extractor-args", `youtubepot-bgutilhttp:base_url=${baseUrl}`);
+  }
+
+  if (serverHome) {
+    args.push("--extractor-args", `youtubepot-bgutilscript:server_home=${serverHome}`);
+  }
+
+  return args;
+}
+
 async function createYouTubeYtDlpExecutionContext(options?: {
   useConfiguredAuth?: boolean;
 }): Promise<YtDlpExecutionContext> {
+  const potProviderArgs = getYouTubePotProviderExtractorArgs();
+
   if (options?.useConfiguredAuth === false) {
     return {
       cleanup: async () => undefined,
-      sharedArgs: [],
+      sharedArgs: [...potProviderArgs],
     };
   }
 
@@ -373,7 +406,7 @@ async function createYouTubeYtDlpExecutionContext(options?: {
   if (cookiesFilePath) {
     return {
       cleanup: async () => undefined,
-      sharedArgs: ["--cookies", cookiesFilePath],
+      sharedArgs: [...potProviderArgs, "--cookies", cookiesFilePath],
     };
   }
 
@@ -393,7 +426,7 @@ async function createYouTubeYtDlpExecutionContext(options?: {
   if (!cookiesContent) {
     return {
       cleanup: async () => undefined,
-      sharedArgs: [],
+      sharedArgs: [...potProviderArgs],
     };
   }
 
@@ -408,7 +441,7 @@ async function createYouTubeYtDlpExecutionContext(options?: {
         recursive: true,
       }).catch(() => undefined);
     },
-    sharedArgs: ["--cookies", cookiesPath],
+    sharedArgs: [...potProviderArgs, "--cookies", cookiesPath],
   };
 }
 
@@ -1348,7 +1381,7 @@ async function resolveRutubeAudioSource(
 ): Promise<ResolvedAudioSource> {
   const videoId = getRutubeVideoId(sourceUrl);
   if (!videoId) {
-    throw new Error("РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂ РІРёРґРµРѕ Rutube.");
+    throw new Error("Не удалось определить идентификатор видео Rutube.");
   }
 
   const ytDlpResolvedSource = await resolveRutubeAudioSourceWithYtDlp(sourceUrl);
@@ -1365,7 +1398,7 @@ async function resolveRutubeAudioSource(
   );
 
   if (!response.ok) {
-    throw new Error(`Rutube РІРµСЂРЅСѓР» СЃС‚Р°С‚СѓСЃ ${response.status} РїСЂРё Р·Р°РїСЂРѕСЃРµ РїРѕС‚РѕРєР°.`);
+    throw new Error(`Rutube вернул статус ${response.status} при запросе потока.`);
   }
 
   const parsed = (await response.json()) as RutubePlayOptions;
@@ -1375,7 +1408,7 @@ async function resolveRutubeAudioSource(
     "";
 
   if (!resolvedUrl) {
-    throw new Error("Rutube РЅРµ РІРµСЂРЅСѓР» СЃСЃС‹Р»РєСѓ РЅР° HLS-РїРѕС‚РѕРє.");
+    throw new Error("Rutube не вернул ссылку на HLS-поток.");
   }
 
   return {
@@ -1779,7 +1812,7 @@ export function createConvertedAudioStream(resolvedSource: ResolvedAudioSource) 
     finishWithError(
       error instanceof Error
         ? error.message
-        : "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РїСѓСЃС‚РёС‚СЊ РєРѕРЅРІРµСЂС‚Р°С†РёСЋ Р°СѓРґРёРѕ.",
+        : "Не удалось запустить конвертацию аудио.",
     );
 
     return {
