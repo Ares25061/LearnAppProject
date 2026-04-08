@@ -32,7 +32,7 @@ type EditorNotice = {
   scope: EditorNoticeScope;
 };
 
-type ExportVariant = "scorm1" | "scorm2" | "scorm3";
+type ExportVariant = "scorm1" | "scorm3";
 type ExportTaskState = {
   downloadedBytes: number;
   fileName: string;
@@ -43,11 +43,7 @@ type ExportTaskState = {
 
 function getExportArchiveFilename(title: string, variant: ExportVariant) {
   return `${safeFilename(title)}${
-    variant === "scorm2"
-      ? "-autonomous-scorm"
-      : variant === "scorm3"
-        ? "-hostless-test-scorm"
-        : ""
+    variant === "scorm3" ? "-autonomous-scorm" : ""
   }.zip`;
 }
 
@@ -272,11 +268,9 @@ export function StudioEditor({
       }
 
       showNotice(
-        payload.variant === "scorm2"
+        payload.variant === "scorm3"
           ? "Автономный архив для МЭШ скачан."
-          : payload.variant === "scorm3"
-            ? "Тестовый SCORM без привязки к домену проекта скачан."
-            : "Архив для МЭШ скачан.",
+          : "Архив для МЭШ скачан.",
         "mesh",
       );
 
@@ -427,11 +421,7 @@ export function StudioEditor({
         const anchor = document.createElement("a");
         anchor.href = downloadUrl;
         anchor.download = `${safeFilename(resolvedDraft.title)}${
-          variant === "scorm2"
-            ? "-autonomous-scorm"
-            : variant === "scorm3"
-              ? "-hostless-test-scorm"
-              : ""
+          variant === "scorm3" ? "-autonomous-scorm" : ""
         }.zip`;
         document.body.append(anchor);
         anchor.click();
@@ -450,11 +440,9 @@ export function StudioEditor({
         }
 
         showNotice(
-          variant === "scorm2"
+          variant === "scorm3"
             ? "Автономный архив для МЭШ скачан."
-            : variant === "scorm3"
-              ? "Тестовый SCORM без привязки к домену проекта скачан."
-              : "Архив для МЭШ скачан.",
+            : "Архив для МЭШ скачан.",
           "mesh",
         );
         if (mode === "create" && user && appId) {
@@ -705,24 +693,11 @@ export function StudioEditor({
               className="ghost-button mesh-export__option"
               disabled={isEditorBusy}
               type="button"
-              onClick={() => handleExport("scorm2")}
-            >
-              <span className="mesh-export__option-title">
-                Автономная версия
-              </span>
-              <span className="mesh-export__option-text">
-                Полностью автономный пакет без зависимости от хостинга проекта.
-              </span>
-            </button>
-            <button
-              className="ghost-button mesh-export__option"
-              disabled={isEditorBusy}
-              type="button"
               onClick={() => handleExport("scorm3")}
             >
-              <span className="mesh-export__option-title">Тестовый тип 3</span>
+              <span className="mesh-export__option-title">Автономная версия</span>
               <span className="mesh-export__option-text">
-                Обычный SCORM без зависимости от домена проекта.
+                Этот архив не зависит от хостинга проекта, все медиа хранятся в архиве.
               </span>
             </button>
           </div>
@@ -730,7 +705,7 @@ export function StudioEditor({
       </div>
 
       <p className="editor-hint">
-        Выберите обычный, автономный или тестовый вариант архива перед скачиванием.
+        Выберите обычный или автономный вариант архива перед скачиванием.
       </p>
       {notice?.scope === "mesh" ? (
         <p className="editor-hint">{notice.message}</p>

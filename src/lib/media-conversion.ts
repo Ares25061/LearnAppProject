@@ -10,6 +10,10 @@ import { createRequire } from "node:module";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { getConvertibleAudioProvider } from "@/lib/media-audio";
+import {
+  getStoredVideoAsset,
+  storeConvertedVideoAsset,
+} from "@/lib/media-video-cache";
 
 const execFileAsync = promisify(execFile);
 const AUDIO_PROBE_TIMEOUT_MS = 45_000;
@@ -550,6 +554,20 @@ function resolveYtDlpBin(): string {
   return "yt-dlp";
 }
 
+function getYtDlpJsRuntimeArgs() {
+  const explicitRuntimes = process.env.YTDLP_JS_RUNTIMES?.trim();
+  if (explicitRuntimes) {
+    return ["--js-runtimes", explicitRuntimes];
+  }
+
+  const nodePath = process.execPath?.trim();
+  if (nodePath) {
+    return ["--js-runtimes", `node:${nodePath}`];
+  }
+
+  return [] as string[];
+}
+
 function getDownloadedYtDlpPath() {
   const fileName = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
   return path.join(tmpdir(), "learnapp-media-tools", fileName);
@@ -724,6 +742,7 @@ async function runYtDlpAudioProbe(
           const { stdout } = await execFileAsync(
             ytDlpBin,
             [
+              ...getYtDlpJsRuntimeArgs(),
               ...ytDlpContext.sharedArgs,
               ...buildYtDlpAudioProbeArgs(sourceUrl, attempt),
             ],
@@ -1214,6 +1233,7 @@ async function resolveRutubeAudioSourceWithYtDlp(
     const { stdout } = await execFileAsync(
       ytDlpBin,
       [
+        ...getYtDlpJsRuntimeArgs(),
         "--ignore-config",
         "--no-playlist",
         "--no-warnings",
@@ -1298,6 +1318,7 @@ async function resolveVkAudioSource(
     const { stdout } = await execFileAsync(
       ytDlpBin,
       [
+        ...getYtDlpJsRuntimeArgs(),
         "--ignore-config",
         "--no-playlist",
         "--no-warnings",
@@ -1613,6 +1634,7 @@ async function resolveVkThumbnailUrl(sourceUrl: string) {
       const { stdout } = await execFileAsync(
         ytDlpBin,
         [
+          ...getYtDlpJsRuntimeArgs(),
           "--ignore-config",
           "--no-playlist",
           "--no-warnings",
@@ -2021,6 +2043,7 @@ async function downloadAudioSourceWithYtDlp(
     const { stdout } = await execFileAsync(
       ytDlpBin,
       [
+        ...getYtDlpJsRuntimeArgs(),
         ...ytDlpContext.sharedArgs,
         "--ignore-config",
         "--no-playlist",
@@ -2112,6 +2135,7 @@ async function downloadVideoSourceWithYtDlp(options: {
     const { stdout } = await execFileAsync(
       ytDlpBin,
       [
+        ...getYtDlpJsRuntimeArgs(),
         ...ytDlpContext.sharedArgs,
         "--ignore-config",
         "--no-playlist",
@@ -2275,6 +2299,7 @@ async function downloadAudioSourceAsMp3WithYtDlp(
     const { stdout } = await execFileAsync(
       ytDlpBin,
       [
+        ...getYtDlpJsRuntimeArgs(),
         ...ytDlpContext.sharedArgs,
         "--ignore-config",
         "--no-playlist",
@@ -2585,16 +2610,25 @@ export async function convertVideoSourceToPlayableAsset(
     );
   }
 
+  const storedAsset = await getStoredVideoAsset(sourceUrl);
+  if (storedAsset) {
+    return storedAsset;
+  }
+
   if (provider === "youtube") {
-    return downloadYouTubeVideoSourceWithYtDlp(sourceUrl);
+    const asset = await downloadYouTubeVideoSourceWithYtDlp(sourceUrl);
+    await storeConvertedVideoAsset(sourceUrl, provider, asset);
+    return asset;
   }
 
   if (provider === "rutube") {
     try {
-      return await downloadVideoSourceWithYtDlp({
+      const asset = await downloadVideoSourceWithYtDlp({
         provider,
         sourcePageUrl: sourceUrl,
       });
+      await storeConvertedVideoAsset(sourceUrl, provider, asset);
+      return asset;
     } catch (error) {
       console.warn("[media/video] Rutube yt-dlp download failed, falling back to Rutube API stream", {
         error: error instanceof Error ? error.message : String(error),
@@ -2605,11 +2639,13 @@ export async function convertVideoSourceToPlayableAsset(
     try {
       const resolvedSource = await resolveRutubeVideoSource(sourceUrl);
       const buffer = await convertVideoSourceToMp4Buffer(resolvedSource);
-      return {
+      const asset = {
         buffer,
         contentType: "video/mp4",
         extension: "mp4",
-      };
+      } satisfies ConvertedVideoAsset;
+      await storeConvertedVideoAsset(sourceUrl, provider, asset);
+      return asset;
     } catch (error) {
       console.warn("[media/video] Rutube API video download failed after yt-dlp fallback", {
         error: error instanceof Error ? error.message : String(error),
@@ -2620,8 +2656,10 @@ export async function convertVideoSourceToPlayableAsset(
     }
   }
 
-  return downloadVideoSourceWithYtDlp({
+  const asset = await downloadVideoSourceWithYtDlp({
     provider,
     sourcePageUrl: sourceUrl,
   });
+  await storeConvertedVideoAsset(sourceUrl, provider, asset);
+  return asset;
 }
