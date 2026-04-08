@@ -353,7 +353,7 @@ function getYtDlpProbeErrorMessage(error: unknown) {
 
 function shouldRetryYouTubeProbeWithoutAuth(error: unknown) {
   const message = getYtDlpProbeErrorMessage(error).toLowerCase();
-  return /video unavailable|this content isn.?t available|this video is unavailable/i.test(
+  return /video unavailable|this content isn.?t available|this video is unavailable|requested format is not available/i.test(
     message,
   );
 }
