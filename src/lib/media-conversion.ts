@@ -687,6 +687,21 @@ async function runYtDlpAudioProbe(
     }
   };
 
+  if (
+    provider === "youtube" &&
+    process.env.YTDLP_YOUTUBE_BGUTIL_ENABLED?.trim() === "1"
+  ) {
+    const bgutilResult = await runAttemptsWithContext(
+      await createYouTubeYtDlpExecutionContext({
+        useConfiguredAuth: false,
+      }),
+    );
+
+    if ("metadata" in bgutilResult) {
+      return bgutilResult;
+    }
+  }
+
   const primaryContext = await createExecutionContext();
   const primaryResult = await runAttemptsWithContext(primaryContext);
 
