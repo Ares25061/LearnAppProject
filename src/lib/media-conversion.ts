@@ -252,6 +252,33 @@ const YOUTUBE_AUDIO_PROBE_ATTEMPTS: readonly YtDlpAudioProbeAttempt[] = [
     timeoutMs: 10_000,
   },
 ] as const;
+const YOUTUBE_WPC_VIDEO_ATTEMPTS: readonly YtDlpAudioProbeAttempt[] = [
+  {
+    extractorArgs: "youtube:player_client=mweb;formats=incomplete",
+    label: "mweb",
+    timeoutMs: 18_000,
+  },
+  {
+    extractorArgs: "youtube:player_client=web_safari;formats=incomplete",
+    label: "web-safari",
+    timeoutMs: 12_000,
+  },
+  {
+    extractorArgs: "youtube:player_client=web_embedded;formats=incomplete",
+    label: "web-embedded",
+    timeoutMs: 12_000,
+  },
+  {
+    extractorArgs: "youtube:player_client=tv;formats=incomplete",
+    label: "tv",
+    timeoutMs: 12_000,
+  },
+  {
+    extractorArgs: "youtube:player_client=default;formats=incomplete",
+    label: "default-web",
+    timeoutMs: 12_000,
+  },
+] as const;
 
 type YtDlpExecutionContext = {
   cleanup: () => Promise<void>;
@@ -319,13 +346,9 @@ function getConfiguredYouTubeExtractorArgs() {
   );
 }
 
-function getYouTubeAudioProbeAttempts() {
-  const baseAttempts = [
-    ...(process.env.YTDLP_YOUTUBE_BGUTIL_ENABLED?.trim() === "1"
-      ? YOUTUBE_BGUTIL_AUDIO_PROBE_ATTEMPTS
-      : []),
-    ...YOUTUBE_AUDIO_PROBE_ATTEMPTS,
-  ] satisfies readonly YtDlpAudioProbeAttempt[];
+function getConfiguredYouTubeProbeAttempts(
+  baseAttempts: readonly YtDlpAudioProbeAttempt[],
+) {
   const configuredExtractorArgs = getConfiguredYouTubeExtractorArgs();
   const attemptsWithConfiguredArgs = baseAttempts.map((attempt) => ({
     ...attempt,
@@ -349,6 +372,17 @@ function getYouTubeAudioProbeAttempts() {
     },
     ...attemptsWithConfiguredArgs,
   ] satisfies readonly YtDlpAudioProbeAttempt[];
+}
+
+function getYouTubeAudioProbeAttempts() {
+  const baseAttempts = [
+    ...(process.env.YTDLP_YOUTUBE_BGUTIL_ENABLED?.trim() === "1"
+      ? YOUTUBE_BGUTIL_AUDIO_PROBE_ATTEMPTS
+      : []),
+    ...YOUTUBE_AUDIO_PROBE_ATTEMPTS,
+  ] satisfies readonly YtDlpAudioProbeAttempt[];
+
+  return getConfiguredYouTubeProbeAttempts(baseAttempts);
 }
 
 function getMultipartEnvValue(name: string) {
@@ -717,7 +751,12 @@ function buildYtDlpAudioProbeArgs(
 }
 
 function getYouTubeVideoDownloadAttempts(): readonly YtDlpVideoDownloadAttempt[] {
-  return getYouTubeAudioProbeAttempts().map((attempt) => ({
+  const baseAttempts =
+    process.env.YTDLP_YOUTUBE_WPC_ENABLED?.trim() === "1"
+      ? getConfiguredYouTubeProbeAttempts(YOUTUBE_WPC_VIDEO_ATTEMPTS)
+      : getYouTubeAudioProbeAttempts();
+
+  return baseAttempts.map((attempt) => ({
     extractorArgs: attempt.extractorArgs,
     label: attempt.label,
     timeoutMs: attempt.timeoutMs,
@@ -725,7 +764,12 @@ function getYouTubeVideoDownloadAttempts(): readonly YtDlpVideoDownloadAttempt[]
 }
 
 function getYouTubeVideoProbeAttempts(): readonly YtDlpAudioProbeAttempt[] {
-  return getYouTubeAudioProbeAttempts().map((attempt) => ({
+  const baseAttempts =
+    process.env.YTDLP_YOUTUBE_WPC_ENABLED?.trim() === "1"
+      ? getConfiguredYouTubeProbeAttempts(YOUTUBE_WPC_VIDEO_ATTEMPTS)
+      : getYouTubeAudioProbeAttempts();
+
+  return baseAttempts.map((attempt) => ({
     ...attempt,
     formatSelector: DEFAULT_YT_DLP_VIDEO_FORMAT_SELECTOR,
   }));
