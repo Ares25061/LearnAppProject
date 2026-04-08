@@ -179,6 +179,7 @@ const YT_DLP_AUDIO_PROBE_BASE_ARGS = [
   "--dump-single-json",
 ] as const;
 const DEFAULT_YT_DLP_AUDIO_FORMAT_SELECTOR = "bestaudio/best";
+const DEFAULT_YT_DLP_VIDEO_FORMAT_SELECTOR = "best[height<=480]/best";
 const YOUTUBE_BGUTIL_AUDIO_PROBE_ATTEMPTS: readonly YtDlpAudioProbeAttempt[] = [
   {
     extractorArgs: "youtube:player_client=mweb;formats=incomplete",
@@ -718,7 +719,7 @@ function getYouTubeVideoDownloadAttempts(): readonly YtDlpVideoDownloadAttempt[]
 function getYouTubeVideoProbeAttempts(): readonly YtDlpAudioProbeAttempt[] {
   return getYouTubeAudioProbeAttempts().map((attempt) => ({
     ...attempt,
-    formatSelector: null,
+    formatSelector: DEFAULT_YT_DLP_VIDEO_FORMAT_SELECTOR,
   }));
 }
 
@@ -1116,19 +1117,38 @@ async function resolveYouTubeVideoSource(
     getYouTubeVideoProbeAttempts(),
   );
 
-  const selectedFormat =
-    pickYouTubeYtDlpVideoFormat(probe.metadata.requested_formats) ??
-    pickYouTubeYtDlpVideoFormat(probe.metadata.formats);
+  try {
+    return buildResolvedAudioSourceFromYtDlpMetadata(
+      sourceUrl,
+      "youtube",
+      probe.metadata,
+      {
+        extractorArgs: probe.extractorArgs,
+        probeStrategy: probe.probeStrategy,
+        usesCookies: probe.usesCookies,
+      },
+    );
+  } catch (error) {
+    const selectedFormat =
+      pickYouTubeYtDlpVideoFormat(probe.metadata.requested_formats) ??
+      pickYouTubeYtDlpVideoFormat(probe.metadata.formats);
 
-  if (!selectedFormat) {
-    return null;
+    if (!selectedFormat) {
+      if (error instanceof Error) {
+        throw new Error(
+          `Не удалось подготовить видеопоток YouTube через yt-dlp (${probe.ytDlpBin}): ${error.message}`,
+        );
+      }
+
+      throw error;
+    }
+
+    return buildResolvedVideoSourceFromYtDlpFormat(sourceUrl, probe.metadata, selectedFormat, {
+      extractorArgs: probe.extractorArgs,
+      probeStrategy: probe.probeStrategy,
+      usesCookies: probe.usesCookies,
+    });
   }
-
-  return buildResolvedVideoSourceFromYtDlpFormat(sourceUrl, probe.metadata, selectedFormat, {
-    extractorArgs: probe.extractorArgs,
-    probeStrategy: probe.probeStrategy,
-    usesCookies: probe.usesCookies,
-  });
 }
 
 
