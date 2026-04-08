@@ -5,12 +5,12 @@
 ## Что уже готово
 
 - Next.js 16 + React 19
-- SQLite через `better-sqlite3`
+- MariaDB / MySQL через `mariadb`
 - Локальная регистрация и вход
 - Создание, сохранение и редактирование упражнений
 - Экспорт SCORM-архива
 - Docker-конфиг для Railway
-- Автоматическая поддержка Railway Volume для SQLite
+- Отдельный MariaDB service для Railway с кастомным `my.cnf`
 
 ## Локальный запуск
 
@@ -22,7 +22,9 @@ npm install
 
 2. Создайте `.env.local` на основе `.env.example`.
 
-3. Запустите проект:
+3. Поднимите MySQL / MariaDB и укажите `DATABASE_URL`.
+
+4. Запустите проект:
 
 ```bash
 npm run dev
@@ -36,4 +38,20 @@ npm run dev
 
 - `SESSION_SECRET` - длинный случайный секрет для cookie-сессий
 - `NEXT_PUBLIC_APP_URL` - публичный URL приложения
-- `DATABASE_PATH` - необязательно; путь к SQLite-файлу
+- `PUBLIC_APP_URL` - серверный публичный origin приложения
+- `DATABASE_URL` - строка подключения `mysql://...`
+- `DATABASE_POOL_LIMIT` - верхний лимит соединений пула
+- `DATABASE_POOL_MIN_IDLE` - сколько idle-соединений держать постоянно
+- `DATABASE_POOL_IDLE_TIMEOUT` - через сколько секунд закрывать idle-соединения
+
+## MariaDB Для Railway
+
+Если managed MySQL Railway упирается в память, можно поднять отдельный DB service из этого репозитория.
+
+1. Создайте новый Railway service из того же репозитория.
+2. Для этого service задайте `RAILWAY_DOCKERFILE_PATH=railway/mariadb/Dockerfile`.
+3. Подключите Volume к `/var/lib/mysql`.
+4. Задайте переменные `MARIADB_DATABASE`, `MARIADB_USER`, `MARIADB_PASSWORD`, `MARIADB_ROOT_PASSWORD`.
+5. В app service укажите `DATABASE_URL` через private domain этого DB service.
+
+Подробная инструкция лежит в [railway/mariadb/README.md](/C:/GitHub/LearnAppProject/railway/mariadb/README.md).
