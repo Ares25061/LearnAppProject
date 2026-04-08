@@ -26,8 +26,10 @@ type CachedAudioEntry = {
 };
 
 type AudioErrorPayload = {
+  authConfigured?: boolean;
   code: string;
   error: string;
+  hint?: string;
 };
 
 const audioCache = new Map<string, CachedAudioEntry>();
@@ -92,6 +94,16 @@ function setCachedAudioBuffer(sourceUrl: string, asset: ConvertedAudioAsset) {
   }
 }
 
+function hasConfiguredYouTubeAuth() {
+  return Boolean(
+    process.env.YTDLP_YOUTUBE_COOKIES_FILE?.trim() ||
+      process.env.YTDLP_YOUTUBE_COOKIES_B64?.trim() ||
+      process.env.YTDLP_YOUTUBE_COOKIES?.trim() ||
+      (process.env.YTDLP_YOUTUBE_PO_TOKEN?.trim() &&
+        process.env.YTDLP_YOUTUBE_VISITOR_DATA?.trim()),
+  );
+}
+
 function getAudioFailurePayload(
   provider: string | null,
   error: unknown,
@@ -107,10 +119,15 @@ function getAudioFailurePayload(
       rawMessage,
     )
   ) {
+    const authConfigured = hasConfiguredYouTubeAuth();
     return {
+      authConfigured,
       code: "youtube_bot_check",
       error:
         "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u043e\u0434\u0433\u043e\u0442\u043e\u0432\u0438\u0442\u044c mp3 \u0434\u043b\u044f YouTube: \u0441\u0435\u0440\u0432\u0438\u0441 \u0437\u0430\u043f\u0440\u043e\u0441\u0438\u043b \u0434\u043e\u043f\u043e\u043b\u043d\u0438\u0442\u0435\u043b\u044c\u043d\u0443\u044e \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0443.",
+      hint: authConfigured
+        ? "\u041d\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0435 \u0443\u0436\u0435 \u0437\u0430\u0434\u0430\u043d\u044b YouTube auth-\u043f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b, \u043d\u043e YouTube \u0438\u0445 \u043d\u0435 \u043f\u0440\u0438\u043d\u044f\u043b. \u041e\u0431\u043d\u043e\u0432\u0438\u0442\u0435 cookies.txt \u0438\u043b\u0438 \u043f\u0440\u043e\u0432\u0435\u0440\u044c\u0442\u0435 YTDLP_YOUTUBE_COOKIES_B64."
+        : "\u041d\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0435 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u044b YTDLP_YOUTUBE_COOKIES_B64 / YTDLP_YOUTUBE_COOKIES / YTDLP_YOUTUBE_COOKIES_FILE \u0438\u043b\u0438 \u043f\u0430\u0440\u0430 YTDLP_YOUTUBE_PO_TOKEN + YTDLP_YOUTUBE_VISITOR_DATA.",
     };
   }
 
