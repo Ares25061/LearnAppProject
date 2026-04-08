@@ -219,6 +219,11 @@ type YtDlpExecutionContext = {
   sharedArgs: string[];
 };
 
+type YtDlpProbeFailure = {
+  lastAttemptLabel: string;
+  lastError: unknown;
+};
+
 function normalizeYouTubeExtractorArgsSegment(value: string | null | undefined) {
   const trimmed = value?.trim();
   if (!trimmed) {
@@ -292,7 +297,16 @@ function getYouTubeAudioProbeAttempts() {
   ] satisfies readonly YtDlpAudioProbeAttempt[];
 }
 
-async function createYouTubeYtDlpExecutionContext(): Promise<YtDlpExecutionContext> {
+async function createYouTubeYtDlpExecutionContext(options?: {
+  useConfiguredAuth?: boolean;
+}): Promise<YtDlpExecutionContext> {
+  if (options?.useConfiguredAuth === false) {
+    return {
+      cleanup: async () => undefined,
+      sharedArgs: [],
+    };
+  }
+
   const cookiesFilePath = process.env.YTDLP_YOUTUBE_COOKIES_FILE?.trim();
   if (cookiesFilePath) {
     return {
@@ -331,6 +345,17 @@ async function createYouTubeYtDlpExecutionContext(): Promise<YtDlpExecutionConte
     },
     sharedArgs: ["--cookies", cookiesPath],
   };
+}
+
+function getYtDlpProbeErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function shouldRetryYouTubeProbeWithoutAuth(error: unknown) {
+  const message = getYtDlpProbeErrorMessage(error).toLowerCase();
+  return /video unavailable|this content isn.?t available|this video is unavailable/i.test(
+    message,
+  );
 }
 
 function getDirectAudioAssetDescriptor(
@@ -563,78 +588,122 @@ async function runYtDlpAudioProbe(
   attempts: readonly YtDlpAudioProbeAttempt[],
 ): Promise<YtDlpAudioProbeResult> {
   const ytDlpBin = await ensureYtDlpBin();
-  const ytDlpContext =
+  const createExecutionContext = () =>
     provider === "youtube"
-      ? await createYouTubeYtDlpExecutionContext()
-      : {
+      ? createYouTubeYtDlpExecutionContext()
+      : Promise.resolve({
           cleanup: async () => undefined,
           sharedArgs: [],
-        };
-  let lastError: unknown = null;
-  let lastAttemptLabel = "unknown";
+        } satisfies YtDlpExecutionContext);
 
-  try {
-    for (const attempt of attempts) {
-      lastAttemptLabel = attempt.label;
+  const runAttemptsWithContext = async (
+    ytDlpContext: YtDlpExecutionContext,
+  ): Promise<YtDlpAudioProbeResult | YtDlpProbeFailure> => {
+    let contextLastError: unknown = null;
+    let contextLastAttemptLabel = "unknown";
 
-      try {
-        console.info("[media/yt-dlp] Probing audio source", {
-          extractorArgs: attempt.extractorArgs ?? null,
-          provider,
-          sourceUrl,
-          strategy: attempt.label,
-          usesCookies: ytDlpContext.sharedArgs.includes("--cookies"),
-        });
+    try {
+      for (const attempt of attempts) {
+        contextLastAttemptLabel = attempt.label;
 
-        const { stdout } = await execFileAsync(
-          ytDlpBin,
-          [
-            ...ytDlpContext.sharedArgs,
-            ...buildYtDlpAudioProbeArgs(sourceUrl, attempt),
-          ],
-          {
-            timeout: attempt.timeoutMs ?? AUDIO_PROBE_TIMEOUT_MS,
-            windowsHide: true,
-            maxBuffer: 16 * 1024 * 1024,
-          },
-        );
+        try {
+          console.info("[media/yt-dlp] Probing audio source", {
+            extractorArgs: attempt.extractorArgs ?? null,
+            provider,
+            sourceUrl,
+            strategy: attempt.label,
+            usesCookies: ytDlpContext.sharedArgs.includes("--cookies"),
+          });
 
-        console.info("[media/yt-dlp] Audio probe succeeded", {
-          extractorArgs: attempt.extractorArgs ?? null,
-          provider,
-          sourceUrl,
-          strategy: attempt.label,
-        });
+          const { stdout } = await execFileAsync(
+            ytDlpBin,
+            [
+              ...ytDlpContext.sharedArgs,
+              ...buildYtDlpAudioProbeArgs(sourceUrl, attempt),
+            ],
+            {
+              timeout: attempt.timeoutMs ?? AUDIO_PROBE_TIMEOUT_MS,
+              windowsHide: true,
+              maxBuffer: 16 * 1024 * 1024,
+            },
+          );
 
-        return {
-          extractorArgs: attempt.extractorArgs,
-          metadata: JSON.parse(stdout) as YtDlpResolvedAudioMetadata,
-          probeStrategy: attempt.label,
-          ytDlpBin,
-        } satisfies YtDlpAudioProbeResult;
-      } catch (error) {
-        lastError = error;
+          console.info("[media/yt-dlp] Audio probe succeeded", {
+            extractorArgs: attempt.extractorArgs ?? null,
+            provider,
+            sourceUrl,
+            strategy: attempt.label,
+            usesCookies: ytDlpContext.sharedArgs.includes("--cookies"),
+          });
 
-        console.warn("[media/yt-dlp] Audio probe failed", {
-          extractorArgs: attempt.extractorArgs ?? null,
-          message: error instanceof Error ? error.message : String(error),
-          provider,
-          sourceUrl,
-          strategy: attempt.label,
-        });
+          return {
+            extractorArgs: attempt.extractorArgs,
+            metadata: JSON.parse(stdout) as YtDlpResolvedAudioMetadata,
+            probeStrategy: attempt.label,
+            ytDlpBin,
+          } satisfies YtDlpAudioProbeResult;
+        } catch (error) {
+          contextLastError = error;
+
+          console.warn("[media/yt-dlp] Audio probe failed", {
+            extractorArgs: attempt.extractorArgs ?? null,
+            message: getYtDlpProbeErrorMessage(error),
+            provider,
+            sourceUrl,
+            strategy: attempt.label,
+            usesCookies: ytDlpContext.sharedArgs.includes("--cookies"),
+          });
+        }
       }
+
+      return {
+        lastAttemptLabel: contextLastAttemptLabel,
+        lastError: contextLastError,
+      } satisfies YtDlpProbeFailure;
+    } finally {
+      await ytDlpContext.cleanup();
     }
-  } finally {
-    await ytDlpContext.cleanup();
+  };
+
+  const primaryContext = await createExecutionContext();
+  const primaryResult = await runAttemptsWithContext(primaryContext);
+
+  if ("metadata" in primaryResult) {
+    return primaryResult;
   }
 
-  const lastMessage =
-    lastError instanceof Error ? lastError.message : String(lastError);
+  let lastError = primaryResult.lastError;
+  let lastAttemptLabel = primaryResult.lastAttemptLabel;
+
+  if (
+    provider === "youtube" &&
+    primaryContext.sharedArgs.includes("--cookies") &&
+    shouldRetryYouTubeProbeWithoutAuth(primaryResult.lastError)
+  ) {
+    console.warn("[media/yt-dlp] Retrying YouTube audio probe without configured auth", {
+      provider,
+      sourceUrl,
+    });
+
+    const fallbackResult = await runAttemptsWithContext(
+      await createYouTubeYtDlpExecutionContext({
+        useConfiguredAuth: false,
+      }),
+    );
+
+    if ("metadata" in fallbackResult) {
+      return fallbackResult;
+    }
+
+    lastError = fallbackResult.lastError;
+    lastAttemptLabel = fallbackResult.lastAttemptLabel;
+  }
+
+  const lastMessage = getYtDlpProbeErrorMessage(lastError);
   throw new Error(
     `yt-dlp не смог подготовить аудиопоток. Последняя стратегия: ${lastAttemptLabel}. ${lastMessage}`,
   );
 }
-
 function buildResolvedAudioSourceFromYtDlpMetadata(
   sourceUrl: string,
   provider: "youtube" | "vk" | "rutube",
