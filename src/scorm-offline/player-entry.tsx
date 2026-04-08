@@ -6,10 +6,13 @@ import type { AnyExerciseDraft } from "../lib/types";
 declare global {
   interface Window {
     __SCORM_EXERCISE_DRAFT__?: AnyExerciseDraft;
+    __SCORM_MEDIA_THUMBNAILS__?: Record<string, string>;
+    __SCORM_OFFLINE_RUNTIME__?: boolean;
   }
 }
 
 const container = document.getElementById("app");
+window.__SCORM_OFFLINE_RUNTIME__ = true;
 const draft = window.__SCORM_EXERCISE_DRAFT__;
 
 if (!container) {

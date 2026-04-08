@@ -2,6 +2,12 @@ import "server-only";
 import fs from "node:fs/promises";
 import path from "node:path";
 import JSZip from "jszip";
+import {
+  convertAudioSourceToPlayableAsset,
+  resolveMediaThumbnailUrl,
+  verifyConvertibleAudioSource,
+} from "@/lib/media-conversion";
+import { getConvertibleAudioProvider } from "@/lib/media-audio";
 import type {
   AnyExerciseDraft,
   MatchingAudioContent,
@@ -57,9 +63,6 @@ const DEFAULT_EXTENSION_BY_KIND: Record<OfflineAssetKind, string> = {
   video: "mp4",
 };
 
-const EXTERNAL_URL_PATTERN = /https?:\/\/[^"'`\s)]+/g;
-const SAFE_NAMESPACE_PREFIXES = ["http://www.w3.org/", "https://www.w3.org/"];
-
 let assetPromise: Promise<TemplateAssets> | null = null;
 
 export class ScormArchiveError extends Error {
@@ -77,19 +80,6 @@ async function readTemplateAsset(filePath: string, message: string) {
     return await fs.readFile(filePath);
   } catch {
     throw new ScormArchiveError(message, 500);
-  }
-}
-
-function assertPlayerAssetHasNoExternalLinks(source: string, label: string) {
-  const matches = Array.from(source.matchAll(EXTERNAL_URL_PATTERN), (match) => match[0]).filter(
-    (url) => !SAFE_NAMESPACE_PREFIXES.some((prefix) => url.startsWith(prefix)),
-  );
-
-  if (matches.length > 0) {
-    throw new ScormArchiveError(
-      `${label} содержит внешние ссылки: ${matches.join(", ")}`,
-      500,
-    );
   }
 }
 
@@ -123,27 +113,14 @@ async function getAssets() {
         path.join(templateDirectory, "scorm-player.css"),
         "Не найдены стили офлайн-плеера «Автономный SCORM». Запустите `npm run build:scorm-player` и повторите экспорт.",
       ),
-    ]).then(
-      ([adlcp, imscp, imsmd, wrapper, offlinePlayerJs, offlinePlayerCss]) => {
-        assertPlayerAssetHasNoExternalLinks(
-          offlinePlayerJs.toString("utf8"),
-          "Autonomous SCORM player bundle",
-        );
-        assertPlayerAssetHasNoExternalLinks(
-          offlinePlayerCss.toString("utf8"),
-          "Autonomous SCORM player styles",
-        );
-
-        return {
-          adlcp,
-          imscp,
-          imsmd,
-          wrapper,
-          offlinePlayerJs,
-          offlinePlayerCss,
-        };
-      },
-    );
+    ]).then(([adlcp, imscp, imsmd, wrapper, offlinePlayerJs, offlinePlayerCss]) => ({
+      adlcp,
+      imscp,
+      imsmd,
+      wrapper,
+      offlinePlayerJs,
+      offlinePlayerCss,
+    }));
   }
 
   return assetPromise;
@@ -282,8 +259,23 @@ function escapeJsonForInlineScript(value: unknown) {
     .replace(/\u2029/g, "\\u2029");
 }
 
-function buildOfflinePlayerHtml(title: string, draft: AnyExerciseDraft) {
+function buildOfflinePlayerHtml(
+  title: string,
+  draft: AnyExerciseDraft,
+  mediaThumbnails: Record<string, string>,
+) {
   const safeTitle = title || "Название не указано";
+  const contentSecurityPolicy = [
+    "default-src 'self' data: blob: https: http:",
+    "img-src 'self' data: blob: https: http:",
+    "media-src 'self' data: blob: https: http:",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "connect-src 'self' data: blob: https: http:",
+    "frame-src 'self' https: http:",
+    "child-src 'self' https: http:",
+    "font-src 'self' data: https: http:",
+  ].join("; ");
 
   return `<!doctype html>
 <html lang="ru">
@@ -292,7 +284,7 @@ function buildOfflinePlayerHtml(title: string, draft: AnyExerciseDraft) {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta
     http-equiv="Content-Security-Policy"
-    content="default-src 'self' data: blob:; img-src 'self' data: blob:; media-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'none'; font-src 'self' data:;"
+    content="${contentSecurityPolicy}"
   />
   <title>${escapeXml(safeTitle)}</title>
   <link rel="stylesheet" href="./scorm-player.css" />
@@ -300,7 +292,9 @@ function buildOfflinePlayerHtml(title: string, draft: AnyExerciseDraft) {
 <body>
   <div id="app"></div>
   <script>
+    window.__SCORM_OFFLINE_RUNTIME__ = true;
     window.__SCORM_EXERCISE_DRAFT__ = ${escapeJsonForInlineScript(draft)};
+    window.__SCORM_MEDIA_THUMBNAILS__ = ${escapeJsonForInlineScript(mediaThumbnails)};
   </script>
   <script src="./scorm-player.js"></script>
 </body>
@@ -450,12 +444,6 @@ async function downloadRemoteAsset(url: string) {
     );
   }
 
-  if (isExternalVideoServiceHost(parsedUrl.hostname)) {
-    throw new ScormArchiveError(
-      "Автономный SCORM не поддерживает прямые ссылки на внешние видеосервисы. Замените их на загруженный файл или прямую ссылку на mp3/mp4/webm.",
-    );
-  }
-
   let response: Response;
 
   try {
@@ -601,17 +589,12 @@ function collectDraftResourceUrls(draft: AnyExerciseDraft) {
 function assertOfflineDraftResources(draft: AnyExerciseDraft) {
   const invalidResources = collectDraftResourceUrls(draft).filter((url) => {
     const trimmed = url.trim().toLowerCase();
-    return (
-      trimmed.startsWith("http://") ||
-      trimmed.startsWith("https://") ||
-      trimmed.startsWith("data:") ||
-      trimmed.startsWith("blob:")
-    );
+    return trimmed.startsWith("data:") || trimmed.startsWith("blob:");
   });
 
   if (invalidResources.length > 0) {
     throw new ScormArchiveError(
-      `Автономный SCORM всё ещё содержит внешние ресурсы: ${invalidResources.join(", ")}`,
+      `Автономный SCORM всё ещё содержит неупакованные встроенные ресурсы: ${invalidResources.join(", ")}`,
       500,
     );
   }
@@ -621,13 +604,54 @@ async function localizeDraftForOfflineExport(input: AnyExerciseDraft) {
   const draft = structuredClone(input);
   const files: ArchiveFile[] = [];
   const localizedUrlMap = new Map<string, Promise<string>>();
+  const localizedThumbnailMap = new Map<string, Promise<string | null>>();
+  const mediaThumbnails = new Map<string, string>();
   let assetCounter = 0;
+
+  const persistArchiveAsset = (
+    kind: OfflineAssetKind,
+    resource: {
+      buffer: Buffer;
+      contentType: string;
+      url?: string;
+    },
+    source: string,
+    preferredExtension?: string | null,
+  ) => {
+    const remoteUrl =
+      "url" in resource && typeof resource.url === "string" ? resource.url : source;
+    const normalizedContentType = resource.contentType || "application/octet-stream";
+    assertContentTypeMatchesKind(kind, normalizedContentType, remoteUrl);
+    const extension =
+      normalizeExtension(preferredExtension) ??
+      getExtensionFromMimeType(normalizedContentType) ??
+      getExtensionFromRemoteUrl(remoteUrl) ??
+      DEFAULT_EXTENSION_BY_KIND[kind];
+    const assetNumber = assetCounter + 1;
+    assetCounter += 1;
+    const fileName = `${kind}-${String(assetNumber).padStart(3, "0")}.${extension}`;
+    const archivePath = `player/assets/${fileName}`;
+
+    files.push({
+      archivePath,
+      data: resource.buffer,
+    });
+
+    return `./assets/${fileName}`;
+  };
 
   const localizeResourceUrl = async (url: string, kind: OfflineAssetKind) => {
     const source = url.trim();
+    const normalizedSource = source.toLowerCase();
 
     if (!source) {
       return source;
+    }
+
+    if (normalizedSource.startsWith("blob:")) {
+      throw new ScormArchiveError(
+        `Автономный SCORM не может упаковать временный blob URL ${source}. Загрузите файл в редакторе заново перед экспортом.`,
+      );
     }
 
     if (!isExternalOrEmbeddedResource(source)) {
@@ -641,34 +665,95 @@ async function localizeDraftForOfflineExport(input: AnyExerciseDraft) {
       return existingPromise;
     }
 
-    const assetNumber = assetCounter + 1;
-    assetCounter += 1;
-
     const nextPromise = (async () => {
-      const resource = source.toLowerCase().startsWith("data:")
-        ? decodeDataUrl(source)
-        : await downloadRemoteAsset(source);
-      const remoteUrl =
-        "url" in resource && typeof resource.url === "string"
-          ? resource.url
-          : source;
-      assertContentTypeMatchesKind(kind, resource.contentType, remoteUrl);
-      const extension =
-        getExtensionFromMimeType(resource.contentType) ??
-        getExtensionFromRemoteUrl(remoteUrl) ??
-        DEFAULT_EXTENSION_BY_KIND[kind];
-      const fileName = `${kind}-${String(assetNumber).padStart(3, "0")}.${extension}`;
-      const archivePath = `player/assets/${fileName}`;
+      if (kind === "audio" && getConvertibleAudioProvider(source)) {
+        try {
+          const resolvedSource = await verifyConvertibleAudioSource(source);
+          const convertedAsset = await convertAudioSourceToPlayableAsset(resolvedSource);
+          return persistArchiveAsset(
+            "audio",
+            {
+              buffer: convertedAsset.buffer,
+              contentType: convertedAsset.contentType,
+              url: source,
+            },
+            source,
+            convertedAsset.extension,
+          );
+        } catch (error) {
+          throw new ScormArchiveError(
+            error instanceof Error
+              ? `Не удалось подготовить аудио для автономного SCORM: ${error.message}`
+              : "Не удалось подготовить аудио для автономного SCORM.",
+            502,
+          );
+        }
+      }
 
-      files.push({
-        archivePath,
-        data: resource.buffer,
-      });
+      if (normalizedSource.startsWith("data:")) {
+        return persistArchiveAsset(kind, decodeDataUrl(source), source);
+      }
 
-      return `./assets/${fileName}`;
+      if (kind === "video") {
+        try {
+          const parsedUrl = new URL(source);
+          if (isExternalVideoServiceHost(parsedUrl.hostname)) {
+            return source;
+          }
+        } catch {
+          throw new ScormArchiveError(
+            `Автономный SCORM поддерживает только абсолютные URL или загруженные файлы. Не удалось обработать: ${source}`,
+          );
+        }
+      }
+
+      return persistArchiveAsset(kind, await downloadRemoteAsset(source), source);
     })();
 
     localizedUrlMap.set(source, nextPromise);
+    return nextPromise;
+  };
+
+  const localizeVideoThumbnail = async (url: string) => {
+    const source = url.trim();
+    if (!source) {
+      return null;
+    }
+
+    const existingPromise = localizedThumbnailMap.get(source);
+    if (existingPromise) {
+      return existingPromise;
+    }
+
+    const nextPromise = (async () => {
+      let parsedUrl: URL;
+
+      try {
+        parsedUrl = new URL(source);
+      } catch {
+        return null;
+      }
+
+      if (!isExternalVideoServiceHost(parsedUrl.hostname) || isYouTubeHost(parsedUrl.hostname)) {
+        return null;
+      }
+
+      try {
+        const thumbnailUrl = await resolveMediaThumbnailUrl(source);
+        if (!thumbnailUrl) {
+          return null;
+        }
+
+        const thumbnailResource = thumbnailUrl.toLowerCase().startsWith("data:")
+          ? decodeDataUrl(thumbnailUrl)
+          : await downloadRemoteAsset(thumbnailUrl);
+        return persistArchiveAsset("image", thumbnailResource, thumbnailUrl);
+      } catch {
+        return null;
+      }
+    })();
+
+    localizedThumbnailMap.set(source, nextPromise);
     return nextPromise;
   };
 
@@ -689,10 +774,18 @@ async function localizeDraftForOfflineExport(input: AnyExerciseDraft) {
           url: await localizeResourceUrl(side.url, "audio"),
         } satisfies MatchingAudioContent;
       case "video":
-        return {
-          ...side,
-          url: await localizeResourceUrl(side.url, "video"),
-        } satisfies MatchingVideoContent;
+        {
+          const localizedUrl = await localizeResourceUrl(side.url, "video");
+          const thumbnailUrl = await localizeVideoThumbnail(localizedUrl);
+          if (thumbnailUrl) {
+            mediaThumbnails.set(localizedUrl, thumbnailUrl);
+          }
+
+          return {
+            ...side,
+            url: localizedUrl,
+          } satisfies MatchingVideoContent;
+        }
       default:
         return side;
     }
@@ -743,6 +836,7 @@ async function localizeDraftForOfflineExport(input: AnyExerciseDraft) {
   return {
     draft,
     files,
+    mediaThumbnails: Object.fromEntries(mediaThumbnails),
   };
 }
 
@@ -800,7 +894,10 @@ async function buildOfflineArchive(input: {
   zip.file("adlcp_rootv1p2.xsd", assets.adlcp);
   zip.file("imscp_rootv1p1p2.xsd", assets.imscp);
   zip.file("imsmd_rootv1p2p1.xsd", assets.imsmd);
-  zip.file("player/index.html", buildOfflinePlayerHtml(input.title, localized.draft));
+  zip.file(
+    "player/index.html",
+    buildOfflinePlayerHtml(input.title, localized.draft, localized.mediaThumbnails),
+  );
   zip.file("player/scorm-player.js", assets.offlinePlayerJs);
   zip.file("player/scorm-player.css", assets.offlinePlayerCss);
 

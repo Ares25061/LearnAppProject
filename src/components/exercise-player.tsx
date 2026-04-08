@@ -55,6 +55,11 @@ import type {
   MatchingVideoContent,
 } from "@/lib/types";
 
+declare const __SCORM_OFFLINE_BUNDLE__: boolean | undefined;
+
+const IS_SCORM_OFFLINE_BUNDLE =
+  typeof __SCORM_OFFLINE_BUNDLE__ !== "undefined" && __SCORM_OFFLINE_BUNDLE__;
+
 type ReportResult = (score: number, solved: boolean, detail?: string) => void;
 
 type ActivityProps<T extends ExerciseTypeId> = {
@@ -213,6 +218,28 @@ type MatchingEmbeddedVideoMeta = {
   thumbnailUrl?: string;
   videoId?: string;
 };
+
+type ScormOfflineRuntimeWindow = Window & {
+  __SCORM_MEDIA_THUMBNAILS__?: Record<string, string>;
+  __SCORM_OFFLINE_RUNTIME__?: boolean;
+};
+
+function getScormOfflineRuntimeWindow() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return window as ScormOfflineRuntimeWindow;
+}
+
+function isScormOfflineRuntime() {
+  return IS_SCORM_OFFLINE_BUNDLE || getScormOfflineRuntimeWindow()?.__SCORM_OFFLINE_RUNTIME__ === true;
+}
+
+function getScormOfflineThumbnailUrl(sourceUrl: string) {
+  const thumbnailUrl = getScormOfflineRuntimeWindow()?.__SCORM_MEDIA_THUMBNAILS__?.[sourceUrl];
+  return typeof thumbnailUrl === "string" && thumbnailUrl.trim() ? thumbnailUrl : undefined;
+}
 
 function getMatchingImageHeight(input: MatchingContent | MatchingImageContent) {
   const content =
@@ -1278,6 +1305,10 @@ function getMatchingAudioVolume(content: MatchingAudioContent) {
 }
 
 function getMatchingConvertedAudioUrl(url: string) {
+  if (isScormOfflineRuntime()) {
+    return null;
+  }
+
   return getConvertibleAudioProvider(url) ? buildConvertedAudioPath(url) : null;
 }
 
@@ -1452,6 +1483,10 @@ function getMatchingModalAudioSourceState(url: string) {
 }
 
 function buildMatchingVideoThumbnailPath(url: string) {
+  if (isScormOfflineRuntime()) {
+    return getScormOfflineThumbnailUrl(url);
+  }
+
   return `/api/media/thumbnail?source=${encodeURIComponent(url)}`;
 }
 
