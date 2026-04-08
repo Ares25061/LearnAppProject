@@ -236,9 +236,30 @@ function isScormOfflineRuntime() {
   return IS_SCORM_OFFLINE_BUNDLE || getScormOfflineRuntimeWindow()?.__SCORM_OFFLINE_RUNTIME__ === true;
 }
 
+function canUseMatchingEmbeddedVideoFrame() {
+  if (typeof window === "undefined") {
+    return true;
+  }
+
+  return window.location.protocol === "http:" || window.location.protocol === "https:";
+}
+
 function getScormOfflineThumbnailUrl(sourceUrl: string) {
   const thumbnailUrl = getScormOfflineRuntimeWindow()?.__SCORM_MEDIA_THUMBNAILS__?.[sourceUrl];
   return typeof thumbnailUrl === "string" && thumbnailUrl.trim() ? thumbnailUrl : undefined;
+}
+
+function getMatchingFrameOrigin() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const { origin, protocol } = window.location;
+  if ((protocol !== "http:" && protocol !== "https:") || !origin || origin === "null") {
+    return null;
+  }
+
+  return origin;
 }
 
 function getMatchingImageHeight(input: MatchingContent | MatchingImageContent) {
@@ -1111,7 +1132,7 @@ function getMatchingYouTubeMeta(url: string): MatchingEmbeddedVideoMeta | null {
     provider: "youtube",
     videoId,
     startSeconds,
-    thumbnailUrl: buildMatchingYouTubeThumbnailUrl(videoId),
+    thumbnailUrl: getScormOfflineThumbnailUrl(url) ?? buildMatchingYouTubeThumbnailUrl(videoId),
   };
 }
 
@@ -1126,6 +1147,11 @@ function buildMatchingYouTubeEmbedUrl(videoId: string, startSeconds = 0) {
 
   if (startSeconds > 0) {
     params.set("start", `${startSeconds}`);
+  }
+
+  const frameOrigin = getMatchingFrameOrigin();
+  if (frameOrigin) {
+    params.set("origin", frameOrigin);
   }
 
   return `https://www.youtube-nocookie.com/embed/${videoId}?${params.toString()}`;
@@ -2559,6 +2585,9 @@ function MatchingMediaDialog({
     media.kind === "video"
       ? getMatchingEmbeddedVideoMeta(media.url)
       : null;
+  const canUseEmbeddedVideoFrame = embeddedVideoMeta
+    ? canUseMatchingEmbeddedVideoFrame()
+    : false;
   const canPlayAudio = media.kind === "audio" ? isMatchingAudioPlayable(media.url) : false;
   const audioVolume =
     media.kind === "audio" ? getMatchingAudioVolume(media) : 100;
@@ -2659,7 +2688,7 @@ function MatchingMediaDialog({
               initialVolume={audioVolume}
               src={media.url}
             />
-          ) : embeddedVideoMeta ? (
+          ) : embeddedVideoMeta && canUseEmbeddedVideoFrame ? (
             <>
               <div className="matching-media-modal__frame-wrap">
                 <iframe
@@ -2672,6 +2701,29 @@ function MatchingMediaDialog({
                 />
               </div>
             </>
+          ) : embeddedVideoMeta ? (
+            <div className="stack">
+              {embeddedVideoMeta.thumbnailUrl ? (
+                <div className="matching-media-modal__image-wrap">
+                  <img
+                    alt={title}
+                    className="matching-media-modal__image"
+                    src={embeddedVideoMeta.thumbnailUrl}
+                  />
+                </div>
+              ) : null}
+              <p className="editor-hint">
+                {"Локальный SCORM не может передать внешнему видеосервису корректный Referer для встроенного плеера. Откройте видео на странице сервиса."}
+              </p>
+              <a
+                className="player-button"
+                href={media.url}
+                rel="noopener"
+                target="_blank"
+              >
+                {`Открыть видео в ${getMatchingEmbeddedVideoLabel(embeddedVideoMeta.provider)}`}
+              </a>
+            </div>
           ) : (
             <div className="matching-media-modal__frame-wrap">
               <video

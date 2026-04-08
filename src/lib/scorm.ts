@@ -775,7 +775,7 @@ async function localizeDraftForOfflineExport(input: AnyExerciseDraft) {
         return null;
       }
 
-      if (!isExternalVideoServiceHost(parsedUrl.hostname) || isYouTubeHost(parsedUrl.hostname)) {
+      if (!isExternalVideoServiceHost(parsedUrl.hostname)) {
         return null;
       }
 
@@ -1100,7 +1100,7 @@ async function prepareHostlessDraftForArchive(input: AnyExerciseDraft) {
         return null;
       }
 
-      if (!isExternalVideoServiceHost(parsedUrl.hostname) || isYouTubeHost(parsedUrl.hostname)) {
+      if (!isExternalVideoServiceHost(parsedUrl.hostname)) {
         return null;
       }
 
