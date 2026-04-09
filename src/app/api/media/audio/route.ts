@@ -32,6 +32,15 @@ type AudioErrorPayload = {
   hint?: string;
 };
 
+type ParsedByteRange =
+  | {
+      end: number;
+      start: number;
+    }
+  | {
+      unsatisfiable: true;
+    };
+
 const audioCache = new Map<string, CachedAudioEntry>();
 const pendingConversions = new Map<string, Promise<ConvertedAudioAsset>>();
 
@@ -143,6 +152,61 @@ function getAudioFailurePayload(
     code: "audio_prepare_failed",
     error:
       "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u043e\u0434\u0433\u043e\u0442\u043e\u0432\u0438\u0442\u044c \u0430\u0443\u0434\u0438\u043e \u0434\u043b\u044f \u0432\u043e\u0441\u043f\u0440\u043e\u0438\u0437\u0432\u0435\u0434\u0435\u043d\u0438\u044f.",
+  };
+}
+
+function parseByteRangeHeader(
+  rangeHeader: string | null,
+  size: number,
+): ParsedByteRange | null {
+  if (!rangeHeader || size <= 0) {
+    return null;
+  }
+
+  const match = /^bytes=(\d*)-(\d*)$/i.exec(rangeHeader.trim());
+  if (!match) {
+    return null;
+  }
+
+  const startToken = match[1] ?? "";
+  const endToken = match[2] ?? "";
+
+  if (!startToken && !endToken) {
+    return { unsatisfiable: true };
+  }
+
+  if (!startToken) {
+    const suffixLength = Number.parseInt(endToken, 10);
+    if (!Number.isFinite(suffixLength) || suffixLength <= 0) {
+      return { unsatisfiable: true };
+    }
+
+    return {
+      start: Math.max(size - suffixLength, 0),
+      end: size - 1,
+    };
+  }
+
+  const start = Number.parseInt(startToken, 10);
+  if (!Number.isFinite(start) || start < 0 || start >= size) {
+    return { unsatisfiable: true };
+  }
+
+  if (!endToken) {
+    return {
+      start,
+      end: size - 1,
+    };
+  }
+
+  const parsedEnd = Number.parseInt(endToken, 10);
+  if (!Number.isFinite(parsedEnd) || parsedEnd < start) {
+    return { unsatisfiable: true };
+  }
+
+  return {
+    start,
+    end: Math.min(parsedEnd, size - 1),
   };
 }
 
@@ -273,15 +337,45 @@ export async function GET(request: Request) {
       tookMs: Date.now() - startedAt,
     });
 
-    const responseBody = new Uint8Array(audioAsset.buffer);
+    const responseBody = Buffer.from(audioAsset.buffer);
+    const baseHeaders = {
+      "Accept-Ranges": "bytes",
+      "Cache-Control": "private, max-age=31536000, immutable",
+      "Content-Disposition": `inline; filename="${provider}-audio.${audioAsset.extension}"`,
+      "Content-Type": audioAsset.contentType,
+      ETag: `"${buildMediaAudioCacheId(sourceUrl)}-${audioAsset.buffer.byteLength}"`,
+    };
+    const parsedRange = parseByteRangeHeader(
+      request.headers.get("range"),
+      responseBody.byteLength,
+    );
+
+    if (parsedRange && "unsatisfiable" in parsedRange) {
+      return new Response(null, {
+        status: 416,
+        headers: {
+          ...baseHeaders,
+          "Content-Range": `bytes */${responseBody.byteLength}`,
+        },
+      });
+    }
+
+    if (parsedRange) {
+      const partialBody = responseBody.subarray(parsedRange.start, parsedRange.end + 1);
+      return new Response(partialBody, {
+        status: 206,
+        headers: {
+          ...baseHeaders,
+          "Content-Length": String(partialBody.byteLength),
+          "Content-Range": `bytes ${parsedRange.start}-${parsedRange.end}/${responseBody.byteLength}`,
+        },
+      });
+    }
 
     return new Response(responseBody, {
       headers: {
-        "Content-Type": audioAsset.contentType,
-        "Cache-Control": "private, max-age=31536000, immutable",
-        "Content-Disposition": `inline; filename="${provider}-audio.${audioAsset.extension}"`,
-        "Content-Length": String(audioAsset.buffer.byteLength),
-        ETag: `"${buildMediaAudioCacheId(sourceUrl)}-${audioAsset.buffer.byteLength}"`,
+        ...baseHeaders,
+        "Content-Length": String(responseBody.byteLength),
       },
     });
   } catch (error) {

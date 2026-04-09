@@ -236,9 +236,71 @@ function isScormOfflineRuntime() {
   return IS_SCORM_OFFLINE_BUNDLE || getScormOfflineRuntimeWindow()?.__SCORM_OFFLINE_RUNTIME__ === true;
 }
 
+function collectScormOfflineThumbnailLookupKeys(sourceUrl: string) {
+  const trimmed = sourceUrl.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  const keys = new Set<string>();
+  const pushCandidate = (value?: string | null) => {
+    if (!value) {
+      return;
+    }
+
+    const normalized = value.trim().replace(/\\/g, "/");
+    if (!normalized) {
+      return;
+    }
+
+    keys.add(normalized);
+    keys.add(normalized.replace(/^\.\/+/, ""));
+
+    const withoutLeadingSlash = normalized.replace(/^\/+/, "");
+    keys.add(withoutLeadingSlash);
+    keys.add(`./${withoutLeadingSlash.replace(/^\.\/+/, "")}`);
+
+    const withoutPlayerPrefix = withoutLeadingSlash.replace(/^player\//i, "");
+    if (withoutPlayerPrefix && withoutPlayerPrefix !== withoutLeadingSlash) {
+      keys.add(withoutPlayerPrefix);
+      keys.add(`./${withoutPlayerPrefix.replace(/^\.\/+/, "")}`);
+    }
+
+    const assetsMatch = withoutLeadingSlash.match(/(?:^|\/)(assets\/.+)$/i);
+    if (assetsMatch?.[1]) {
+      keys.add(assetsMatch[1]);
+      keys.add(`./${assetsMatch[1]}`);
+    }
+  };
+
+  pushCandidate(trimmed);
+
+  if (typeof window !== "undefined") {
+    try {
+      const resolved = new URL(trimmed, window.location.href);
+      pushCandidate(resolved.pathname);
+    } catch {
+      // Ignore malformed URLs and keep direct candidates only.
+    }
+  }
+
+  return [...keys];
+}
+
 function getScormOfflineThumbnailUrl(sourceUrl: string) {
-  const thumbnailUrl = getScormOfflineRuntimeWindow()?.__SCORM_MEDIA_THUMBNAILS__?.[sourceUrl];
-  return typeof thumbnailUrl === "string" && thumbnailUrl.trim() ? thumbnailUrl : undefined;
+  const mediaThumbnails = getScormOfflineRuntimeWindow()?.__SCORM_MEDIA_THUMBNAILS__;
+  if (!mediaThumbnails) {
+    return undefined;
+  }
+
+  for (const key of collectScormOfflineThumbnailLookupKeys(sourceUrl)) {
+    const thumbnailUrl = mediaThumbnails[key];
+    if (typeof thumbnailUrl === "string" && thumbnailUrl.trim()) {
+      return thumbnailUrl;
+    }
+  }
+
+  return undefined;
 }
 
 function getMatchingFrameOrigin() {
@@ -1500,8 +1562,13 @@ function getMatchingModalAudioSourceState(url: string) {
 }
 
 function buildMatchingVideoThumbnailPath(url: string) {
+  const offlineThumbnailUrl = getScormOfflineThumbnailUrl(url);
+  if (offlineThumbnailUrl) {
+    return offlineThumbnailUrl;
+  }
+
   if (isScormOfflineRuntime()) {
-    return getScormOfflineThumbnailUrl(url);
+    return undefined;
   }
 
   return `/api/media/thumbnail?source=${encodeURIComponent(url)}`;
@@ -2436,6 +2503,9 @@ function MatchingCardContent({
     }
     case "video": {
       const embeddedVideoMeta = getMatchingEmbeddedVideoMeta(normalized.url);
+      const videoThumbnailUrl =
+        embeddedVideoMeta?.thumbnailUrl ??
+        (isScormOfflineRuntime() ? buildMatchingVideoThumbnailPath(normalized.url) : undefined);
       const isEmbeddedFileVideo = isMatchingEmbeddedFileUrl(normalized.url);
       const videoTitle = normalized.label.trim();
       const startSeconds =
@@ -2477,18 +2547,18 @@ function MatchingCardContent({
                   minHeight: `${videoSize}px`,
                 }}
               >
-                {embeddedVideoMeta?.thumbnailUrl ? (
+                {videoThumbnailUrl ? (
                   <img
                     alt={
                       normalized.label ||
                       "\u041f\u0440\u0435\u0432\u044c\u044e \u0432\u0438\u0434\u0435\u043e"
                     }
                     className={
-                      embeddedVideoMeta.provider === "youtube"
+                      embeddedVideoMeta?.provider === "youtube"
                         ? "matching-card-thumbnail matching-card-thumbnail--youtube"
                         : "matching-card-thumbnail"
                     }
-                    src={embeddedVideoMeta.thumbnailUrl}
+                    src={videoThumbnailUrl}
                   />
                 ) : (
                   <div
@@ -2577,6 +2647,11 @@ function MatchingMediaDialog({
     media.kind === "video"
       ? getMatchingEmbeddedVideoMeta(media.url)
       : null;
+  const videoPoster =
+    media.kind === "video" &&
+    (!embeddedVideoMeta || isScormOfflineRuntime())
+      ? buildMatchingVideoThumbnailPath(media.url)
+      : undefined;
   const canPlayAudio = media.kind === "audio" ? isMatchingAudioPlayable(media.url) : false;
   const audioVolume =
     media.kind === "audio" ? getMatchingAudioVolume(media) : 100;
@@ -2697,6 +2772,7 @@ function MatchingMediaDialog({
                 className="matching-media-modal__video"
                 controls
                 key={`${media.kind}:${media.url}:${startSeconds}`}
+                poster={videoPoster}
                 playsInline
                 preload="auto"
                 onLoadedMetadata={(event) => {

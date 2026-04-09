@@ -1156,6 +1156,13 @@ async function prepareHostlessDraftForArchive(input: AnyExerciseDraft) {
         return source;
       }
 
+      if (isYouTubeHost(parsedUrl.hostname)) {
+        throw new ScormArchiveError(
+          "Автономный архив пока не поддерживает видео YouTube. Используйте обычный архив или удалите YouTube-видео перед экспортом.",
+          400,
+        );
+      }
+
       if (source.toLowerCase().startsWith("data:")) {
         return persistArchiveAsset("video", decodeDataUrl(source), source);
       }
