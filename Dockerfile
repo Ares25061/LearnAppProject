@@ -69,6 +69,7 @@ COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/scorm-template ./scorm-template
 COPY --from=builder /app/scripts/start-runtime.sh ./scripts/start-runtime.sh
+COPY --from=builder /app/scripts/start-bgutil.mjs ./scripts/start-bgutil.mjs
 COPY --from=bgutil /opt/bgutil-provider/server /opt/bgutil-provider/server
 RUN chmod +x ./scripts/start-runtime.sh
 

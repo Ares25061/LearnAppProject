@@ -44,6 +44,22 @@ npm run dev
 - `DATABASE_POOL_MIN_IDLE` - сколько idle-соединений держать постоянно
 - `DATABASE_POOL_IDLE_TIMEOUT` - через сколько секунд закрывать idle-соединения
 
+## YouTube На Railway
+
+Для автономного SCORM-экспорта YouTube Railway часто получает bot-check от датацентрового IP. В этом случае сервису нужны свежие cookies браузера.
+
+Самый быстрый способ обновить их из локального браузера в Railway:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\sync-railway-youtube-cookies.ps1 -Service LearnAppProject-branch -Environment production
+```
+
+Скрипт:
+
+- экспортирует cookies из локального браузера через `yt-dlp`
+- кладёт их в `YTDLP_YOUTUBE_COOKIES_B64` для указанного Railway service
+- запускает новый deploy, если не передан `-SkipDeploys`
+
 ## MariaDB Для Railway
 
 Если managed MySQL Railway упирается в память, можно поднять отдельный DB service из этого репозитория.

@@ -17,7 +17,7 @@ terminate_children() {
 trap 'terminate_children' INT TERM
 
 if [ "${YTDLP_YOUTUBE_BGUTIL_ENABLED:-0}" = "1" ] && [ -f /opt/bgutil-provider/server/build/main.js ]; then
-  node /opt/bgutil-provider/server/build/main.js --port 4416 &
+  node /app/scripts/start-bgutil.mjs --port 4416 &
   BGUTIL_PID="$!"
 fi
 

@@ -502,7 +502,14 @@ async function createYouTubeYtDlpExecutionContext(options?: {
 }
 
 function getYtDlpProbeErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
+  const rawMessage = error instanceof Error ? error.message : String(error);
+
+  return rawMessage
+    .replace(/\r/g, "")
+    .replace(/^Command failed: [^\n]+\n?/gm, "")
+    .replace(/--cookies\s+\S+/g, "--cookies [redacted]")
+    .replace(/poToken:\s*\S+/gi, "poToken: [redacted]")
+    .trim();
 }
 
 function shouldRetryYouTubeProbeWithoutAuth(error: unknown) {
@@ -1152,7 +1159,7 @@ async function resolveYouTubeAudioSource(
   } catch (error) {
     if (error instanceof Error) {
       throw new Error(
-        `Не удалось подготовить аудиопоток YouTube через yt-dlp (${probe.ytDlpBin}): ${error.message}`,
+        `Не удалось подготовить аудиопоток YouTube через yt-dlp (${probe.ytDlpBin}): ${getYtDlpProbeErrorMessage(error)}`,
       );
     }
 
@@ -1188,7 +1195,7 @@ async function resolveYouTubeVideoSource(
     if (!selectedFormat) {
       if (error instanceof Error) {
         throw new Error(
-          `Не удалось подготовить видеопоток YouTube через yt-dlp (${probe.ytDlpBin}): ${error.message}`,
+          `Не удалось подготовить видеопоток YouTube через yt-dlp (${probe.ytDlpBin}): ${getYtDlpProbeErrorMessage(error)}`,
         );
       }
 
@@ -2500,7 +2507,7 @@ async function downloadYouTubeVideoSourceWithYtDlp(
         lastError = error;
         console.warn("[media/video] YouTube video download attempt failed", {
           extractorArgs: attempt.extractorArgs ?? null,
-          error: error instanceof Error ? error.message : String(error),
+          error: getYtDlpProbeErrorMessage(error),
           sourceUrl,
           strategy: attempt.label,
           usesConfiguredAuth: useConfiguredYouTubeAuth,
@@ -2897,7 +2904,7 @@ export async function convertVideoSourceToPlayableAsset(
       }
     } catch (error) {
       console.warn("[media/video] YouTube direct video probe failed, falling back to yt-dlp download", {
-        error: error instanceof Error ? error.message : String(error),
+        error: getYtDlpProbeErrorMessage(error),
         sourceUrl,
       });
     }
