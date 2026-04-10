@@ -1176,6 +1176,18 @@ async function resolveYouTubeVideoSource(
     getYouTubeVideoProbeAttempts(),
   );
 
+  const selectedFormat =
+    pickYouTubeYtDlpVideoFormat(probe.metadata.requested_formats) ??
+    pickYouTubeYtDlpVideoFormat(probe.metadata.formats);
+
+  if (selectedFormat) {
+    return buildResolvedVideoSourceFromYtDlpFormat(sourceUrl, probe.metadata, selectedFormat, {
+      extractorArgs: probe.extractorArgs,
+      probeStrategy: probe.probeStrategy,
+      usesCookies: probe.usesCookies,
+    });
+  }
+
   try {
     return buildResolvedAudioSourceFromYtDlpMetadata(
       sourceUrl,
@@ -1188,25 +1200,13 @@ async function resolveYouTubeVideoSource(
       },
     );
   } catch (error) {
-    const selectedFormat =
-      pickYouTubeYtDlpVideoFormat(probe.metadata.requested_formats) ??
-      pickYouTubeYtDlpVideoFormat(probe.metadata.formats);
-
-    if (!selectedFormat) {
-      if (error instanceof Error) {
-        throw new Error(
-          `Не удалось подготовить видеопоток YouTube через yt-dlp (${probe.ytDlpBin}): ${getYtDlpProbeErrorMessage(error)}`,
-        );
-      }
-
-      throw error;
+    if (error instanceof Error) {
+      throw new Error(
+        `Не удалось подготовить видеопоток YouTube через yt-dlp (${probe.ytDlpBin}): ${getYtDlpProbeErrorMessage(error)}`,
+      );
     }
 
-    return buildResolvedVideoSourceFromYtDlpFormat(sourceUrl, probe.metadata, selectedFormat, {
-      extractorArgs: probe.extractorArgs,
-      probeStrategy: probe.probeStrategy,
-      usesCookies: probe.usesCookies,
-    });
+    throw error;
   }
 }
 
@@ -2400,7 +2400,7 @@ async function downloadVideoSourceWithYtDlp(options: {
   const extractorArgs = options.extractorArgs?.trim();
   const formatSelector =
     options.provider === "youtube"
-      ? "bestvideo*[height<=480]+bestaudio/best[height<=480]/best"
+      ? "best[height<=480]/bestvideo*[height<=480]+bestaudio/best[height<=480]/best"
       : "best[height<=480]/best";
   const tempDir = await mkdtemp(path.join(tmpdir(), "learnapp-video-"));
   const outputTemplate = path.join(tempDir, "asset.%(ext)s");
