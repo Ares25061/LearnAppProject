@@ -199,8 +199,9 @@ function Invoke-RailwayGraphQl {
     } `
     -Body $body
 
-  if ($response.errors) {
-    $messages = ($response.errors | ForEach-Object { $_.message }) -join " | "
+  $errorsProperty = $response.PSObject.Properties["errors"]
+  if ($errorsProperty -and $errorsProperty.Value) {
+    $messages = ($errorsProperty.Value | ForEach-Object { $_.message }) -join " | "
     throw "Railway GraphQL request failed: $messages"
   }
 
