@@ -114,8 +114,11 @@ function getStoredRememberedMediaVolume() {
   return rememberedMediaVolume;
 }
 
-function getRememberedMediaVolume(initialVolume: number) {
-  return getStoredRememberedMediaVolume() ?? normalizeRememberedMediaVolume(initialVolume);
+function getRememberedMediaVolume(defaultVolume = MATCHING_AUDIO_VOLUME_DEFAULT) {
+  return (
+    getStoredRememberedMediaVolume() ??
+    normalizeRememberedMediaVolume(defaultVolume, MATCHING_AUDIO_VOLUME_DEFAULT)
+  );
 }
 
 function rememberMediaVolume(nextVolume: number) {
@@ -137,15 +140,12 @@ function rememberMediaVolume(nextVolume: number) {
   return normalizedVolume;
 }
 
-function useRememberedMediaVolume(initialVolume: number, resetKey: string) {
-  const normalizedInitialVolume = normalizeRememberedMediaVolume(initialVolume);
-  const [volume, setVolume] = useState(() =>
-    rememberedMediaVolume ?? normalizedInitialVolume,
-  );
+function useRememberedMediaVolume(_initialVolume: number, resetKey: string) {
+  const [volume, setVolume] = useState(() => getRememberedMediaVolume());
 
   useEffect(() => {
-    setVolume(getRememberedMediaVolume(normalizedInitialVolume));
-  }, [normalizedInitialVolume, resetKey]);
+    setVolume(getRememberedMediaVolume());
+  }, [resetKey]);
 
   const handleVolumeChange = (nextVolume: number) => {
     setVolume(rememberMediaVolume(nextVolume));
@@ -516,14 +516,6 @@ function getMatchingVideoSize(input: MatchingVideoContent) {
 
 function getMatchingVideoStartSeconds(content: MatchingVideoContent) {
   return Math.max(0, Math.round(content.startSeconds));
-}
-
-function getMatchingVideoVolume(content: MatchingVideoContent) {
-  const volume =
-    typeof content.volume === "number" && Number.isFinite(content.volume)
-      ? Math.round(content.volume)
-      : MATCHING_AUDIO_VOLUME_DEFAULT;
-  return clamp(volume, 0, 100);
 }
 
 function getMatchingBoardMetrics(
@@ -2700,8 +2692,6 @@ function MatchingMediaDialog({
   const canPlayAudio = media.kind === "audio" ? isMatchingAudioPlayable(media.url) : false;
   const audioVolume =
     media.kind === "audio" ? getMatchingAudioVolume(media) : MATCHING_AUDIO_VOLUME_DEFAULT;
-  const videoVolume =
-    media.kind === "video" ? getMatchingVideoVolume(media) : MATCHING_AUDIO_VOLUME_DEFAULT;
   const startSeconds =
     media.kind === "video"
       ? getMatchingVideoStartSeconds(media) || embeddedVideoMeta?.startSeconds || 0
@@ -2823,7 +2813,7 @@ function MatchingMediaDialog({
                 preload="auto"
                 onLoadedMetadata={(event) => {
                   const element = event.currentTarget;
-                  element.volume = getRememberedMediaVolume(videoVolume) / 100;
+                  element.volume = getRememberedMediaVolume() / 100;
                   if (startSeconds > 0) {
                     const maxStart = Number.isFinite(element.duration)
                       ? Math.max(element.duration - 0.1, 0)
