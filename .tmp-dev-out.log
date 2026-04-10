@@ -1,12 +1,119 @@
 
 > learningapps-studio@0.1.0 dev
-> next dev
+> next dev --hostname 127.0.0.1 --port 3005
 
 ▲ Next.js 16.2.2 (Turbopack)
-- Local:         http://localhost:3000
-- Network:       http://10.8.1.6:3000
-✓ Ready in 1065ms
+- Local:         http://127.0.0.1:3005
+- Network:       http://127.0.0.1:3005
+- Environments: .env.local
+✓ Ready in 589ms
 
- GET /api/media/audio?source=https%3A%2F%2Fvkvideo.ru%2Fvideo-230182483_456239022 200 in 9.9s (next.js: 714ms, application-code: 9.2s)
- GET /api/media/audio?source=https%3A%2F%2Frutube.ru%2Fvideo%2Fc45557dfdeed4924b40f49b7e7800a9c%2F 200 in 17.3s (next.js: 862ms, application-code: 16.4s)
- GET /create/matching-pairs 200 in 4.2s (next.js: 1747ms, application-code: 2.5s)
+ POST /api/export 400 in 490ms (next.js: 318ms, application-code: 172ms)
+ POST /api/export 400 in 25ms (next.js: 4ms, application-code: 21ms)
+[media/yt-dlp] Probing audio source {
+  extractorArgs: 'youtube:player_client=default,ios,web_safari,web_embedded,tv_simply,tv,android_sdkless,android_vr,android;formats=incomplete',
+  provider: 'youtube',
+  sourceUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+  strategy: 'metadata-only',
+  usesCookies: false
+}
+[media/yt-dlp] Audio probe succeeded {
+  extractorArgs: 'youtube:player_client=default,ios,web_safari,web_embedded,tv_simply,tv,android_sdkless,android_vr,android;formats=incomplete',
+  provider: 'youtube',
+  sourceUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+  strategy: 'metadata-only',
+  usesCookies: false
+}
+[media/video] Downloading YouTube video {
+  extractorArgs: 'youtube:player_client=default,ios,web_safari,web_embedded,tv_simply,tv,android_sdkless,android_vr,android;formats=incomplete',
+  sourceUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+  strategy: 'metadata-only',
+  usesConfiguredAuth: true
+}
+ POST /api/export 200 in 39.2s (next.js: 69ms, application-code: 39.1s)
+[media/yt-dlp] Probing audio source {
+  extractorArgs: 'youtube:player_client=default,ios,web_safari,web_embedded,tv_simply,tv,android_sdkless,android_vr,android;formats=incomplete',
+  provider: 'youtube',
+  sourceUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+  strategy: 'metadata-only',
+  usesCookies: false
+}
+[media/yt-dlp] Audio probe succeeded {
+  extractorArgs: 'youtube:player_client=default,ios,web_safari,web_embedded,tv_simply,tv,android_sdkless,android_vr,android;formats=incomplete',
+  provider: 'youtube',
+  sourceUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+  strategy: 'metadata-only',
+  usesCookies: false
+}
+[media/video] Downloading YouTube video {
+  extractorArgs: 'youtube:player_client=default,ios,web_safari,web_embedded,tv_simply,tv,android_sdkless,android_vr,android;formats=incomplete',
+  sourceUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+  strategy: 'metadata-only',
+  usesConfiguredAuth: true
+}
+ POST /api/export 200 in 45s (next.js: 6ms, application-code: 45s)
+ GET / 200 in 427ms (next.js: 121ms, application-code: 307ms)
+[media/yt-dlp] Probing audio source {
+  extractorArgs: 'youtube:player_client=default,ios,web_safari,web_embedded,tv_simply,tv,android_sdkless,android_vr,android;formats=incomplete',
+  provider: 'youtube',
+  sourceUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+  strategy: 'metadata-only',
+  usesCookies: false
+}
+[media/yt-dlp] Audio probe succeeded {
+  extractorArgs: 'youtube:player_client=default,ios,web_safari,web_embedded,tv_simply,tv,android_sdkless,android_vr,android;formats=incomplete',
+  provider: 'youtube',
+  sourceUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+  strategy: 'metadata-only',
+  usesCookies: false
+}
+[media/video] Downloading YouTube video {
+  extractorArgs: 'youtube:player_client=default,ios,web_safari,web_embedded,tv_simply,tv,android_sdkless,android_vr,android;formats=incomplete',
+  sourceUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+  strategy: 'metadata-only',
+  usesConfiguredAuth: true
+}
+ POST /api/export 200 in 34.1s (next.js: 3ms, application-code: 34.1s)
+[media/yt-dlp] Probing audio source {
+  extractorArgs: 'youtube:player_client=default,ios,web_safari,web_embedded,tv_simply,tv,android_sdkless,android_vr,android;formats=incomplete',
+  provider: 'youtube',
+  sourceUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+  strategy: 'metadata-only',
+  usesCookies: false
+}
+[media/yt-dlp] Audio probe succeeded {
+  extractorArgs: 'youtube:player_client=default,ios,web_safari,web_embedded,tv_simply,tv,android_sdkless,android_vr,android;formats=incomplete',
+  provider: 'youtube',
+  sourceUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+  strategy: 'metadata-only',
+  usesCookies: false
+}
+[media/video] Downloading YouTube video {
+  extractorArgs: 'youtube:player_client=default,ios,web_safari,web_embedded,tv_simply,tv,android_sdkless,android_vr,android;formats=incomplete',
+  sourceUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+  strategy: 'metadata-only',
+  usesConfiguredAuth: true
+}
+ POST /api/export 200 in 37.4s (next.js: 5ms, application-code: 37.4s)
+ GET / 200 in 148ms (next.js: 6ms, application-code: 142ms)
+[media/yt-dlp] Probing audio source {
+  extractorArgs: 'youtube:player_client=default,ios,web_safari,web_embedded,tv_simply,tv,android_sdkless,android_vr,android;formats=incomplete',
+  provider: 'youtube',
+  sourceUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+  strategy: 'metadata-only',
+  usesCookies: false
+}
+[media/yt-dlp] Audio probe succeeded {
+  extractorArgs: 'youtube:player_client=default,ios,web_safari,web_embedded,tv_simply,tv,android_sdkless,android_vr,android;formats=incomplete',
+  provider: 'youtube',
+  sourceUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+  strategy: 'metadata-only',
+  usesCookies: false
+}
+[media/video] Downloading YouTube video {
+  extractorArgs: 'youtube:player_client=default,ios,web_safari,web_embedded,tv_simply,tv,android_sdkless,android_vr,android;formats=incomplete',
+  sourceUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+  strategy: 'metadata-only',
+  usesConfiguredAuth: true
+}
+ POST /api/export 200 in 35.0s (next.js: 3ms, application-code: 35.0s)

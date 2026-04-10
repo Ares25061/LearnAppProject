@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     librsvg2-2 \
     ca-certificates \
   && python3 -m venv /opt/media-tools \
-  && /opt/media-tools/bin/pip install --no-cache-dir --upgrade pip yt-dlp bgutil-ytdlp-pot-provider==${BGUTIL_POT_PROVIDER_VERSION} yt-dlp-getpot-wpc \
+  && /opt/media-tools/bin/pip install --no-cache-dir --upgrade pip "yt-dlp[default]" bgutil-ytdlp-pot-provider==${BGUTIL_POT_PROVIDER_VERSION} yt-dlp-getpot-wpc \
   && rm -rf /var/lib/apt/lists/*
 ENV PATH="/opt/media-tools/bin:${PATH}"
 
@@ -69,6 +69,7 @@ COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/scorm-template ./scorm-template
 COPY --from=builder /app/scripts/start-runtime.sh ./scripts/start-runtime.sh
+COPY --from=builder /app/scripts/start-bgutil.mjs ./scripts/start-bgutil.mjs
 COPY --from=bgutil /opt/bgutil-provider/server /opt/bgutil-provider/server
 RUN chmod +x ./scripts/start-runtime.sh
 

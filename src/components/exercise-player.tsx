@@ -529,13 +529,12 @@ function getMatchingCardHeight(
   }
 
   if (normalized.kind === "audio") {
-    const audioLabel =
-      normalized.label || getMatchingPlayableSourceLabel(normalized) || "\u0410\u0443\u0434\u0438\u043e";
-    return estimateMatchingTextHeight(audioLabel, innerWidth, 26) + 50;
+    const audioSize = getMatchingAudioSize(normalized);
+    return clamp(Math.round(audioSize * 0.16) + 60, 90, 106);
   }
 
   if (normalized.kind === "spoken-text") {
-    return clamp(Math.round(Math.max(104, width * 0.64)), 104, 132);
+    return clamp(Math.round(Math.max(78, width * 0.38)), 78, 94);
   }
 
   if (normalized.kind === "text") {
@@ -577,15 +576,9 @@ function getMatchingCardBaseWidth(
   }
 
   if (normalized.kind === "audio") {
-    const audioLabel =
-      normalized.label || getMatchingPlayableSourceLabel(normalized) || "\u0410\u0443\u0434\u0438\u043e";
-    const longestLine = getMatchingLongestLineLength(audioLabel);
-    const preferredWidth = Math.round(
-      236 +
-        Math.min(longestLine, 42) * 5.6 +
-        Math.min(audioLabel.trim().length, 120) * 0.22,
-    );
-    return clamp(preferredWidth, Math.min(248, maxWidth), maxWidth);
+    const audioSize = getMatchingAudioSize(normalized);
+    const preferredWidth = Math.round(148 + audioSize * 0.62);
+    return clamp(preferredWidth, Math.min(188, maxWidth), Math.min(252, maxWidth));
   }
 
   if (normalized.kind === "image") {
@@ -602,7 +595,7 @@ function getMatchingCardBaseWidth(
   }
 
   if (normalized.kind === "spoken-text") {
-    return clamp(Math.round(164 + Math.min(normalized.size, 260) * 0.08), 152, 220);
+    return clamp(Math.round(132 + Math.min(normalized.size, 260) * 0.05), 124, 176);
   }
 
   const normalizedText = normalized.text.trim();
@@ -639,7 +632,7 @@ function getMatchingCardMinimumHeight(content: MatchingContent) {
   }
 
   if (normalized.kind === "spoken-text") {
-    return 104;
+    return 78;
   }
 
   if (normalized.kind === "text") {
@@ -666,9 +659,9 @@ function getMatchingCardSize(
     normalized.kind === "text"
       ? 78
         : normalized.kind === "spoken-text"
-          ? 148
+          ? 124
             : normalized.kind === "audio"
-              ? 224
+              ? 188
             : normalized.kind === "image"
               ? 116
               : 148;
@@ -676,7 +669,7 @@ function getMatchingCardSize(
     normalized.kind === "text"
       ? 38
       : normalized.kind === "spoken-text"
-        ? 96
+        ? 74
         : normalized.kind === "audio"
           ? 88
           : 72;
@@ -692,11 +685,11 @@ function getMatchingCardSize(
     normalized.kind === "text"
       ? 0.34
       : normalized.kind === "spoken-text"
-        ? 0.16
+        ? 0.08
         : normalized.kind === "image"
         ? 0.08
         : normalized.kind === "audio"
-          ? 0.18
+          ? 0.08
           : 0.14;
   const effectiveWidthScale = clamp(scale + widthBias, 0.68, 1);
   const width = clamp(
@@ -1982,33 +1975,6 @@ function MatchingAdaptiveAudioPlayer({
     </div>
   );
 }
-function MatchingNativeAudioPlayer({
-  src,
-  title,
-  initialVolume,
-}: Readonly<{
-  src: string;
-  title: string;
-  initialVolume: number;
-}>) {
-  return (
-    <div className="matching-inline-audio matching-inline-audio--native" data-card-interactive="true">
-      <span className="matching-inline-audio__title" title={title}>
-        {title}
-      </span>
-      <audio
-        className="matching-inline-audio__native"
-        controls
-        preload="metadata"
-        src={src}
-        onLoadedMetadata={(event) => {
-          event.currentTarget.volume = initialVolume / 100;
-        }}
-      />
-    </div>
-  );
-}
-
 function MatchingModalAudioPlayerShell({
   duration,
   errorMessage = null,
@@ -2410,8 +2376,11 @@ function MatchingCardContent({
       );
     }
     case "image": {
-      const captionSpace = normalized.alt ? 34 : 10;
-      const imageHeight = Math.max(72, cardHeight - captionSpace);
+      const caption = normalized.alt.trim();
+      const captionHeight = caption
+        ? estimateMatchingTextHeight(caption, cardWidth, 18) + 8
+        : 0;
+      const imageHeight = Math.max(72, cardHeight - captionHeight);
       return (
         <div className={contentClassName}>
           <div
@@ -2441,8 +2410,8 @@ function MatchingCardContent({
               </div>
             )}
           </div>
-          {normalized.alt ? (
-            <span className="matching-card-caption">{normalized.alt}</span>
+          {caption ? (
+            <span className="matching-card-caption">{caption}</span>
           ) : null}
         </div>
       );
@@ -2451,27 +2420,10 @@ function MatchingCardContent({
       const audioServiceMeta = getMatchingEmbeddedVideoMeta(normalized.url);
       const convertedAudioUrl = getMatchingConvertedAudioUrl(normalized.url);
       const canPlayAudio = isMatchingAudioPlayable(normalized.url);
-      const inlineAudioType =
-        getMatchingMediaType("audio", normalized.url) ??
-        getMatchingMediaType("video", normalized.url);
-      const canInlineAudio = Boolean(normalized.url && inlineAudioType);
-      const audioVolume = getMatchingAudioVolume(normalized);
-      const audioSourceLabel = getMatchingPlayableSourceLabel(normalized);
-      const audioTitle =
-        normalized.fileName?.trim() ||
-        normalized.label ||
-        audioSourceLabel ||
-        "\u0410\u0443\u0434\u0438\u043e";
       return (
         <div className={contentClassName}>
           <div className="matching-card-media-frame matching-card-media-frame--audio">
-            {canInlineAudio ? (
-              <MatchingNativeAudioPlayer
-                initialVolume={audioVolume}
-                src={normalized.url}
-                title={audioTitle}
-              />
-            ) : normalized.url && canPlayAudio ? (
+            {normalized.url && canPlayAudio ? (
               <button
                 className="ghost-button matching-media-launch"
                 data-card-interactive="true"
@@ -3359,8 +3311,8 @@ function MatchingPairsActivity({
             >
               <MatchingCardContent
                 cardSide={card.side}
-                cardHeight={card.height}
-                cardWidth={card.width}
+                cardHeight={Math.max(card.height - 32, 56)}
+                cardWidth={Math.max(card.width - 32, 96)}
                 content={normalizedCardContent}
                 onOpenMedia={setActiveMedia}
               />
@@ -3614,21 +3566,24 @@ function getClassificationCardMetrics(
   const normalized = normalizeMatchingSide(content);
 
   switch (normalized.kind) {
-    case "spoken-text":
-      return getClassificationTextMetrics(normalized.text, {
-        minWidth: 152,
-        maxWidth: 224,
-        widthFactor: 4.8,
-        lineWidth: 18,
-        lineHeight: 22,
-        baseHeight: 56,
-        minHeight: 94,
-        maxHeight: 158,
-      });
+    case "spoken-text": {
+      const width = clamp(
+        Math.round(124 + Math.min(normalized.size, 240) * 0.05),
+        120,
+        168,
+      );
+
+      return {
+        width,
+        height: clamp(Math.round(width * 0.54), 74, 92),
+      };
+    }
     case "image": {
       const mediaHeight = clamp(Math.round(normalized.size * 0.54), 88, 146);
       const width = clamp(Math.round(mediaHeight * 1.12) + 20, 132, 208);
-      const captionHeight = normalized.alt.trim() ? 34 : 0;
+      const captionHeight = normalized.alt.trim()
+        ? estimateMatchingTextHeight(normalized.alt, width, 18) + 8
+        : 0;
 
       return {
         width,

@@ -9,7 +9,7 @@ import { PassThrough } from "node:stream";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
-import { getConvertibleAudioProvider } from "@/lib/media-audio";
+import { getConvertibleAudioProvider, getYouTubeVideoId } from "@/lib/media-audio";
 import {
   getStoredVideoAsset,
   storeConvertedVideoAsset,
@@ -386,6 +386,10 @@ function getYouTubeAudioProbeAttempts() {
 }
 
 function getMultipartEnvValue(name: string) {
+  const expectedPartCountRaw = process.env[`${name}_PART_COUNT`]?.trim() ?? "";
+  const expectedPartCount = expectedPartCountRaw
+    ? Number.parseInt(expectedPartCountRaw, 10)
+    : Number.NaN;
   const partPattern = new RegExp(`^${name}_PART_(\\d+)$`);
   const parts = Object.entries(process.env)
     .map(([key, value]) => {
@@ -413,7 +417,29 @@ function getMultipartEnvValue(name: string) {
     return "";
   }
 
+  if (Number.isFinite(expectedPartCount) && expectedPartCount > 0) {
+    const partsByIndex = new Map(parts.map((part) => [part.index, part.value]));
+    const expectedParts = Array.from({ length: expectedPartCount }, (_, offset) =>
+      partsByIndex.get(offset + 1) ?? "",
+    );
+
+    if (expectedParts.some((part) => part.length === 0)) {
+      return "";
+    }
+
+    return expectedParts.join("");
+  }
+
   return parts.map((part) => part.value).join("");
+}
+
+function getEnvValueWithMultipartFallback(name: string) {
+  const multipartValue = getMultipartEnvValue(name).trim();
+  if (multipartValue) {
+    return multipartValue;
+  }
+
+  return process.env[name]?.trim() ?? "";
 }
 
 function getYouTubePotProviderExtractorArgs() {
@@ -466,11 +492,8 @@ async function createYouTubeYtDlpExecutionContext(options?: {
     };
   }
 
-  const encodedCookies =
-    process.env.YTDLP_YOUTUBE_COOKIES_B64?.trim() ||
-    getMultipartEnvValue("YTDLP_YOUTUBE_COOKIES_B64").trim();
-  const rawCookies =
-    process.env.YTDLP_YOUTUBE_COOKIES ?? getMultipartEnvValue("YTDLP_YOUTUBE_COOKIES");
+  const encodedCookies = getEnvValueWithMultipartFallback("YTDLP_YOUTUBE_COOKIES_B64");
+  const rawCookies = getEnvValueWithMultipartFallback("YTDLP_YOUTUBE_COOKIES");
   const decodedCookies = encodedCookies
     ? Buffer.from(encodedCookies, "base64").toString("utf8")
     : rawCookies.trim();
@@ -502,7 +525,14 @@ async function createYouTubeYtDlpExecutionContext(options?: {
 }
 
 function getYtDlpProbeErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
+  const rawMessage = error instanceof Error ? error.message : String(error);
+
+  return rawMessage
+    .replace(/\r/g, "")
+    .replace(/^Command failed: [^\n]+\n?/gm, "")
+    .replace(/--cookies\s+\S+/g, "--cookies [redacted]")
+    .replace(/poToken:\s*\S+/gi, "poToken: [redacted]")
+    .trim();
 }
 
 function shouldRetryYouTubeProbeWithoutAuth(error: unknown) {
@@ -1152,7 +1182,7 @@ async function resolveYouTubeAudioSource(
   } catch (error) {
     if (error instanceof Error) {
       throw new Error(
-        `Не удалось подготовить аудиопоток YouTube через yt-dlp (${probe.ytDlpBin}): ${error.message}`,
+        `Не удалось подготовить аудиопоток YouTube через yt-dlp (${probe.ytDlpBin}): ${getYtDlpProbeErrorMessage(error)}`,
       );
     }
 
@@ -1169,6 +1199,18 @@ async function resolveYouTubeVideoSource(
     getYouTubeVideoProbeAttempts(),
   );
 
+  const selectedFormat =
+    pickYouTubeYtDlpVideoFormat(probe.metadata.requested_formats) ??
+    pickYouTubeYtDlpVideoFormat(probe.metadata.formats);
+
+  if (selectedFormat) {
+    return buildResolvedVideoSourceFromYtDlpFormat(sourceUrl, probe.metadata, selectedFormat, {
+      extractorArgs: probe.extractorArgs,
+      probeStrategy: probe.probeStrategy,
+      usesCookies: probe.usesCookies,
+    });
+  }
+
   try {
     return buildResolvedAudioSourceFromYtDlpMetadata(
       sourceUrl,
@@ -1181,25 +1223,13 @@ async function resolveYouTubeVideoSource(
       },
     );
   } catch (error) {
-    const selectedFormat =
-      pickYouTubeYtDlpVideoFormat(probe.metadata.requested_formats) ??
-      pickYouTubeYtDlpVideoFormat(probe.metadata.formats);
-
-    if (!selectedFormat) {
-      if (error instanceof Error) {
-        throw new Error(
-          `Не удалось подготовить видеопоток YouTube через yt-dlp (${probe.ytDlpBin}): ${error.message}`,
-        );
-      }
-
-      throw error;
+    if (error instanceof Error) {
+      throw new Error(
+        `Не удалось подготовить видеопоток YouTube через yt-dlp (${probe.ytDlpBin}): ${getYtDlpProbeErrorMessage(error)}`,
+      );
     }
 
-    return buildResolvedVideoSourceFromYtDlpFormat(sourceUrl, probe.metadata, selectedFormat, {
-      extractorArgs: probe.extractorArgs,
-      probeStrategy: probe.probeStrategy,
-      usesCookies: probe.usesCookies,
-    });
+    throw error;
   }
 }
 
@@ -1915,6 +1945,20 @@ async function resolveVkThumbnailUrl(sourceUrl: string) {
   return resolveVkThumbnailFromHtml(sourceUrl);
 }
 
+function buildYouTubeThumbnailUrl(sourceUrl: string) {
+  const parsed = parseThumbnailSourceUrl(sourceUrl);
+  if (!parsed) {
+    return null;
+  }
+
+  const videoId = getYouTubeVideoId(parsed).trim();
+  if (!videoId) {
+    return null;
+  }
+
+  return `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`;
+}
+
 export async function resolveMediaThumbnailUrl(sourceUrl: string) {
   const trimmed = sourceUrl.trim();
   if (!trimmed) {
@@ -1930,7 +1974,9 @@ export async function resolveMediaThumbnailUrl(sourceUrl: string) {
 
   try {
     const provider = getConvertibleAudioProvider(trimmed);
-    if (provider === "rutube") {
+    if (provider === "youtube") {
+      thumbnailUrl = buildYouTubeThumbnailUrl(trimmed);
+    } else if (provider === "rutube") {
       thumbnailUrl = await resolveRutubeThumbnailUrl(trimmed);
     } else if (provider === "vk") {
       thumbnailUrl = await resolveVkThumbnailUrl(trimmed);
@@ -2377,7 +2423,7 @@ async function downloadVideoSourceWithYtDlp(options: {
   const extractorArgs = options.extractorArgs?.trim();
   const formatSelector =
     options.provider === "youtube"
-      ? "bestvideo*[height<=480]+bestaudio/best[height<=480]/best"
+      ? "best[height<=480]/bestvideo*[height<=480]+bestaudio/best[height<=480]/best"
       : "best[height<=480]/best";
   const tempDir = await mkdtemp(path.join(tmpdir(), "learnapp-video-"));
   const outputTemplate = path.join(tempDir, "asset.%(ext)s");
@@ -2484,7 +2530,7 @@ async function downloadYouTubeVideoSourceWithYtDlp(
         lastError = error;
         console.warn("[media/video] YouTube video download attempt failed", {
           extractorArgs: attempt.extractorArgs ?? null,
-          error: error instanceof Error ? error.message : String(error),
+          error: getYtDlpProbeErrorMessage(error),
           sourceUrl,
           strategy: attempt.label,
           usesConfiguredAuth: useConfiguredYouTubeAuth,
@@ -2881,7 +2927,7 @@ export async function convertVideoSourceToPlayableAsset(
       }
     } catch (error) {
       console.warn("[media/video] YouTube direct video probe failed, falling back to yt-dlp download", {
-        error: error instanceof Error ? error.message : String(error),
+        error: getYtDlpProbeErrorMessage(error),
         sourceUrl,
       });
     }
