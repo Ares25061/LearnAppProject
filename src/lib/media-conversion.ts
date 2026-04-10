@@ -386,6 +386,10 @@ function getYouTubeAudioProbeAttempts() {
 }
 
 function getMultipartEnvValue(name: string) {
+  const expectedPartCountRaw = process.env[`${name}_PART_COUNT`]?.trim() ?? "";
+  const expectedPartCount = expectedPartCountRaw
+    ? Number.parseInt(expectedPartCountRaw, 10)
+    : Number.NaN;
   const partPattern = new RegExp(`^${name}_PART_(\\d+)$`);
   const parts = Object.entries(process.env)
     .map(([key, value]) => {
@@ -413,7 +417,29 @@ function getMultipartEnvValue(name: string) {
     return "";
   }
 
+  if (Number.isFinite(expectedPartCount) && expectedPartCount > 0) {
+    const partsByIndex = new Map(parts.map((part) => [part.index, part.value]));
+    const expectedParts = Array.from({ length: expectedPartCount }, (_, offset) =>
+      partsByIndex.get(offset + 1) ?? "",
+    );
+
+    if (expectedParts.some((part) => part.length === 0)) {
+      return "";
+    }
+
+    return expectedParts.join("");
+  }
+
   return parts.map((part) => part.value).join("");
+}
+
+function getEnvValueWithMultipartFallback(name: string) {
+  const multipartValue = getMultipartEnvValue(name).trim();
+  if (multipartValue) {
+    return multipartValue;
+  }
+
+  return process.env[name]?.trim() ?? "";
 }
 
 function getYouTubePotProviderExtractorArgs() {
@@ -466,11 +492,8 @@ async function createYouTubeYtDlpExecutionContext(options?: {
     };
   }
 
-  const encodedCookies =
-    process.env.YTDLP_YOUTUBE_COOKIES_B64?.trim() ||
-    getMultipartEnvValue("YTDLP_YOUTUBE_COOKIES_B64").trim();
-  const rawCookies =
-    process.env.YTDLP_YOUTUBE_COOKIES ?? getMultipartEnvValue("YTDLP_YOUTUBE_COOKIES");
+  const encodedCookies = getEnvValueWithMultipartFallback("YTDLP_YOUTUBE_COOKIES_B64");
+  const rawCookies = getEnvValueWithMultipartFallback("YTDLP_YOUTUBE_COOKIES");
   const decodedCookies = encodedCookies
     ? Buffer.from(encodedCookies, "base64").toString("utf8")
     : rawCookies.trim();
