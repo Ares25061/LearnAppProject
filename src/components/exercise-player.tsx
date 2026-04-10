@@ -529,9 +529,8 @@ function getMatchingCardHeight(
   }
 
   if (normalized.kind === "audio") {
-    const audioLabel =
-      normalized.label || getMatchingPlayableSourceLabel(normalized) || "\u0410\u0443\u0434\u0438\u043e";
-    return estimateMatchingTextHeight(audioLabel, innerWidth, 26) + 50;
+    const audioSize = getMatchingAudioSize(normalized);
+    return clamp(Math.round(audioSize * 0.16) + 60, 90, 106);
   }
 
   if (normalized.kind === "spoken-text") {
@@ -577,15 +576,9 @@ function getMatchingCardBaseWidth(
   }
 
   if (normalized.kind === "audio") {
-    const audioLabel =
-      normalized.label || getMatchingPlayableSourceLabel(normalized) || "\u0410\u0443\u0434\u0438\u043e";
-    const longestLine = getMatchingLongestLineLength(audioLabel);
-    const preferredWidth = Math.round(
-      236 +
-        Math.min(longestLine, 42) * 5.6 +
-        Math.min(audioLabel.trim().length, 120) * 0.22,
-    );
-    return clamp(preferredWidth, Math.min(248, maxWidth), maxWidth);
+    const audioSize = getMatchingAudioSize(normalized);
+    const preferredWidth = Math.round(148 + audioSize * 0.62);
+    return clamp(preferredWidth, Math.min(188, maxWidth), Math.min(252, maxWidth));
   }
 
   if (normalized.kind === "image") {
@@ -668,7 +661,7 @@ function getMatchingCardSize(
         : normalized.kind === "spoken-text"
           ? 124
             : normalized.kind === "audio"
-              ? 224
+              ? 188
             : normalized.kind === "image"
               ? 116
               : 148;
@@ -696,7 +689,7 @@ function getMatchingCardSize(
         : normalized.kind === "image"
         ? 0.08
         : normalized.kind === "audio"
-          ? 0.18
+          ? 0.08
           : 0.14;
   const effectiveWidthScale = clamp(scale + widthBias, 0.68, 1);
   const width = clamp(
@@ -1982,33 +1975,6 @@ function MatchingAdaptiveAudioPlayer({
     </div>
   );
 }
-function MatchingNativeAudioPlayer({
-  src,
-  title,
-  initialVolume,
-}: Readonly<{
-  src: string;
-  title: string;
-  initialVolume: number;
-}>) {
-  return (
-    <div className="matching-inline-audio matching-inline-audio--native" data-card-interactive="true">
-      <span className="matching-inline-audio__title" title={title}>
-        {title}
-      </span>
-      <audio
-        className="matching-inline-audio__native"
-        controls
-        preload="metadata"
-        src={src}
-        onLoadedMetadata={(event) => {
-          event.currentTarget.volume = initialVolume / 100;
-        }}
-      />
-    </div>
-  );
-}
-
 function MatchingModalAudioPlayerShell({
   duration,
   errorMessage = null,
@@ -2454,27 +2420,10 @@ function MatchingCardContent({
       const audioServiceMeta = getMatchingEmbeddedVideoMeta(normalized.url);
       const convertedAudioUrl = getMatchingConvertedAudioUrl(normalized.url);
       const canPlayAudio = isMatchingAudioPlayable(normalized.url);
-      const inlineAudioType =
-        getMatchingMediaType("audio", normalized.url) ??
-        getMatchingMediaType("video", normalized.url);
-      const canInlineAudio = Boolean(normalized.url && inlineAudioType);
-      const audioVolume = getMatchingAudioVolume(normalized);
-      const audioSourceLabel = getMatchingPlayableSourceLabel(normalized);
-      const audioTitle =
-        normalized.fileName?.trim() ||
-        normalized.label ||
-        audioSourceLabel ||
-        "\u0410\u0443\u0434\u0438\u043e";
       return (
         <div className={contentClassName}>
           <div className="matching-card-media-frame matching-card-media-frame--audio">
-            {canInlineAudio ? (
-              <MatchingNativeAudioPlayer
-                initialVolume={audioVolume}
-                src={normalized.url}
-                title={audioTitle}
-              />
-            ) : normalized.url && canPlayAudio ? (
+            {normalized.url && canPlayAudio ? (
               <button
                 className="ghost-button matching-media-launch"
                 data-card-interactive="true"

@@ -50,7 +50,7 @@ export function getConvertibleAudioProvider(
   return null;
 }
 
-function getYouTubeVideoId(parsed: URL) {
+export function getYouTubeVideoId(parsed: URL) {
   const host = parsed.hostname.replace(/^www\./, "").toLowerCase();
 
   if (host === "youtu.be") {

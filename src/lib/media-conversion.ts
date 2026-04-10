@@ -9,7 +9,7 @@ import { PassThrough } from "node:stream";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
-import { getConvertibleAudioProvider } from "@/lib/media-audio";
+import { getConvertibleAudioProvider, getYouTubeVideoId } from "@/lib/media-audio";
 import {
   getStoredVideoAsset,
   storeConvertedVideoAsset,
@@ -1915,6 +1915,20 @@ async function resolveVkThumbnailUrl(sourceUrl: string) {
   return resolveVkThumbnailFromHtml(sourceUrl);
 }
 
+function buildYouTubeThumbnailUrl(sourceUrl: string) {
+  const parsed = parseThumbnailSourceUrl(sourceUrl);
+  if (!parsed) {
+    return null;
+  }
+
+  const videoId = getYouTubeVideoId(parsed).trim();
+  if (!videoId) {
+    return null;
+  }
+
+  return `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`;
+}
+
 export async function resolveMediaThumbnailUrl(sourceUrl: string) {
   const trimmed = sourceUrl.trim();
   if (!trimmed) {
@@ -1930,7 +1944,9 @@ export async function resolveMediaThumbnailUrl(sourceUrl: string) {
 
   try {
     const provider = getConvertibleAudioProvider(trimmed);
-    if (provider === "rutube") {
+    if (provider === "youtube") {
+      thumbnailUrl = buildYouTubeThumbnailUrl(trimmed);
+    } else if (provider === "rutube") {
       thumbnailUrl = await resolveRutubeThumbnailUrl(trimmed);
     } else if (provider === "vk") {
       thumbnailUrl = await resolveVkThumbnailUrl(trimmed);
