@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     librsvg2-2 \
     ca-certificates \
   && python3 -m venv /opt/media-tools \
-  && /opt/media-tools/bin/pip install --no-cache-dir --upgrade pip yt-dlp bgutil-ytdlp-pot-provider==${BGUTIL_POT_PROVIDER_VERSION} yt-dlp-getpot-wpc \
+  && /opt/media-tools/bin/pip install --no-cache-dir --upgrade pip "yt-dlp[default]" bgutil-ytdlp-pot-provider==${BGUTIL_POT_PROVIDER_VERSION} yt-dlp-getpot-wpc \
   && rm -rf /var/lib/apt/lists/*
 ENV PATH="/opt/media-tools/bin:${PATH}"
 
