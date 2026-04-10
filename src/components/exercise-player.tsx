@@ -2121,7 +2121,7 @@ function MatchingModalAudioPlayerShell({
               disabled={!isReady || isLoading}
               max={100}
               min={0}
-              step={5}
+              step={1}
               type="range"
               value={volume}
               onChange={(event) =>
