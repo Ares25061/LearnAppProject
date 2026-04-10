@@ -3362,8 +3362,8 @@ function MatchingPairsActivity({
             >
               <MatchingCardContent
                 cardSide={card.side}
-                cardHeight={card.height}
-                cardWidth={card.width}
+                cardHeight={Math.max(card.height - 32, 56)}
+                cardWidth={Math.max(card.width - 32, 96)}
                 content={normalizedCardContent}
                 onOpenMedia={setActiveMedia}
               />
