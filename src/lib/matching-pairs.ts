@@ -27,7 +27,7 @@ export const MATCHING_VIDEO_SIZE_MIN = 50;
 export const MATCHING_VIDEO_SIZE_MAX = 500;
 export const MATCHING_VIDEO_SIZE_DEFAULT = 220;
 export const MATCHING_VIDEO_START_DEFAULT = 0;
-export const MATCHING_AUDIO_VOLUME_DEFAULT = 100;
+export const MATCHING_AUDIO_VOLUME_DEFAULT = 10;
 
 export function normalizeMatchingSize(value: unknown, fallback: number) {
   if (typeof value !== "number" || !Number.isFinite(value)) {

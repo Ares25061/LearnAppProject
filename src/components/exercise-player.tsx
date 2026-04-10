@@ -26,6 +26,7 @@ import {
   normalizeGroupAssignmentData,
 } from "@/lib/classification";
 import {
+  MATCHING_AUDIO_VOLUME_DEFAULT,
   MATCHING_IMAGE_HEIGHT_DEFAULT,
   getMatchingContentAriaLabel,
   getMatchingContentSummary,
@@ -36,6 +37,7 @@ import {
 } from "@/lib/matching-pairs";
 import {
   buildConvertedAudioPath,
+  buildConvertedVideoPath,
   getConvertibleAudioProvider,
 } from "@/lib/media-audio";
 import {
@@ -59,6 +61,10 @@ declare const __SCORM_OFFLINE_BUNDLE__: boolean | undefined;
 
 const IS_SCORM_OFFLINE_BUNDLE =
   typeof __SCORM_OFFLINE_BUNDLE__ !== "undefined" && __SCORM_OFFLINE_BUNDLE__;
+const REMEMBERED_MEDIA_VOLUME_STORAGE_KEY = "learnapp:media-volume";
+
+let rememberedMediaVolume: number | null = null;
+let hasHydratedRememberedMediaVolume = false;
 
 type ReportResult = (score: number, solved: boolean, detail?: string) => void;
 
@@ -68,6 +74,86 @@ type ActivityProps<T extends ExerciseTypeId> = {
   onReport: ReportResult;
   boardOnly?: boolean;
 };
+
+function normalizeRememberedMediaVolume(value: unknown, fallback = MATCHING_AUDIO_VOLUME_DEFAULT) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return clamp(fallback, 0, 100);
+  }
+
+  return clamp(Math.round(value), 0, 100);
+}
+
+function getStoredRememberedMediaVolume() {
+  if (hasHydratedRememberedMediaVolume) {
+    return rememberedMediaVolume;
+  }
+
+  hasHydratedRememberedMediaVolume = true;
+
+  if (typeof window === "undefined") {
+    return rememberedMediaVolume;
+  }
+
+  try {
+    const rawValue = window.localStorage
+      .getItem(REMEMBERED_MEDIA_VOLUME_STORAGE_KEY)
+      ?.trim();
+
+    if (!rawValue) {
+      rememberedMediaVolume = null;
+      return rememberedMediaVolume;
+    }
+
+    const parsed = Number.parseInt(rawValue, 10);
+    rememberedMediaVolume = Number.isFinite(parsed)
+      ? normalizeRememberedMediaVolume(parsed)
+      : null;
+  } catch {
+    rememberedMediaVolume = null;
+  }
+
+  return rememberedMediaVolume;
+}
+
+function getRememberedMediaVolume(defaultVolume = MATCHING_AUDIO_VOLUME_DEFAULT) {
+  return (
+    getStoredRememberedMediaVolume() ??
+    normalizeRememberedMediaVolume(defaultVolume, MATCHING_AUDIO_VOLUME_DEFAULT)
+  );
+}
+
+function rememberMediaVolume(nextVolume: number) {
+  const normalizedVolume = normalizeRememberedMediaVolume(nextVolume);
+  rememberedMediaVolume = normalizedVolume;
+  hasHydratedRememberedMediaVolume = true;
+
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(
+        REMEMBERED_MEDIA_VOLUME_STORAGE_KEY,
+        `${normalizedVolume}`,
+      );
+    } catch {
+      // Ignore storage errors and keep the in-memory fallback.
+    }
+  }
+
+  return normalizedVolume;
+}
+
+function useRememberedMediaVolume(_initialVolume: number, resetKey: string) {
+  const [volume, setVolume] = useState(() => getRememberedMediaVolume());
+
+  useEffect(() => {
+    setVolume(getRememberedMediaVolume());
+  }, [resetKey]);
+
+  const handleVolumeChange = (nextVolume: number) => {
+    setVolume(rememberMediaVolume(nextVolume));
+  };
+
+  return [volume, handleVolumeChange] as const;
+}
 
 function ActionRow({
   children,
@@ -431,10 +517,6 @@ function getMatchingVideoSize(input: MatchingVideoContent) {
 
 function getMatchingVideoStartSeconds(content: MatchingVideoContent) {
   return Math.max(0, Math.round(content.startSeconds));
-}
-
-function getMatchingVideoVolume(content: MatchingVideoContent) {
-  return clamp(Math.round(content.volume), 0, 100);
 }
 
 function getMatchingBoardMetrics(
@@ -1374,7 +1456,11 @@ function formatMatchingMediaTime(value: number) {
 }
 
 function getMatchingAudioVolume(content: MatchingAudioContent) {
-  return clamp(Math.round(content.volume), 0, 100);
+  const volume =
+    typeof content.volume === "number" && Number.isFinite(content.volume)
+      ? Math.round(content.volume)
+      : MATCHING_AUDIO_VOLUME_DEFAULT;
+  return clamp(volume, 0, 100);
 }
 
 function getMatchingConvertedAudioUrl(url: string) {
@@ -1383,6 +1469,19 @@ function getMatchingConvertedAudioUrl(url: string) {
   }
 
   return getConvertibleAudioProvider(url) ? buildConvertedAudioPath(url) : null;
+}
+
+function getMatchingConvertedVideoUrl(url: string) {
+  if (isScormOfflineRuntime()) {
+    return null;
+  }
+
+  const provider = getConvertibleAudioProvider(url);
+  if (!provider || provider === "youtube") {
+    return null;
+  }
+
+  return buildConvertedVideoPath(url);
 }
 
 function getMatchingSpokenCardTitle(side?: "left" | "right") {
@@ -1412,8 +1511,11 @@ function getMatchingDragCardLabel(
 const MATCHING_AUDIO_LOADING_HINT =
   "Подготовка и загрузка звука могут занять около 20 секунд.";
 const MATCHING_SESSION_AUDIO_CACHE_MAX_ENTRIES = 8;
+const MATCHING_SESSION_FILE_VIDEO_CACHE_MAX_ENTRIES = 6;
 const matchingSessionAudioUrlCache = new Map<string, string>();
 const matchingSessionAudioFetches = new Map<string, Promise<string>>();
+const matchingSessionFileVideoUrlCache = new Map<string, string>();
+const matchingSessionFileVideoFetches = new Map<string, Promise<string>>();
 
 type MatchingAudioFetchError = Error & {
   code?: string;
@@ -1477,6 +1579,41 @@ function setMatchingCachedSessionAudioUrl(url: string, objectUrl: string) {
     }
 
     matchingSessionAudioUrlCache.delete(oldestEntry[0]);
+    URL.revokeObjectURL(oldestEntry[1]);
+  }
+}
+
+function getMatchingCachedSessionFileVideoUrl(url: string) {
+  const cachedUrl = matchingSessionFileVideoUrlCache.get(url);
+  if (!cachedUrl) {
+    return null;
+  }
+
+  matchingSessionFileVideoUrlCache.delete(url);
+  matchingSessionFileVideoUrlCache.set(url, cachedUrl);
+  return cachedUrl;
+}
+
+function setMatchingCachedSessionFileVideoUrl(url: string, objectUrl: string) {
+  const previousObjectUrl = matchingSessionFileVideoUrlCache.get(url);
+  if (previousObjectUrl && previousObjectUrl !== objectUrl) {
+    URL.revokeObjectURL(previousObjectUrl);
+  }
+
+  matchingSessionFileVideoUrlCache.delete(url);
+  matchingSessionFileVideoUrlCache.set(url, objectUrl);
+
+  while (
+    matchingSessionFileVideoUrlCache.size > MATCHING_SESSION_FILE_VIDEO_CACHE_MAX_ENTRIES
+  ) {
+    const oldestEntry = matchingSessionFileVideoUrlCache.entries().next().value as
+      | [string, string]
+      | undefined;
+    if (!oldestEntry) {
+      break;
+    }
+
+    matchingSessionFileVideoUrlCache.delete(oldestEntry[0]);
     URL.revokeObjectURL(oldestEntry[1]);
   }
 }
@@ -1554,6 +1691,138 @@ function getMatchingModalAudioSourceState(url: string) {
   };
 }
 
+type MatchingModalVideoSourceState = {
+  isResolvingSrc: boolean;
+  playbackSrc: string;
+  playbackType?: string;
+};
+
+async function resolveMatchingSessionFileVideoUrl(url: string) {
+  const trimmed = url.trim();
+  if (!trimmed || !isMatchingEmbeddedFileUrl(trimmed)) {
+    return trimmed;
+  }
+
+  const cachedUrl = getMatchingCachedSessionFileVideoUrl(trimmed);
+  if (cachedUrl) {
+    return cachedUrl;
+  }
+
+  const pendingRequest = matchingSessionFileVideoFetches.get(trimmed);
+  if (pendingRequest) {
+    return pendingRequest;
+  }
+
+  const fetchPromise = fetch(trimmed)
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error("Не удалось подготовить встроенное видео.");
+      }
+
+      const videoBlob = await response.blob();
+      const objectUrl = URL.createObjectURL(videoBlob);
+      setMatchingCachedSessionFileVideoUrl(trimmed, objectUrl);
+      return objectUrl;
+    })
+    .finally(() => {
+      matchingSessionFileVideoFetches.delete(trimmed);
+    });
+
+  matchingSessionFileVideoFetches.set(trimmed, fetchPromise);
+  return fetchPromise;
+}
+
+function getMatchingModalVideoSourceState(url: string): MatchingModalVideoSourceState {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return {
+      playbackSrc: "",
+      playbackType: undefined,
+      isResolvingSrc: false,
+    };
+  }
+
+  const convertedVideoUrl = getMatchingConvertedVideoUrl(trimmed);
+  if (convertedVideoUrl) {
+    return {
+      playbackSrc: convertedVideoUrl,
+      playbackType: "video/mp4",
+      isResolvingSrc: false,
+    };
+  }
+
+  if (!isMatchingEmbeddedFileUrl(trimmed)) {
+    return {
+      playbackSrc: trimmed,
+      playbackType: getMatchingMediaType("video", trimmed),
+      isResolvingSrc: false,
+    };
+  }
+
+  const cachedUrl = getMatchingCachedSessionFileVideoUrl(trimmed);
+  if (cachedUrl) {
+    return {
+      playbackSrc: cachedUrl,
+      playbackType: getMatchingMediaType("video", trimmed),
+      isResolvingSrc: false,
+    };
+  }
+
+  return {
+    playbackSrc: "",
+    playbackType: getMatchingMediaType("video", trimmed),
+    isResolvingSrc: true,
+  };
+}
+
+function useMatchingModalVideoSource(url: string) {
+  const [sourceState, setSourceState] = useState<MatchingModalVideoSourceState>(() =>
+    getMatchingModalVideoSourceState(url),
+  );
+
+  useEffect(() => {
+    let isCancelled = false;
+    const nextState = getMatchingModalVideoSourceState(url);
+    setSourceState(nextState);
+
+    if (!nextState.isResolvingSrc || nextState.playbackSrc) {
+      return () => {
+        isCancelled = true;
+      };
+    }
+
+    void resolveMatchingSessionFileVideoUrl(url)
+      .then((resolvedUrl) => {
+        if (isCancelled) {
+          return;
+        }
+
+        setSourceState({
+          playbackSrc: resolvedUrl,
+          playbackType: getMatchingMediaType("video", url),
+          isResolvingSrc: false,
+        });
+      })
+      .catch(() => {
+        if (isCancelled) {
+          return;
+        }
+
+        setSourceState({
+          playbackSrc: url.trim(),
+          playbackType: getMatchingMediaType("video", url),
+          isResolvingSrc: false,
+        });
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [url]);
+
+  return sourceState;
+}
+
 function buildMatchingVideoThumbnailPath(url: string) {
   const offlineThumbnailUrl = getScormOfflineThumbnailUrl(url);
   if (offlineThumbnailUrl) {
@@ -1561,6 +1830,10 @@ function buildMatchingVideoThumbnailPath(url: string) {
   }
 
   if (isScormOfflineRuntime()) {
+    return undefined;
+  }
+
+  if (!getConvertibleAudioProvider(url)) {
     return undefined;
   }
 
@@ -1597,14 +1870,13 @@ function MatchingInlineAudioPlayer({
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [position, setPosition] = useState(0);
-  const [volume, setVolume] = useState(initialVolume);
+  const [volume, setVolume] = useRememberedMediaVolume(initialVolume, src);
 
   useEffect(() => {
-    setVolume(initialVolume);
     setPosition(0);
     setDuration(0);
     setPlaying(false);
-  }, [initialVolume, src]);
+  }, [src]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -1751,12 +2023,13 @@ function MatchingCompactAudioPlayer({
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [position, setPosition] = useState(0);
+  const [volume] = useRememberedMediaVolume(initialVolume, src);
 
   useEffect(() => {
     setPosition(0);
     setDuration(0);
     setPlaying(false);
-  }, [src, initialVolume]);
+  }, [src]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -1764,8 +2037,8 @@ function MatchingCompactAudioPlayer({
       return;
     }
 
-    audio.volume = initialVolume / 100;
-  }, [initialVolume, src]);
+    audio.volume = volume / 100;
+  }, [src, volume]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -1866,12 +2139,13 @@ function MatchingAdaptiveAudioPlayer({
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [position, setPosition] = useState(0);
+  const [volume] = useRememberedMediaVolume(initialVolume, src);
 
   useEffect(() => {
     setPosition(0);
     setDuration(0);
     setPlaying(false);
-  }, [src, initialVolume]);
+  }, [src]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -1879,8 +2153,8 @@ function MatchingAdaptiveAudioPlayer({
       return;
     }
 
-    audio.volume = initialVolume / 100;
-  }, [initialVolume, src]);
+    audio.volume = volume / 100;
+  }, [src, volume]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -2035,7 +2309,7 @@ function MatchingModalAudioPlayerShell({
               disabled={!isReady || isLoading}
               max={100}
               min={0}
-              step={5}
+              step={1}
               type="range"
               value={volume}
               onChange={(event) =>
@@ -2087,18 +2361,17 @@ function MatchingModalAudioPlayer({
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [position, setPosition] = useState(0);
-  const [volume, setVolume] = useState(initialVolume);
+  const [volume, setVolume] = useRememberedMediaVolume(initialVolume, src);
 
   useEffect(() => {
     hasReportedErrorRef.current = false;
-    setVolume(initialVolume);
     setPosition(0);
     setDuration(0);
     setPlaying(false);
     setIsReady(false);
     setErrorMessage(null);
     setIsLoading(Boolean(src.trim()));
-  }, [initialVolume, src]);
+  }, [src]);
 
   const reportPlaybackError = useEffectEvent((error: MatchingAudioFetchError) => {
     if (hasReportedErrorRef.current) {
@@ -2316,6 +2589,72 @@ function MatchingModalAudioPlayer({
       onToggle={handleTogglePlayback}
       onVolumeChange={setVolume}
     />
+  );
+}
+
+function MatchingModalVideoPlayer({
+  media,
+  poster,
+  startSeconds,
+}: Readonly<{
+  media: MatchingVideoContent;
+  poster?: string;
+  startSeconds: number;
+}>) {
+  const { isResolvingSrc, playbackSrc, playbackType } = useMatchingModalVideoSource(
+    media.url,
+  );
+
+  if (isResolvingSrc) {
+    return (
+      <div className="matching-card-placeholder">
+        Видео подготавливается к воспроизведению.
+      </div>
+    );
+  }
+
+  if (!playbackSrc) {
+    return (
+      <div className="matching-card-placeholder">
+        Источник видео не удалось открыть.
+      </div>
+    );
+  }
+
+  return (
+    <div className="matching-media-modal__frame-wrap">
+      <video
+        autoPlay
+        className="matching-media-modal__video"
+        controls
+        key={`${media.kind}:${playbackSrc}:${startSeconds}`}
+        onVolumeChange={(event) => {
+          rememberMediaVolume(event.currentTarget.volume * 100);
+        }}
+        poster={poster}
+        playsInline
+        preload={isMatchingEmbeddedFileUrl(media.url) ? "metadata" : "auto"}
+        onLoadedMetadata={(event) => {
+          const element = event.currentTarget;
+          element.volume = getRememberedMediaVolume() / 100;
+          if (startSeconds > 0) {
+            const maxStart = Number.isFinite(element.duration)
+              ? Math.max(element.duration - 0.1, 0)
+              : startSeconds;
+            element.currentTime = Math.min(startSeconds, maxStart);
+          }
+          void element.play().catch(() => {});
+        }}
+      >
+        <source
+          src={playbackSrc}
+          type={playbackType}
+        />
+        {
+          "Ваш браузер не поддерживает воспроизведение видео."
+        }
+      </video>
+    </div>
   );
 }
 
@@ -2599,18 +2938,19 @@ function MatchingMediaDialog({
     media.kind === "video"
       ? getMatchingEmbeddedVideoMeta(media.url)
       : null;
-  const videoPoster =
+  const convertedVideoUrl =
+    media.kind === "video" ? getMatchingConvertedVideoUrl(media.url) : null;
+  const shouldUseEmbeddedVideoIframe =
     media.kind === "video" &&
-    (!embeddedVideoMeta || isScormOfflineRuntime())
+    embeddedVideoMeta?.provider === "youtube" &&
+    !convertedVideoUrl;
+  const videoPoster =
+    media.kind === "video" && !shouldUseEmbeddedVideoIframe
       ? buildMatchingVideoThumbnailPath(media.url)
       : undefined;
   const canPlayAudio = media.kind === "audio" ? isMatchingAudioPlayable(media.url) : false;
   const audioVolume =
-    media.kind === "audio" ? getMatchingAudioVolume(media) : 100;
-  const videoVolume =
-    media.kind === "video" && isMatchingEmbeddedFileUrl(media.url)
-      ? getMatchingVideoVolume(media)
-      : 100;
+    media.kind === "audio" ? getMatchingAudioVolume(media) : MATCHING_AUDIO_VOLUME_DEFAULT;
   const startSeconds =
     media.kind === "video"
       ? getMatchingVideoStartSeconds(media) || embeddedVideoMeta?.startSeconds || 0
@@ -2704,7 +3044,7 @@ function MatchingMediaDialog({
               initialVolume={audioVolume}
               src={media.url}
             />
-          ) : embeddedVideoMeta ? (
+          ) : shouldUseEmbeddedVideoIframe && embeddedVideoMeta ? (
             <>
               <div className="matching-media-modal__frame-wrap">
                 <iframe
@@ -2718,36 +3058,11 @@ function MatchingMediaDialog({
               </div>
             </>
           ) : (
-            <div className="matching-media-modal__frame-wrap">
-              <video
-                autoPlay
-                className="matching-media-modal__video"
-                controls
-                key={`${media.kind}:${media.url}:${startSeconds}`}
-                poster={videoPoster}
-                playsInline
-                preload="auto"
-                onLoadedMetadata={(event) => {
-                  const element = event.currentTarget;
-                  element.volume = videoVolume / 100;
-                  if (startSeconds > 0) {
-                    const maxStart = Number.isFinite(element.duration)
-                      ? Math.max(element.duration - 0.1, 0)
-                      : startSeconds;
-                    element.currentTime = Math.min(startSeconds, maxStart);
-                  }
-                  void element.play().catch(() => {});
-                }}
-              >
-                <source
-                  src={media.url}
-                  type={getMatchingMediaType("video", media.url)}
-                />
-                {
-                  "\u0412\u0430\u0448 \u0431\u0440\u0430\u0443\u0437\u0435\u0440 \u043d\u0435 \u043f\u043e\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442 \u0432\u043e\u0441\u043f\u0440\u043e\u0438\u0437\u0432\u0435\u0434\u0435\u043d\u0438\u0435 \u0432\u0438\u0434\u0435\u043e."
-                }
-              </video>
-            </div>
+            <MatchingModalVideoPlayer
+              media={media}
+              poster={videoPoster}
+              startSeconds={startSeconds}
+            />
           )}
         </div>
       </div>
@@ -4656,6 +4971,13 @@ function MediaNoticesActivity({
         {draft.data.mediaKind === "video" ? (
           <video
             controls
+            onLoadedMetadata={(event) => {
+              event.currentTarget.volume =
+                getRememberedMediaVolume(MATCHING_AUDIO_VOLUME_DEFAULT) / 100;
+            }}
+            onVolumeChange={(event) => {
+              rememberMediaVolume(event.currentTarget.volume * 100);
+            }}
             poster={videoPoster}
             ref={(node) => {
               mediaRef.current = node;
@@ -4665,6 +4987,13 @@ function MediaNoticesActivity({
         ) : (
           <audio
             controls
+            onLoadedMetadata={(event) => {
+              event.currentTarget.volume =
+                getRememberedMediaVolume(MATCHING_AUDIO_VOLUME_DEFAULT) / 100;
+            }}
+            onVolumeChange={(event) => {
+              rememberMediaVolume(event.currentTarget.volume * 100);
+            }}
             ref={(node) => {
               mediaRef.current = node;
             }}

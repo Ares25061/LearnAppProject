@@ -102,3 +102,9 @@ export function buildConvertedAudioPath(sourceUrl: string) {
     normalizeConvertibleAudioSourceUrl(sourceUrl),
   )}`;
 }
+
+export function buildConvertedVideoPath(sourceUrl: string) {
+  return `/api/media/video?source=${encodeURIComponent(
+    normalizeConvertibleAudioSourceUrl(sourceUrl),
+  )}`;
+}
