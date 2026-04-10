@@ -535,7 +535,7 @@ function getMatchingCardHeight(
   }
 
   if (normalized.kind === "spoken-text") {
-    return clamp(Math.round(Math.max(104, width * 0.64)), 104, 132);
+    return clamp(Math.round(Math.max(78, width * 0.38)), 78, 94);
   }
 
   if (normalized.kind === "text") {
@@ -602,7 +602,7 @@ function getMatchingCardBaseWidth(
   }
 
   if (normalized.kind === "spoken-text") {
-    return clamp(Math.round(164 + Math.min(normalized.size, 260) * 0.08), 152, 220);
+    return clamp(Math.round(132 + Math.min(normalized.size, 260) * 0.05), 124, 176);
   }
 
   const normalizedText = normalized.text.trim();
@@ -639,7 +639,7 @@ function getMatchingCardMinimumHeight(content: MatchingContent) {
   }
 
   if (normalized.kind === "spoken-text") {
-    return 104;
+    return 78;
   }
 
   if (normalized.kind === "text") {
@@ -666,7 +666,7 @@ function getMatchingCardSize(
     normalized.kind === "text"
       ? 78
         : normalized.kind === "spoken-text"
-          ? 148
+          ? 124
             : normalized.kind === "audio"
               ? 224
             : normalized.kind === "image"
@@ -676,7 +676,7 @@ function getMatchingCardSize(
     normalized.kind === "text"
       ? 38
       : normalized.kind === "spoken-text"
-        ? 96
+        ? 74
         : normalized.kind === "audio"
           ? 88
           : 72;
@@ -692,7 +692,7 @@ function getMatchingCardSize(
     normalized.kind === "text"
       ? 0.34
       : normalized.kind === "spoken-text"
-        ? 0.16
+        ? 0.08
         : normalized.kind === "image"
         ? 0.08
         : normalized.kind === "audio"
@@ -2410,8 +2410,11 @@ function MatchingCardContent({
       );
     }
     case "image": {
-      const captionSpace = normalized.alt ? 34 : 10;
-      const imageHeight = Math.max(72, cardHeight - captionSpace);
+      const caption = normalized.alt.trim();
+      const captionHeight = caption
+        ? estimateMatchingTextHeight(caption, cardWidth, 18) + 8
+        : 0;
+      const imageHeight = Math.max(72, cardHeight - captionHeight);
       return (
         <div className={contentClassName}>
           <div
@@ -2441,8 +2444,8 @@ function MatchingCardContent({
               </div>
             )}
           </div>
-          {normalized.alt ? (
-            <span className="matching-card-caption">{normalized.alt}</span>
+          {caption ? (
+            <span className="matching-card-caption">{caption}</span>
           ) : null}
         </div>
       );
@@ -3614,21 +3617,24 @@ function getClassificationCardMetrics(
   const normalized = normalizeMatchingSide(content);
 
   switch (normalized.kind) {
-    case "spoken-text":
-      return getClassificationTextMetrics(normalized.text, {
-        minWidth: 152,
-        maxWidth: 224,
-        widthFactor: 4.8,
-        lineWidth: 18,
-        lineHeight: 22,
-        baseHeight: 56,
-        minHeight: 94,
-        maxHeight: 158,
-      });
+    case "spoken-text": {
+      const width = clamp(
+        Math.round(124 + Math.min(normalized.size, 240) * 0.05),
+        120,
+        168,
+      );
+
+      return {
+        width,
+        height: clamp(Math.round(width * 0.54), 74, 92),
+      };
+    }
     case "image": {
       const mediaHeight = clamp(Math.round(normalized.size * 0.54), 88, 146);
       const width = clamp(Math.round(mediaHeight * 1.12) + 20, 132, 208);
-      const captionHeight = normalized.alt.trim() ? 34 : 0;
+      const captionHeight = normalized.alt.trim()
+        ? estimateMatchingTextHeight(normalized.alt, width, 18) + 8
+        : 0;
 
       return {
         width,

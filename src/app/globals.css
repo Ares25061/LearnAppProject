@@ -4469,6 +4469,14 @@ body {
   max-height: 100%;
 }
 
+.matching-card-caption {
+  display: block;
+  width: 100%;
+  text-align: center;
+  white-space: normal;
+  word-break: break-word;
+}
+
 .matching-card-thumbnail--file {
   display: grid;
   place-items: center;
@@ -4508,6 +4516,7 @@ body {
 
 .matching-media-modal__body--image {
   justify-items: center;
+  align-content: start;
 }
 
 .matching-media-modal__body--image .matching-media-modal__image-wrap {
@@ -4515,10 +4524,12 @@ body {
   align-items: center;
   justify-content: center;
   width: auto;
+  min-height: 0;
   max-width: min(92vw, 1220px);
   max-height: calc(100vh - 210px);
   padding: 0;
   background: transparent;
+  border: 0;
 }
 
 .matching-media-modal__body--image .matching-media-modal__image {
@@ -4558,16 +4569,16 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  min-height: 44px;
+  gap: 7px;
+  min-height: 40px;
   min-width: 0;
   max-width: 100%;
   border: 0;
-  border-radius: 18px;
+  border-radius: 16px;
   background: linear-gradient(180deg, #f0f0f0 0%, #e7e7e7 100%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
   color: #3f474d;
-  padding: 10px 16px;
+  padding: 8px 14px;
   transition:
     filter 0.18s ease,
     opacity 0.18s ease,
@@ -4584,8 +4595,8 @@ body {
 }
 
 .matching-spoken-card__icon {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   flex: 0 0 auto;
   color: currentColor;
 }
@@ -4594,7 +4605,7 @@ body {
   display: inline-block;
   min-width: 0;
   color: currentColor;
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   font-weight: 500;
   letter-spacing: -0.01em;
   line-height: 1;
