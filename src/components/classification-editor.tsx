@@ -11,6 +11,7 @@ import {
   normalizeGroupAssignmentData,
 } from "@/lib/classification";
 import {
+  MATCHING_AUDIO_VOLUME_DEFAULT,
   createMatchingContent,
   matchingContentOptions,
   normalizeMatchingSide,
@@ -358,7 +359,10 @@ function ContentEditor({
                       0,
                       Math.min(
                         100,
-                        Number.parseInt(event.target.value || "100", 10) || 100,
+                        Number.parseInt(
+                          event.target.value || `${MATCHING_AUDIO_VOLUME_DEFAULT}`,
+                          10,
+                        ) || MATCHING_AUDIO_VOLUME_DEFAULT,
                       ),
                     ),
                   })

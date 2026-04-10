@@ -26,6 +26,7 @@ import {
   normalizeGroupAssignmentData,
 } from "@/lib/classification";
 import {
+  MATCHING_AUDIO_VOLUME_DEFAULT,
   MATCHING_IMAGE_HEIGHT_DEFAULT,
   getMatchingContentAriaLabel,
   getMatchingContentSummary,
@@ -59,6 +60,10 @@ declare const __SCORM_OFFLINE_BUNDLE__: boolean | undefined;
 
 const IS_SCORM_OFFLINE_BUNDLE =
   typeof __SCORM_OFFLINE_BUNDLE__ !== "undefined" && __SCORM_OFFLINE_BUNDLE__;
+const REMEMBERED_MEDIA_VOLUME_STORAGE_KEY = "learnapp:media-volume";
+
+let rememberedMediaVolume: number | null = null;
+let hasHydratedRememberedMediaVolume = false;
 
 type ReportResult = (score: number, solved: boolean, detail?: string) => void;
 
@@ -68,6 +73,86 @@ type ActivityProps<T extends ExerciseTypeId> = {
   onReport: ReportResult;
   boardOnly?: boolean;
 };
+
+function normalizeRememberedMediaVolume(value: unknown, fallback = MATCHING_AUDIO_VOLUME_DEFAULT) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return clamp(fallback, 0, 100);
+  }
+
+  return clamp(Math.round(value), 0, 100);
+}
+
+function getStoredRememberedMediaVolume() {
+  if (hasHydratedRememberedMediaVolume) {
+    return rememberedMediaVolume;
+  }
+
+  hasHydratedRememberedMediaVolume = true;
+
+  if (typeof window === "undefined") {
+    return rememberedMediaVolume;
+  }
+
+  try {
+    const rawValue = window.localStorage
+      .getItem(REMEMBERED_MEDIA_VOLUME_STORAGE_KEY)
+      ?.trim();
+
+    if (!rawValue) {
+      rememberedMediaVolume = null;
+      return rememberedMediaVolume;
+    }
+
+    const parsed = Number.parseInt(rawValue, 10);
+    rememberedMediaVolume = Number.isFinite(parsed)
+      ? normalizeRememberedMediaVolume(parsed)
+      : null;
+  } catch {
+    rememberedMediaVolume = null;
+  }
+
+  return rememberedMediaVolume;
+}
+
+function getRememberedMediaVolume(initialVolume: number) {
+  return getStoredRememberedMediaVolume() ?? normalizeRememberedMediaVolume(initialVolume);
+}
+
+function rememberMediaVolume(nextVolume: number) {
+  const normalizedVolume = normalizeRememberedMediaVolume(nextVolume);
+  rememberedMediaVolume = normalizedVolume;
+  hasHydratedRememberedMediaVolume = true;
+
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(
+        REMEMBERED_MEDIA_VOLUME_STORAGE_KEY,
+        `${normalizedVolume}`,
+      );
+    } catch {
+      // Ignore storage errors and keep the in-memory fallback.
+    }
+  }
+
+  return normalizedVolume;
+}
+
+function useRememberedMediaVolume(initialVolume: number, resetKey: string) {
+  const normalizedInitialVolume = normalizeRememberedMediaVolume(initialVolume);
+  const [volume, setVolume] = useState(() =>
+    rememberedMediaVolume ?? normalizedInitialVolume,
+  );
+
+  useEffect(() => {
+    setVolume(getRememberedMediaVolume(normalizedInitialVolume));
+  }, [normalizedInitialVolume, resetKey]);
+
+  const handleVolumeChange = (nextVolume: number) => {
+    setVolume(rememberMediaVolume(nextVolume));
+  };
+
+  return [volume, handleVolumeChange] as const;
+}
 
 function ActionRow({
   children,
@@ -434,7 +519,11 @@ function getMatchingVideoStartSeconds(content: MatchingVideoContent) {
 }
 
 function getMatchingVideoVolume(content: MatchingVideoContent) {
-  return clamp(Math.round(content.volume), 0, 100);
+  const volume =
+    typeof content.volume === "number" && Number.isFinite(content.volume)
+      ? Math.round(content.volume)
+      : MATCHING_AUDIO_VOLUME_DEFAULT;
+  return clamp(volume, 0, 100);
 }
 
 function getMatchingBoardMetrics(
@@ -1374,7 +1463,11 @@ function formatMatchingMediaTime(value: number) {
 }
 
 function getMatchingAudioVolume(content: MatchingAudioContent) {
-  return clamp(Math.round(content.volume), 0, 100);
+  const volume =
+    typeof content.volume === "number" && Number.isFinite(content.volume)
+      ? Math.round(content.volume)
+      : MATCHING_AUDIO_VOLUME_DEFAULT;
+  return clamp(volume, 0, 100);
 }
 
 function getMatchingConvertedAudioUrl(url: string) {
@@ -1597,14 +1690,13 @@ function MatchingInlineAudioPlayer({
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [position, setPosition] = useState(0);
-  const [volume, setVolume] = useState(initialVolume);
+  const [volume, setVolume] = useRememberedMediaVolume(initialVolume, src);
 
   useEffect(() => {
-    setVolume(initialVolume);
     setPosition(0);
     setDuration(0);
     setPlaying(false);
-  }, [initialVolume, src]);
+  }, [src]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -1751,12 +1843,13 @@ function MatchingCompactAudioPlayer({
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [position, setPosition] = useState(0);
+  const [volume] = useRememberedMediaVolume(initialVolume, src);
 
   useEffect(() => {
     setPosition(0);
     setDuration(0);
     setPlaying(false);
-  }, [src, initialVolume]);
+  }, [src]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -1764,8 +1857,8 @@ function MatchingCompactAudioPlayer({
       return;
     }
 
-    audio.volume = initialVolume / 100;
-  }, [initialVolume, src]);
+    audio.volume = volume / 100;
+  }, [src, volume]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -1866,12 +1959,13 @@ function MatchingAdaptiveAudioPlayer({
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [position, setPosition] = useState(0);
+  const [volume] = useRememberedMediaVolume(initialVolume, src);
 
   useEffect(() => {
     setPosition(0);
     setDuration(0);
     setPlaying(false);
-  }, [src, initialVolume]);
+  }, [src]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -1879,8 +1973,8 @@ function MatchingAdaptiveAudioPlayer({
       return;
     }
 
-    audio.volume = initialVolume / 100;
-  }, [initialVolume, src]);
+    audio.volume = volume / 100;
+  }, [src, volume]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -2087,18 +2181,17 @@ function MatchingModalAudioPlayer({
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [position, setPosition] = useState(0);
-  const [volume, setVolume] = useState(initialVolume);
+  const [volume, setVolume] = useRememberedMediaVolume(initialVolume, src);
 
   useEffect(() => {
     hasReportedErrorRef.current = false;
-    setVolume(initialVolume);
     setPosition(0);
     setDuration(0);
     setPlaying(false);
     setIsReady(false);
     setErrorMessage(null);
     setIsLoading(Boolean(src.trim()));
-  }, [initialVolume, src]);
+  }, [src]);
 
   const reportPlaybackError = useEffectEvent((error: MatchingAudioFetchError) => {
     if (hasReportedErrorRef.current) {
@@ -2606,11 +2699,9 @@ function MatchingMediaDialog({
       : undefined;
   const canPlayAudio = media.kind === "audio" ? isMatchingAudioPlayable(media.url) : false;
   const audioVolume =
-    media.kind === "audio" ? getMatchingAudioVolume(media) : 100;
+    media.kind === "audio" ? getMatchingAudioVolume(media) : MATCHING_AUDIO_VOLUME_DEFAULT;
   const videoVolume =
-    media.kind === "video" && isMatchingEmbeddedFileUrl(media.url)
-      ? getMatchingVideoVolume(media)
-      : 100;
+    media.kind === "video" ? getMatchingVideoVolume(media) : MATCHING_AUDIO_VOLUME_DEFAULT;
   const startSeconds =
     media.kind === "video"
       ? getMatchingVideoStartSeconds(media) || embeddedVideoMeta?.startSeconds || 0
@@ -2724,12 +2815,15 @@ function MatchingMediaDialog({
                 className="matching-media-modal__video"
                 controls
                 key={`${media.kind}:${media.url}:${startSeconds}`}
+                onVolumeChange={(event) => {
+                  rememberMediaVolume(event.currentTarget.volume * 100);
+                }}
                 poster={videoPoster}
                 playsInline
                 preload="auto"
                 onLoadedMetadata={(event) => {
                   const element = event.currentTarget;
-                  element.volume = videoVolume / 100;
+                  element.volume = getRememberedMediaVolume(videoVolume) / 100;
                   if (startSeconds > 0) {
                     const maxStart = Number.isFinite(element.duration)
                       ? Math.max(element.duration - 0.1, 0)
@@ -4656,6 +4750,13 @@ function MediaNoticesActivity({
         {draft.data.mediaKind === "video" ? (
           <video
             controls
+            onLoadedMetadata={(event) => {
+              event.currentTarget.volume =
+                getRememberedMediaVolume(MATCHING_AUDIO_VOLUME_DEFAULT) / 100;
+            }}
+            onVolumeChange={(event) => {
+              rememberMediaVolume(event.currentTarget.volume * 100);
+            }}
             poster={videoPoster}
             ref={(node) => {
               mediaRef.current = node;
@@ -4665,6 +4766,13 @@ function MediaNoticesActivity({
         ) : (
           <audio
             controls
+            onLoadedMetadata={(event) => {
+              event.currentTarget.volume =
+                getRememberedMediaVolume(MATCHING_AUDIO_VOLUME_DEFAULT) / 100;
+            }}
+            onVolumeChange={(event) => {
+              rememberMediaVolume(event.currentTarget.volume * 100);
+            }}
             ref={(node) => {
               mediaRef.current = node;
             }}
