@@ -1,7 +1,12 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 
-import type { ChangeEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+} from "react";
 import {
   CLASSIFICATION_MAX_GROUPS,
   CLASSIFICATION_MAX_ITEMS_PER_GROUP,
@@ -36,6 +41,13 @@ const orderOptions = [
   { id: "random", label: "Случайно" },
   { id: "rounds", label: "По кругу" },
 ] as const;
+
+type PendingMediaUpload = {
+  fileName: string;
+  kind: "image" | "audio" | "video";
+  previewUrl: string;
+  requestId: number;
+};
 
 function getBaseFileLabel(fileName: string) {
   return fileName.replace(/\.[^.]+$/, "").trim();
@@ -89,6 +101,28 @@ async function uploadStoredMediaFile(file: File) {
   }
 
   return result.url;
+}
+
+function createPendingMediaPreviewUrl(file: File) {
+  return URL.createObjectURL(file);
+}
+
+function revokePendingMediaPreviewUrl(url: string) {
+  if (url.startsWith("blob:")) {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function getPendingMediaStatus(kind: "image" | "audio" | "video") {
+  switch (kind) {
+    case "image":
+      return "Изображение обрабатывается...";
+    case "audio":
+      return "Аудио обрабатывается...";
+    case "video":
+    default:
+      return "Видео загружается...";
+  }
 }
 
 function isAcceptedMediaFile(
@@ -215,12 +249,52 @@ function ContentEditor({
   onNotice,
 }: Readonly<ContentEditorProps>) {
   const content = normalizeMatchingSide(value);
+  const [pendingMediaUpload, setPendingMediaUpload] =
+    useState<PendingMediaUpload | null>(null);
+  const latestContentRef = useRef(content);
+  const nextUploadRequestIdRef = useRef(0);
+  const previewUrlRef = useRef<string>("");
+
+  useEffect(() => {
+    latestContentRef.current = content;
+  }, [content]);
+
+  useEffect(() => {
+    const nextPreviewUrl = pendingMediaUpload?.previewUrl ?? "";
+    if (
+      previewUrlRef.current &&
+      previewUrlRef.current !== nextPreviewUrl
+    ) {
+      revokePendingMediaPreviewUrl(previewUrlRef.current);
+    }
+
+    previewUrlRef.current = nextPreviewUrl;
+  }, [pendingMediaUpload?.previewUrl]);
+
+  useEffect(
+    () => () => {
+      if (previewUrlRef.current) {
+        revokePendingMediaPreviewUrl(previewUrlRef.current);
+      }
+    },
+    [],
+  );
+
   const options = matchingContentOptions.filter((option) =>
     allowedKinds.includes(option.id),
   );
+  const activePendingMediaUpload =
+    pendingMediaUpload && pendingMediaUpload.kind === content.kind
+      ? pendingMediaUpload
+      : null;
+  const effectiveMediaUrl =
+    activePendingMediaUpload?.previewUrl ||
+    (content.kind === "image" || content.kind === "audio" || content.kind === "video"
+      ? content.url
+      : "");
   const mediaUrlValue =
     (content.kind === "image" || content.kind === "audio" || content.kind === "video") &&
-    isStoredMediaUrl(content.url)
+    (Boolean(activePendingMediaUpload) || isStoredMediaUrl(content.url))
       ? ""
       : content.kind === "image" || content.kind === "audio" || content.kind === "video"
         ? content.url
@@ -242,35 +316,92 @@ function ContentEditor({
       return;
     }
 
+    const requestId = nextUploadRequestIdRef.current + 1;
+    nextUploadRequestIdRef.current = requestId;
+    const previewUrl = createPendingMediaPreviewUrl(file);
+    const baseLabel = getBaseFileLabel(file.name);
+    const latestContent = latestContentRef.current;
+    const previousUrl =
+      latestContent.kind === "image" ||
+      latestContent.kind === "audio" ||
+      latestContent.kind === "video"
+        ? latestContent.url
+        : "";
+    const previousFileName =
+      latestContent.kind === "image" ||
+      latestContent.kind === "audio" ||
+      latestContent.kind === "video"
+        ? latestContent.fileName ?? ""
+        : "";
+
     try {
+      setPendingMediaUpload({
+        fileName: file.name,
+        kind: content.kind,
+        previewUrl,
+        requestId,
+      });
+
+      if (content.kind === "image" && latestContent.kind === "image") {
+        onChange({
+          ...latestContent,
+          url: previewUrl,
+          alt: latestContent.alt.trim() ? latestContent.alt : baseLabel,
+          fileName: file.name,
+        });
+      } else if (content.kind === "audio" && latestContent.kind === "audio") {
+        onChange({
+          ...latestContent,
+          url: previewUrl,
+          label: latestContent.label.trim() ? latestContent.label : baseLabel,
+          fileName: file.name,
+        });
+      } else if (content.kind === "video" && latestContent.kind === "video") {
+        onChange({
+          ...latestContent,
+          url: previewUrl,
+          label: latestContent.label,
+          fileName: file.name,
+        });
+      }
+
       const storedUrl =
         content.kind === "video"
           ? await uploadStoredMediaFile(file)
           : await readFileAsDataUrl(file);
-      const baseLabel = getBaseFileLabel(file.name);
 
-      if (content.kind === "image") {
+      if (nextUploadRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      const currentContent = latestContentRef.current;
+
+      if (content.kind === "image" && currentContent.kind === "image") {
         onChange({
-          ...content,
+          ...currentContent,
           url: storedUrl,
-          alt: content.alt.trim() ? content.alt : baseLabel,
+          alt: currentContent.alt.trim() ? currentContent.alt : baseLabel,
           fileName: file.name,
         });
-      } else if (content.kind === "audio") {
+      } else if (content.kind === "audio" && currentContent.kind === "audio") {
         onChange({
-          ...content,
+          ...currentContent,
           url: storedUrl,
-          label: content.label.trim() ? content.label : baseLabel,
+          label: currentContent.label.trim() ? currentContent.label : baseLabel,
           fileName: file.name,
         });
-      } else {
+      } else if (content.kind === "video" && currentContent.kind === "video") {
         onChange({
-          ...content,
+          ...currentContent,
           url: storedUrl,
-          label: content.label.trim() ? content.label : baseLabel,
+          label: currentContent.label,
           fileName: file.name,
         });
       }
+
+      setPendingMediaUpload((current) =>
+        current?.requestId === requestId ? null : current,
+      );
 
       onNotice?.(
         content.kind === "video"
@@ -278,6 +409,32 @@ function ContentEditor({
           : "Файл встроен в карточку.",
       );
     } catch (error) {
+      if (nextUploadRequestIdRef.current === requestId) {
+        const currentContent = latestContentRef.current;
+        if (content.kind === "image" && currentContent.kind === "image") {
+          onChange({
+            ...currentContent,
+            fileName: previousFileName,
+            url: previousUrl,
+          });
+        } else if (content.kind === "audio" && currentContent.kind === "audio") {
+          onChange({
+            ...currentContent,
+            fileName: previousFileName,
+            url: previousUrl,
+          });
+        } else if (content.kind === "video" && currentContent.kind === "video") {
+          onChange({
+            ...currentContent,
+            fileName: previousFileName,
+            url: previousUrl,
+          });
+        }
+      }
+
+      setPendingMediaUpload((current) =>
+        current?.requestId === requestId ? null : current,
+      );
       onNotice?.(
         error instanceof Error ? error.message : "Не удалось обработать файл.",
       );
@@ -318,9 +475,9 @@ function ContentEditor({
         </label>
       ) : (
         <>
-          {content.kind === "image" && content.url ? (
+          {content.kind === "image" && effectiveMediaUrl ? (
             <div className="classification-editor-preview">
-              <img alt={content.alt || "Превью"} src={content.url} />
+              <img alt={content.alt || "Превью"} src={effectiveMediaUrl} />
             </div>
           ) : null}
 
@@ -335,7 +492,9 @@ function ContentEditor({
             <input
               className="editor-input"
               placeholder={
-                isStoredMediaUrl(content.url)
+                activePendingMediaUpload
+                  ? "Файл загружается, ссылку можно вставить после завершения загрузки"
+                  : isStoredMediaUrl(content.url)
                   ? "Вставьте ссылку, если хотите заменить загруженный файл"
                   : undefined
               }
@@ -366,7 +525,11 @@ function ContentEditor({
           </label>
 
           <label className="matching-editor-field">
-            <span className="field-label">Файл</span>
+            <span className="field-label">
+              {activePendingMediaUpload
+                ? `Файл: ${getPendingMediaStatus(activePendingMediaUpload.kind)}`
+                : "Файл"}
+            </span>
             <input
               accept={
                 content.kind === "image"

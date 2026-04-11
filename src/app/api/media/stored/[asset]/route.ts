@@ -1,4 +1,6 @@
-import { readStoredMediaAsset } from "@/lib/stored-media";
+import { createReadStream } from "node:fs";
+import { Readable } from "node:stream";
+import { getStoredMediaAssetInfo } from "@/lib/stored-media";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -72,16 +74,15 @@ export async function GET(
   context: { params: Promise<{ asset: string }> },
 ) {
   const { asset } = await context.params;
-  const storedAsset = await readStoredMediaAsset(asset);
+  const storedAsset = await getStoredMediaAssetInfo(asset);
 
   if (!storedAsset) {
     return new Response("Файл не найден.", { status: 404 });
   }
 
-  const responseBody = Buffer.from(storedAsset.buffer);
   const parsedRange = parseByteRangeHeader(
     request.headers.get("range"),
-    responseBody.byteLength,
+    storedAsset.size,
   );
   const baseHeaders = {
     "Accept-Ranges": "bytes",
@@ -95,27 +96,36 @@ export async function GET(
       status: 416,
       headers: {
         ...baseHeaders,
-        "Content-Range": `bytes */${responseBody.byteLength}`,
+        "Content-Range": `bytes */${storedAsset.size}`,
       },
     });
   }
 
   if (parsedRange) {
-    const partialBody = responseBody.subarray(parsedRange.start, parsedRange.end + 1);
+    const partialBody = Readable.toWeb(
+      createReadStream(storedAsset.filePath, {
+        end: parsedRange.end,
+        start: parsedRange.start,
+      }),
+    ) as ReadableStream<Uint8Array>;
     return new Response(partialBody, {
       status: 206,
       headers: {
         ...baseHeaders,
-        "Content-Length": String(partialBody.byteLength),
-        "Content-Range": `bytes ${parsedRange.start}-${parsedRange.end}/${responseBody.byteLength}`,
+        "Content-Length": String(parsedRange.end - parsedRange.start + 1),
+        "Content-Range": `bytes ${parsedRange.start}-${parsedRange.end}/${storedAsset.size}`,
       },
     });
   }
 
+  const responseBody = Readable.toWeb(
+    createReadStream(storedAsset.filePath),
+  ) as ReadableStream<Uint8Array>;
+
   return new Response(responseBody, {
     headers: {
       ...baseHeaders,
-      "Content-Length": String(responseBody.byteLength),
+      "Content-Length": String(storedAsset.size),
     },
   });
 }

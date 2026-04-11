@@ -89,6 +89,27 @@ function formatByteSize(value: number) {
   return `${size.toFixed(digits)} ${units[unitIndex]}`;
 }
 
+function stripTransientObjectUrls<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => stripTransientObjectUrls(item)) as T;
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, currentValue]) => [
+        key,
+        key === "url" &&
+        typeof currentValue === "string" &&
+        currentValue.trim().startsWith("blob:")
+          ? ""
+          : stripTransientObjectUrls(currentValue),
+      ]),
+    ) as T;
+  }
+
+  return value;
+}
+
 export function StudioEditor({
   initialDraft,
   user,
@@ -309,12 +330,25 @@ export function StudioEditor({
       ...current,
       data: nextData,
     }) as AnyExerciseDraft);
-    setDataText(JSON.stringify(nextData, null, 2));
+    setDataText(
+      JSON.stringify(
+        isCustomVisualEditor ? stripTransientObjectUrls(nextData) : nextData,
+        null,
+        2,
+      ),
+    );
     setDataError(null);
     showNotice(nextNotice, "draft");
   };
 
   const resolveCurrentDraft = () => {
+    if (isCustomVisualEditor) {
+      return {
+        ...draft,
+        data: stripTransientObjectUrls(draft.data),
+      } as AnyExerciseDraft;
+    }
+
     const parsed = applyDataText();
     if (!parsed) {
       return null;
