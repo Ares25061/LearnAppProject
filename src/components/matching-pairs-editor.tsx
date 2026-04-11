@@ -355,11 +355,8 @@ async function uploadStoredMediaFile(file: File) {
   return result.url;
 }
 
-function createPendingMediaPreviewUrl(
-  kind: "image" | "audio" | "video",
-  file: File,
-) {
-  return kind === "image" ? URL.createObjectURL(file) : "";
+function createPendingMediaPreviewUrl(file: File) {
+  return URL.createObjectURL(file);
 }
 
 function revokePendingMediaPreviewUrl(url: string) {
@@ -645,7 +642,12 @@ function MatchingSideFieldsCompact({
     const requestId = nextUploadRequestIdRef.current + 1;
     nextUploadRequestIdRef.current = requestId;
     const baseLabel = getBaseFileLabel(file.name);
-    const previewUrl = createPendingMediaPreviewUrl(kind, file);
+    const previewUrl = createPendingMediaPreviewUrl(file);
+    const latestContent = latestContentRef.current;
+    const previousUrl =
+      latestContent.kind === kind ? latestContent.url : "";
+    const previousFileName =
+      latestContent.kind === kind ? latestContent.fileName ?? "" : "";
 
     try {
       setPendingMediaUpload({
@@ -655,22 +657,24 @@ function MatchingSideFieldsCompact({
         requestId,
       });
 
-      const latestContent = latestContentRef.current;
       if (kind === "image" && latestContent.kind === "image") {
         onChange({
           ...latestContent,
+          url: previewUrl,
           alt: latestContent.alt.trim() ? latestContent.alt : baseLabel,
           fileName: file.name,
         });
       } else if (kind === "audio" && latestContent.kind === "audio") {
         onChange({
           ...latestContent,
+          url: previewUrl,
           label: latestContent.label.trim() ? latestContent.label : baseLabel,
           fileName: file.name,
         });
       } else if (kind === "video" && latestContent.kind === "video") {
         onChange({
           ...latestContent,
+          url: previewUrl,
           label: latestContent.label.trim() ? latestContent.label : baseLabel,
           fileName: file.name,
         });
@@ -733,6 +737,29 @@ function MatchingSideFieldsCompact({
         current?.requestId === requestId ? null : current,
       );
     } catch (error) {
+      if (nextUploadRequestIdRef.current === requestId) {
+        const currentContent = latestContentRef.current;
+        if (kind === "image" && currentContent.kind === "image") {
+          onChange({
+            ...currentContent,
+            fileName: previousFileName,
+            url: previousUrl,
+          });
+        } else if (kind === "audio" && currentContent.kind === "audio") {
+          onChange({
+            ...currentContent,
+            fileName: previousFileName,
+            url: previousUrl,
+          });
+        } else if (kind === "video" && currentContent.kind === "video") {
+          onChange({
+            ...currentContent,
+            fileName: previousFileName,
+            url: previousUrl,
+          });
+        }
+      }
+
       setPendingMediaUpload((current) =>
         current?.requestId === requestId ? null : current,
       );

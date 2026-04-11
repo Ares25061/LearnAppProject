@@ -1497,6 +1497,10 @@ function getMatchingMediaSourceLabel(url: string) {
     return "\u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043d\u043d\u044b\u0439 \u0444\u0430\u0439\u043b";
   }
 
+  if (isMatchingObjectUrl(url)) {
+    return "\u043b\u043e\u043a\u0430\u043b\u044c\u043d\u044b\u0439 \u0444\u0430\u0439\u043b";
+  }
+
   const embeddedVideoMeta = getMatchingEmbeddedVideoMeta(url);
   if (embeddedVideoMeta) {
     return getMatchingEmbeddedVideoLabel(embeddedVideoMeta.provider);
@@ -1531,8 +1535,16 @@ function isMatchingEmbeddedFileUrl(url: string) {
   return url.trim().startsWith("data:");
 }
 
+function isMatchingObjectUrl(url: string) {
+  return url.trim().startsWith("blob:");
+}
+
 function isMatchingUploadedFileUrl(url: string) {
-  return isMatchingEmbeddedFileUrl(url) || isMatchingStoredMediaUrl(url);
+  return (
+    isMatchingEmbeddedFileUrl(url) ||
+    isMatchingStoredMediaUrl(url) ||
+    isMatchingObjectUrl(url)
+  );
 }
 
 function getMatchingPlayableSourceLabel(content: MatchingPlayableContent) {
@@ -1800,7 +1812,8 @@ function buildMatchingVideoThumbnailPath(url: string) {
 
 function isMatchingAudioPlayable(url: string) {
   return Boolean(
-    getMatchingMediaType("audio", url) ||
+    isMatchingObjectUrl(url) ||
+      getMatchingMediaType("audio", url) ||
       getMatchingMediaType("video", url) ||
       getMatchingConvertedAudioUrl(url),
   );

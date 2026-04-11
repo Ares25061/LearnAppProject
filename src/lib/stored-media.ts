@@ -1,7 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const STORED_MEDIA_DIRECTORY = path.join(process.cwd(), ".data", "stored-media");
@@ -30,6 +30,11 @@ type StoredMediaAsset = {
   extension: string;
   fileName: string;
   url: string;
+};
+
+type StoredMediaAssetInfo = Omit<StoredMediaAsset, "buffer"> & {
+  filePath: string;
+  size: number;
 };
 
 function sanitizeStoredMediaAsset(asset: string) {
@@ -123,20 +128,41 @@ export async function storeUploadedMediaFile(input: {
 }
 
 export async function readStoredMediaAsset(asset: string): Promise<StoredMediaAsset | null> {
+  const storedAssetInfo = await getStoredMediaAssetInfo(asset);
+  if (!storedAssetInfo) {
+    return null;
+  }
+
+  const buffer = await readFile(storedAssetInfo.filePath);
+  return {
+    asset: storedAssetInfo.asset,
+    buffer,
+    contentType: storedAssetInfo.contentType,
+    extension: storedAssetInfo.extension,
+    fileName: storedAssetInfo.fileName,
+    url: storedAssetInfo.url,
+  };
+}
+
+export async function getStoredMediaAssetInfo(
+  asset: string,
+): Promise<StoredMediaAssetInfo | null> {
   const normalized = sanitizeStoredMediaAsset(asset);
   if (!normalized) {
     return null;
   }
 
   try {
-    const buffer = await readFile(getStoredMediaPath(normalized));
+    const filePath = getStoredMediaPath(normalized);
+    const fileStats = await stat(filePath);
     const extension = path.extname(normalized).replace(/^\./, "").toLowerCase();
     return {
       asset: normalized,
-      buffer,
       contentType: inferContentType(normalized),
       extension,
       fileName: normalized,
+      filePath,
+      size: fileStats.size,
       url: buildStoredMediaUrl(normalized),
     };
   } catch (error) {
