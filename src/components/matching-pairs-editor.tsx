@@ -10,7 +10,6 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import {
-  MATCHING_AUDIO_VOLUME_DEFAULT,
   createMatchingContent,
   createMatchingExtra,
   createMatchingPair,
@@ -27,6 +26,7 @@ import type {
 import { moveItem } from "@/lib/utils";
 
 const BULK_SEPARATORS = ["\t", ";", "|", "=>"];
+const STORED_MEDIA_ROUTE_PREFIX = "/api/media/stored/";
 const matchingConnectorStyleOptions: Array<{
   id: MatchingConnectorStyle;
   label: string;
@@ -319,6 +319,35 @@ function readFileAsDataUrl(file: File) {
   });
 }
 
+function isStoredMediaUrl(url: string) {
+  const trimmed = url.trim();
+  return (
+    trimmed.startsWith(STORED_MEDIA_ROUTE_PREFIX) ||
+    (typeof window !== "undefined" &&
+      trimmed.startsWith(`${window.location.origin}${STORED_MEDIA_ROUTE_PREFIX}`))
+  );
+}
+
+async function uploadStoredMediaFile(file: File) {
+  const formData = new FormData();
+  formData.set("file", file);
+
+  const response = await fetch("/api/media/stored", {
+    method: "POST",
+    body: formData,
+  });
+
+  const result = (await response.json().catch(() => null)) as
+    | { error?: string; url?: string }
+    | null;
+
+  if (!response.ok || !result?.url) {
+    throw new Error(result?.error ?? "Не удалось загрузить файл на сервер.");
+  }
+
+  return result.url;
+}
+
 function isAcceptedMediaFile(
   kind: "image" | "audio" | "video",
   file: File,
@@ -493,10 +522,11 @@ function MatchingSideFieldsCompact({
   const isMediaContent = mediaContent !== null;
   const isMediaDialogVisible = isMediaContent && isMediaDialogOpen;
   const hasEmbeddedFile = Boolean(mediaContent?.url.trim().startsWith("data:"));
+  const hasStoredFile = Boolean(mediaContent && isStoredMediaUrl(mediaContent.url));
+  const hasUploadedFile = hasEmbeddedFile || hasStoredFile;
   const selectedFileLabel = mediaContent?.fileName?.trim() ?? "";
-  const isFileVideo = videoContent !== null && hasEmbeddedFile;
   const mediaUi = mediaContent ? getMatchingMediaUi(mediaContent.kind) : null;
-  const mediaUrlValue = hasEmbeddedFile ? "" : mediaContent?.url ?? "";
+  const mediaUrlValue = hasUploadedFile ? "" : mediaContent?.url ?? "";
 
   const setField = (
     field: "text" | "url" | "alt" | "label",
@@ -506,7 +536,7 @@ function MatchingSideFieldsCompact({
       onChange({
         ...mediaContent,
         url: value,
-        fileName: value.trim().startsWith("data:")
+        fileName: value.trim().startsWith("data:") || isStoredMediaUrl(value)
           ? mediaContent.fileName ?? ""
           : "",
       } as MatchingContent);
@@ -539,13 +569,16 @@ function MatchingSideFieldsCompact({
     }
 
     try {
-      const dataUrl = await readFileAsDataUrl(file);
+      const storedUrl =
+        kind === "video"
+          ? await uploadStoredMediaFile(file)
+          : await readFileAsDataUrl(file);
       const baseLabel = getBaseFileLabel(file.name);
 
       if (kind === "image" && content.kind === "image") {
         onChange({
           ...content,
-          url: dataUrl,
+          url: storedUrl,
           alt: content.alt.trim() ? content.alt : baseLabel,
           fileName: file.name,
         });
@@ -556,7 +589,7 @@ function MatchingSideFieldsCompact({
       if (kind === "audio" && content.kind === "audio") {
         onChange({
           ...content,
-          url: dataUrl,
+          url: storedUrl,
           label: content.label.trim() ? content.label : baseLabel,
           fileName: file.name,
         });
@@ -567,11 +600,11 @@ function MatchingSideFieldsCompact({
       if (kind === "video" && content.kind === "video") {
         onChange({
           ...content,
-          url: dataUrl,
+          url: storedUrl,
           label: content.label.trim() ? content.label : baseLabel,
           fileName: file.name,
         });
-        onNotice?.("Видеофайл встроен в карточку.");
+        onNotice?.("Видеофайл загружен и прикреплен к карточке.");
       }
     } catch (error) {
       onNotice?.(
@@ -828,7 +861,7 @@ function MatchingSideFieldsCompact({
                     <input
                       className="editor-input"
                       placeholder={
-                        hasEmbeddedFile
+                        hasUploadedFile
                           ? "Вставьте ссылку, если хотите заменить встроенный файл"
                           : "https://..."
                       }
@@ -862,7 +895,7 @@ function MatchingSideFieldsCompact({
                   ) : null}
 
                   {videoContent ? (
-                    <label className="matching-editor-field">
+                    <label className="matching-editor-field matching-editor-field--full">
                       <span className="field-label">Начинать с секунды</span>
                       <input
                         className="editor-input"
@@ -876,31 +909,6 @@ function MatchingSideFieldsCompact({
                             Number.isFinite(event.target.valueAsNumber)
                               ? Math.max(0, Math.round(event.target.valueAsNumber))
                               : 0,
-                          )
-                        }
-                      />
-                    </label>
-                  ) : null}
-
-                  {isFileVideo && videoContent ? (
-                    <label className="matching-editor-field">
-                      <span className="field-label">Громкость, %</span>
-                      <input
-                        className="editor-input"
-                        max={100}
-                        min={0}
-                        step={5}
-                        type="number"
-                        value={videoContent.volume}
-                        onChange={(event) =>
-                          setNumberField(
-                            "volume",
-                            Number.isFinite(event.target.valueAsNumber)
-                              ? Math.min(
-                                  100,
-                                  Math.max(0, Math.round(event.target.valueAsNumber)),
-                                )
-                              : MATCHING_AUDIO_VOLUME_DEFAULT,
                           )
                         }
                       />

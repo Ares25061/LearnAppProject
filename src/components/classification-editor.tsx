@@ -25,6 +25,8 @@ import type {
 } from "@/lib/types";
 import { moveItem } from "@/lib/utils";
 
+const STORED_MEDIA_ROUTE_PREFIX = "/api/media/stored/";
+
 const displayOptions = [
   { id: "sequential", label: "По одной" },
   { id: "all-at-once", label: "Все сразу" },
@@ -58,6 +60,35 @@ function readFileAsDataUrl(file: File) {
 
     reader.readAsDataURL(file);
   });
+}
+
+function isStoredMediaUrl(url: string) {
+  const trimmed = url.trim();
+  return (
+    trimmed.startsWith(STORED_MEDIA_ROUTE_PREFIX) ||
+    (typeof window !== "undefined" &&
+      trimmed.startsWith(`${window.location.origin}${STORED_MEDIA_ROUTE_PREFIX}`))
+  );
+}
+
+async function uploadStoredMediaFile(file: File) {
+  const formData = new FormData();
+  formData.set("file", file);
+
+  const response = await fetch("/api/media/stored", {
+    method: "POST",
+    body: formData,
+  });
+
+  const result = (await response.json().catch(() => null)) as
+    | { error?: string; url?: string }
+    | null;
+
+  if (!response.ok || !result?.url) {
+    throw new Error(result?.error ?? "Не удалось загрузить файл на сервер.");
+  }
+
+  return result.url;
 }
 
 function isAcceptedMediaFile(
@@ -187,6 +218,13 @@ function ContentEditor({
   const options = matchingContentOptions.filter((option) =>
     allowedKinds.includes(option.id),
   );
+  const mediaUrlValue =
+    (content.kind === "image" || content.kind === "audio" || content.kind === "video") &&
+    isStoredMediaUrl(content.url)
+      ? ""
+      : content.kind === "image" || content.kind === "audio" || content.kind === "video"
+        ? content.url
+        : "";
 
   const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -205,33 +243,40 @@ function ContentEditor({
     }
 
     try {
-      const dataUrl = await readFileAsDataUrl(file);
+      const storedUrl =
+        content.kind === "video"
+          ? await uploadStoredMediaFile(file)
+          : await readFileAsDataUrl(file);
       const baseLabel = getBaseFileLabel(file.name);
 
       if (content.kind === "image") {
         onChange({
           ...content,
-          url: dataUrl,
+          url: storedUrl,
           alt: content.alt.trim() ? content.alt : baseLabel,
           fileName: file.name,
         });
       } else if (content.kind === "audio") {
         onChange({
           ...content,
-          url: dataUrl,
+          url: storedUrl,
           label: content.label.trim() ? content.label : baseLabel,
           fileName: file.name,
         });
       } else {
         onChange({
           ...content,
-          url: dataUrl,
+          url: storedUrl,
           label: content.label.trim() ? content.label : baseLabel,
           fileName: file.name,
         });
       }
 
-      onNotice?.("Файл встроен в карточку.");
+      onNotice?.(
+        content.kind === "video"
+          ? "Видеофайл загружен и прикреплен к карточке."
+          : "Файл встроен в карточку.",
+      );
     } catch (error) {
       onNotice?.(
         error instanceof Error ? error.message : "Не удалось обработать файл.",
@@ -289,8 +334,23 @@ function ContentEditor({
             </span>
             <input
               className="editor-input"
-              value={content.url}
-              onChange={(event) => onChange({ ...content, url: event.target.value })}
+              placeholder={
+                isStoredMediaUrl(content.url)
+                  ? "Вставьте ссылку, если хотите заменить загруженный файл"
+                  : undefined
+              }
+              value={mediaUrlValue}
+              onChange={(event) =>
+                onChange({
+                  ...content,
+                  url: event.target.value,
+                  fileName:
+                    event.target.value.trim().startsWith("data:") ||
+                    isStoredMediaUrl(event.target.value)
+                      ? content.fileName ?? ""
+                      : "",
+                })
+              }
             />
           </label>
 
@@ -322,7 +382,7 @@ function ContentEditor({
           </label>
 
           {content.kind === "video" ? (
-            <label className="matching-editor-field">
+            <label className="matching-editor-field matching-editor-field--full">
               <span className="field-label">Старт, сек</span>
               <input
                 className="editor-input"
@@ -343,7 +403,7 @@ function ContentEditor({
             </label>
           ) : null}
 
-          {(content.kind === "audio" || content.kind === "video") ? (
+          {content.kind === "audio" ? (
             <label className="matching-editor-field">
               <span className="field-label">Громкость: {content.volume}%</span>
               <input

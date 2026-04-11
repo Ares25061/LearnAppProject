@@ -62,9 +62,11 @@ declare const __SCORM_OFFLINE_BUNDLE__: boolean | undefined;
 const IS_SCORM_OFFLINE_BUNDLE =
   typeof __SCORM_OFFLINE_BUNDLE__ !== "undefined" && __SCORM_OFFLINE_BUNDLE__;
 const REMEMBERED_MEDIA_VOLUME_STORAGE_KEY = "learnapp:media-volume";
+const STORED_MEDIA_ROUTE_PREFIX = "/api/media/stored/";
 
 let rememberedMediaVolume: number | null = null;
 let hasHydratedRememberedMediaVolume = false;
+const dismissedMatchingIntroKeys = new Set<string>();
 
 type ReportResult = (score: number, solved: boolean, detail?: string) => void;
 
@@ -211,6 +213,8 @@ function reportMatrixScore(data: MatchingMatrixData, selected: Set<string>) {
 }
 
 const MATCHING_CARD_WIDTH = 296;
+const MATCHING_CARD_VERTICAL_INSET = 32;
+const MATCHING_VIDEO_CARD_VERTICAL_INSET = 20;
 const MATCHING_DEFAULT_CARD_HEIGHT = 132;
 const MATCHING_CARD_GAP = 18;
 const MATCHING_CARD_STEP = 18;
@@ -590,23 +594,19 @@ function getMatchingCardHeight(
   imageAspectRatios: MatchingImageAspectRatioMap = {},
 ) {
   const normalized = normalizeMatchingSide(content);
-  const widthScale = clamp(width / MATCHING_CARD_WIDTH, 0.64, 1);
   const innerWidth = Math.max(width - 30, 96);
 
   if (normalized.kind === "video") {
-    const title = normalized.label || "\u0412\u0438\u0434\u0435\u043e";
-    const source = normalized.url ? getMatchingPlayableSourceLabel(normalized) : "";
-    const normalizedVideoSize = clamp(getMatchingVideoSize(normalized), 90, 320);
-    const previewHeight = Math.round(
-      normalizedVideoSize *
-        clamp(width / MATCHING_CARD_WIDTH, 0.66, 1) *
-        0.56,
-    );
+    const caption = normalized.label.trim();
+    const previewHeight = Math.max(86, Math.round(innerWidth * 0.6));
+    const captionHeight = caption
+      ? estimateMatchingTextHeight(caption, innerWidth, 18) + 4
+      : 0;
     return (
-      estimateMatchingTextHeight(title, innerWidth, 30) +
+      MATCHING_VIDEO_CARD_VERTICAL_INSET +
       previewHeight +
-      (source ? estimateMatchingTextHeight(source, innerWidth, 22) + 8 : 0) +
-      18
+      captionHeight +
+      (caption ? 6 : 0)
     );
   }
 
@@ -652,9 +652,9 @@ function getMatchingCardBaseWidth(
 
   if (normalized.kind === "video") {
     const preferredWidth = Math.round(
-      152 + clamp(getMatchingVideoSize(normalized), 90, 320) * 0.48,
+      136 + clamp(getMatchingVideoSize(normalized), 72, 190) * 0.36,
     );
-    return clamp(preferredWidth, Math.min(208, maxWidth), Math.min(320, maxWidth));
+    return clamp(preferredWidth, Math.min(176, maxWidth), Math.min(248, maxWidth));
   }
 
   if (normalized.kind === "audio") {
@@ -702,7 +702,7 @@ function getMatchingCardMinimumHeight(content: MatchingContent) {
   const normalized = normalizeMatchingSide(content);
 
   if (normalized.kind === "video") {
-    return 140;
+    return 102;
   }
 
   if (normalized.kind === "audio") {
@@ -951,6 +951,72 @@ function countVisibleCorrectPairs(cards: MatchingDragCard[]) {
   return Array.from(buildMatchingGroupStatuses(cards).values()).filter(
     (status) => status === "correct",
   ).length;
+}
+
+function findMatchingMergeCandidate(
+  nextCards: MatchingDragCard[],
+  movedGroupId: string,
+) {
+  const movedCards = nextCards.filter((card) => card.groupId === movedGroupId);
+  const candidates = nextCards.filter((card) => card.groupId !== movedGroupId);
+
+  return movedCards
+    .flatMap((movedCard) =>
+      candidates.map((candidate) => {
+        const movedGroup = nextCards.filter(
+          (card) => card.groupId === movedCard.groupId,
+        );
+        const candidateGroup = nextCards.filter(
+          (card) => card.groupId === candidate.groupId,
+        );
+        const combined = [...movedGroup, ...candidateGroup];
+        const leftCount = combined.filter((card) => card.side === "left").length;
+        const rightCount = combined.filter((card) => card.side === "right").length;
+        const movedCenterX = movedCard.x + movedCard.width / 2;
+        const movedCenterY = movedCard.y + movedCard.height / 2;
+        const candidateCenterX = candidate.x + candidate.width / 2;
+        const candidateCenterY = candidate.y + candidate.height / 2;
+        const overlapWidth = Math.max(
+          0,
+          Math.min(movedCard.x + movedCard.width, candidate.x + candidate.width) -
+            Math.max(movedCard.x, candidate.x),
+        );
+        const overlapHeight = Math.max(
+          0,
+          Math.min(movedCard.y + movedCard.height, candidate.y + candidate.height) -
+            Math.max(movedCard.y, candidate.y),
+        );
+        const overlapArea = overlapWidth * overlapHeight;
+        const distance = Math.hypot(
+          movedCenterX - candidateCenterX,
+          movedCenterY - candidateCenterY,
+        );
+
+        return {
+          movedCard,
+          candidate,
+          movedGroup,
+          candidateGroup,
+          distance,
+          overlapArea,
+          canMerge:
+            candidate.side !== movedCard.side &&
+            movedGroup.length === 1 &&
+            candidateGroup.length === 1 &&
+            leftCount <= 1 &&
+            rightCount <= 1 &&
+            overlapArea > 0,
+        };
+      }),
+    )
+    .filter((entry) => entry.canMerge)
+    .sort((left, right) => {
+      if (right.overlapArea !== left.overlapArea) {
+        return right.overlapArea - left.overlapArea;
+      }
+
+      return left.distance - right.distance;
+    })[0];
 }
 
 function getEvaluatedPairGroups(cards: MatchingDragCard[]) {
@@ -1427,6 +1493,10 @@ function getMatchingMediaSourceLabel(url: string) {
     return `\u0432\u0441\u0442\u0440\u043e\u0435\u043d\u043d\u044b\u0439 \u0444\u0430\u0439\u043b (${dataUrlMatch[1]})`;
   }
 
+  if (isMatchingStoredMediaUrl(url)) {
+    return "\u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043d\u043d\u044b\u0439 \u0444\u0430\u0439\u043b";
+  }
+
   const embeddedVideoMeta = getMatchingEmbeddedVideoMeta(url);
   if (embeddedVideoMeta) {
     return getMatchingEmbeddedVideoLabel(embeddedVideoMeta.provider);
@@ -1439,8 +1509,30 @@ function getMatchingMediaSourceLabel(url: string) {
 
   return parsed.hostname.replace(/^www\./, "");
 }
+
+function isMatchingStoredMediaUrl(url: string) {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  if (trimmed.startsWith(STORED_MEDIA_ROUTE_PREFIX)) {
+    return true;
+  }
+
+  try {
+    return new URL(trimmed).pathname.startsWith(STORED_MEDIA_ROUTE_PREFIX);
+  } catch {
+    return false;
+  }
+}
+
 function isMatchingEmbeddedFileUrl(url: string) {
   return url.trim().startsWith("data:");
+}
+
+function isMatchingUploadedFileUrl(url: string) {
+  return isMatchingEmbeddedFileUrl(url) || isMatchingStoredMediaUrl(url);
 }
 
 function getMatchingPlayableSourceLabel(content: MatchingPlayableContent) {
@@ -1511,11 +1603,8 @@ function getMatchingDragCardLabel(
 const MATCHING_AUDIO_LOADING_HINT =
   "Подготовка и загрузка звука могут занять около 20 секунд.";
 const MATCHING_SESSION_AUDIO_CACHE_MAX_ENTRIES = 8;
-const MATCHING_SESSION_FILE_VIDEO_CACHE_MAX_ENTRIES = 6;
 const matchingSessionAudioUrlCache = new Map<string, string>();
 const matchingSessionAudioFetches = new Map<string, Promise<string>>();
-const matchingSessionFileVideoUrlCache = new Map<string, string>();
-const matchingSessionFileVideoFetches = new Map<string, Promise<string>>();
 
 type MatchingAudioFetchError = Error & {
   code?: string;
@@ -1579,41 +1668,6 @@ function setMatchingCachedSessionAudioUrl(url: string, objectUrl: string) {
     }
 
     matchingSessionAudioUrlCache.delete(oldestEntry[0]);
-    URL.revokeObjectURL(oldestEntry[1]);
-  }
-}
-
-function getMatchingCachedSessionFileVideoUrl(url: string) {
-  const cachedUrl = matchingSessionFileVideoUrlCache.get(url);
-  if (!cachedUrl) {
-    return null;
-  }
-
-  matchingSessionFileVideoUrlCache.delete(url);
-  matchingSessionFileVideoUrlCache.set(url, cachedUrl);
-  return cachedUrl;
-}
-
-function setMatchingCachedSessionFileVideoUrl(url: string, objectUrl: string) {
-  const previousObjectUrl = matchingSessionFileVideoUrlCache.get(url);
-  if (previousObjectUrl && previousObjectUrl !== objectUrl) {
-    URL.revokeObjectURL(previousObjectUrl);
-  }
-
-  matchingSessionFileVideoUrlCache.delete(url);
-  matchingSessionFileVideoUrlCache.set(url, objectUrl);
-
-  while (
-    matchingSessionFileVideoUrlCache.size > MATCHING_SESSION_FILE_VIDEO_CACHE_MAX_ENTRIES
-  ) {
-    const oldestEntry = matchingSessionFileVideoUrlCache.entries().next().value as
-      | [string, string]
-      | undefined;
-    if (!oldestEntry) {
-      break;
-    }
-
-    matchingSessionFileVideoUrlCache.delete(oldestEntry[0]);
     URL.revokeObjectURL(oldestEntry[1]);
   }
 }
@@ -1697,41 +1751,6 @@ type MatchingModalVideoSourceState = {
   playbackType?: string;
 };
 
-async function resolveMatchingSessionFileVideoUrl(url: string) {
-  const trimmed = url.trim();
-  if (!trimmed || !isMatchingEmbeddedFileUrl(trimmed)) {
-    return trimmed;
-  }
-
-  const cachedUrl = getMatchingCachedSessionFileVideoUrl(trimmed);
-  if (cachedUrl) {
-    return cachedUrl;
-  }
-
-  const pendingRequest = matchingSessionFileVideoFetches.get(trimmed);
-  if (pendingRequest) {
-    return pendingRequest;
-  }
-
-  const fetchPromise = fetch(trimmed)
-    .then(async (response) => {
-      if (!response.ok) {
-        throw new Error("Не удалось подготовить встроенное видео.");
-      }
-
-      const videoBlob = await response.blob();
-      const objectUrl = URL.createObjectURL(videoBlob);
-      setMatchingCachedSessionFileVideoUrl(trimmed, objectUrl);
-      return objectUrl;
-    })
-    .finally(() => {
-      matchingSessionFileVideoFetches.delete(trimmed);
-    });
-
-  matchingSessionFileVideoFetches.set(trimmed, fetchPromise);
-  return fetchPromise;
-}
-
 function getMatchingModalVideoSourceState(url: string): MatchingModalVideoSourceState {
   const trimmed = url.trim();
   if (!trimmed) {
@@ -1751,76 +1770,15 @@ function getMatchingModalVideoSourceState(url: string): MatchingModalVideoSource
     };
   }
 
-  if (!isMatchingEmbeddedFileUrl(trimmed)) {
-    return {
-      playbackSrc: trimmed,
-      playbackType: getMatchingMediaType("video", trimmed),
-      isResolvingSrc: false,
-    };
-  }
-
-  const cachedUrl = getMatchingCachedSessionFileVideoUrl(trimmed);
-  if (cachedUrl) {
-    return {
-      playbackSrc: cachedUrl,
-      playbackType: getMatchingMediaType("video", trimmed),
-      isResolvingSrc: false,
-    };
-  }
-
   return {
-    playbackSrc: "",
+    playbackSrc: trimmed,
     playbackType: getMatchingMediaType("video", trimmed),
-    isResolvingSrc: true,
+    isResolvingSrc: false,
   };
 }
 
 function useMatchingModalVideoSource(url: string) {
-  const [sourceState, setSourceState] = useState<MatchingModalVideoSourceState>(() =>
-    getMatchingModalVideoSourceState(url),
-  );
-
-  useEffect(() => {
-    let isCancelled = false;
-    const nextState = getMatchingModalVideoSourceState(url);
-    setSourceState(nextState);
-
-    if (!nextState.isResolvingSrc || nextState.playbackSrc) {
-      return () => {
-        isCancelled = true;
-      };
-    }
-
-    void resolveMatchingSessionFileVideoUrl(url)
-      .then((resolvedUrl) => {
-        if (isCancelled) {
-          return;
-        }
-
-        setSourceState({
-          playbackSrc: resolvedUrl,
-          playbackType: getMatchingMediaType("video", url),
-          isResolvingSrc: false,
-        });
-      })
-      .catch(() => {
-        if (isCancelled) {
-          return;
-        }
-
-        setSourceState({
-          playbackSrc: url.trim(),
-          playbackType: getMatchingMediaType("video", url),
-          isResolvingSrc: false,
-        });
-      });
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [url]);
-
-  return sourceState;
+  return useMemo(() => getMatchingModalVideoSourceState(url), [url]);
 }
 
 function buildMatchingVideoThumbnailPath(url: string) {
@@ -2633,7 +2591,7 @@ function MatchingModalVideoPlayer({
         }}
         poster={poster}
         playsInline
-        preload={isMatchingEmbeddedFileUrl(media.url) ? "metadata" : "auto"}
+        preload={isMatchingUploadedFileUrl(media.url) ? "metadata" : "auto"}
         onLoadedMetadata={(event) => {
           const element = event.currentTarget;
           element.volume = getRememberedMediaVolume() / 100;
@@ -2797,30 +2755,16 @@ function MatchingCardContent({
       const videoThumbnailUrl =
         embeddedVideoMeta?.thumbnailUrl ??
         (isScormOfflineRuntime() ? buildMatchingVideoThumbnailPath(normalized.url) : undefined);
-      const isEmbeddedFileVideo = isMatchingEmbeddedFileUrl(normalized.url);
-      const videoTitle = normalized.label.trim();
-      const startSeconds =
-        getMatchingVideoStartSeconds(normalized) ||
-        embeddedVideoMeta?.startSeconds ||
-        0;
-      const normalizedVideoSize = clamp(getMatchingVideoSize(normalized), 90, 320);
-      const videoSize = Math.max(
-        96,
-        Math.min(
-          cardHeight - 58,
-          Math.round(cardWidth * 0.68),
-          Math.round(
-            normalizedVideoSize *
-              clamp(cardWidth / MATCHING_CARD_WIDTH, 0.74, 1) *
-              0.58,
-          ),
-        ),
-      );
-      const videoSourceLabel = getMatchingPlayableSourceLabel(normalized);
+      const isEmbeddedFileVideo = isMatchingUploadedFileUrl(normalized.url);
+      const videoCaption = normalized.label.trim();
+      const captionHeight = videoCaption
+        ? estimateMatchingTextHeight(videoCaption, cardWidth, 18) + 4
+        : 0;
+      const captionGap = videoCaption ? 6 : 0;
+      const videoSize = Math.max(86, cardHeight - captionHeight - captionGap);
 
       return (
         <div className={contentClassName}>
-          {videoTitle ? <strong>{videoTitle}</strong> : null}
           {normalized.url ? (
             <button
               className="matching-media-preview"
@@ -2863,26 +2807,20 @@ function MatchingCardContent({
                       {"\u25b6"}
                     </span>
                     <span className="matching-card-thumbnail__title">
-                      {videoTitle || videoSourceLabel || "\u0412\u0438\u0434\u0435\u043e"}
+                      {videoCaption || getMatchingPlayableSourceLabel(normalized) || "\u0412\u0438\u0434\u0435\u043e"}
                     </span>
                   </div>
                 )}
               </div>
-              <span className="matching-media-preview__meta">
-                <span className="matching-media-preview__label">
-                  {"\u25b6 \u041e\u0442\u043a\u0440\u044b\u0442\u044c \u0432\u0438\u0434\u0435\u043e"}
-                </span>
-                <span className="matching-media-preview__source">
-                  {videoSourceLabel}
-                  {startSeconds > 0 ? ` \u00b7 \u0441 ${startSeconds} \u0441` : ""}
-                </span>
-              </span>
             </button>
           ) : (
             <div className="matching-card-placeholder">
               {"URL \u0432\u0438\u0434\u0435\u043e \u043d\u0435 \u0437\u0430\u0434\u0430\u043d"}
             </div>
           )}
+          {videoCaption ? (
+            <span className="matching-card-caption">{videoCaption}</span>
+          ) : null}
         </div>
       );
     }
@@ -3227,55 +3165,10 @@ function MatchingPairsActivity({
   });
 
   const snapIfMatched = (nextCards: MatchingDragCard[], movedGroupId: string) => {
-    const movedCards = nextCards.filter((card) => card.groupId === movedGroupId);
-    const candidates = nextCards.filter((card) => card.groupId !== movedGroupId);
-    const match = movedCards
-      .flatMap((movedCard) =>
-        candidates
-          .map((candidate) => {
-            const movedGroup = nextCards.filter(
-              (card) => card.groupId === movedCard.groupId,
-            );
-            const candidateGroup = nextCards.filter(
-              (card) => card.groupId === candidate.groupId,
-            );
-            const combined = [...movedGroup, ...candidateGroup];
-            const leftCount = combined.filter((card) => card.side === "left").length;
-            const rightCount = combined.filter((card) => card.side === "right").length;
-            const movedCenterX = movedCard.x + movedCard.width / 2;
-            const movedCenterY = movedCard.y + movedCard.height / 2;
-            const candidateCenterX = candidate.x + candidate.width / 2;
-            const candidateCenterY = candidate.y + candidate.height / 2;
-            const distance = Math.hypot(
-              movedCenterX - candidateCenterX,
-              movedCenterY - candidateCenterY,
-            );
-            const mergeDistance = Math.max(
-              150,
-              Math.min(
-                boardMetrics.columnWidth,
-                (movedCard.width + candidate.width) / 2 + 44,
-              ),
-            );
-
-            return {
-              movedCard,
-              candidate,
-              movedGroup,
-              candidateGroup,
-              distance,
-              mergeDistance,
-              canMerge:
-                candidate.side !== movedCard.side &&
-                movedGroup.length === 1 &&
-                candidateGroup.length === 1 &&
-                leftCount <= 1 &&
-                rightCount <= 1,
-            };
-          }),
-      )
-      .filter((entry) => entry.canMerge && entry.distance < entry.mergeDistance)
-      .sort((left, right) => left.distance - right.distance)[0];
+    const match = findMatchingMergeCandidate(
+      nextCards,
+      movedGroupId,
+    );
 
     if (!match) {
       return nextCards;
@@ -3288,7 +3181,7 @@ function MatchingPairsActivity({
     const groupId = `paired-${leftCard.id}-${rightCard.id}`;
     const pairGap = Math.max(12, Math.round(MATCHING_CARD_GAP * 0.9));
     const leftMoved = leftCard.groupId === movedGroupId;
-    const leftX =
+    const initialLeftX =
       normalized.pairAlignment === "horizontal"
         ? leftMoved
           ? leftCard.x
@@ -3296,7 +3189,7 @@ function MatchingPairsActivity({
         : leftMoved
           ? leftCard.x
           : rightCard.x;
-    const topY =
+    const initialTopY =
       normalized.pairAlignment === "horizontal"
         ? leftMoved
           ? leftCard.y
@@ -3304,7 +3197,13 @@ function MatchingPairsActivity({
         : leftMoved
           ? leftCard.y
           : rightCard.y - leftCard.height - pairGap;
-    const maxLeftX =
+    const targetCenterX = leftMoved
+      ? leftCard.x + leftCard.width / 2
+      : rightCard.x + rightCard.width / 2;
+    const targetCenterY = leftMoved
+      ? leftCard.y + leftCard.height / 2
+      : rightCard.y + rightCard.height / 2;
+    const maxGroupX =
       normalized.pairAlignment === "horizontal"
         ? Math.max(
             boardMetrics.minInset,
@@ -3320,7 +3219,7 @@ function MatchingPairsActivity({
               Math.max(leftCard.width, rightCard.width) -
               boardMetrics.minInset,
           );
-    const maxLeftY =
+    const maxGroupY =
       normalized.pairAlignment === "horizontal"
         ? Math.max(
             boardMetrics.minInset,
@@ -3334,16 +3233,71 @@ function MatchingPairsActivity({
               pairGap -
               rightCard.height,
           );
-    const clampedX = clamp(leftX, boardMetrics.minInset, maxLeftX);
-    const clampedY = clamp(topY, boardMetrics.minInset, maxLeftY);
+    const leftGroupX = clamp(initialLeftX, boardMetrics.minInset, maxGroupX);
+    const topGroupY = clamp(initialTopY, boardMetrics.minInset, maxGroupY);
+
+    let nextLeftX = leftGroupX;
+    let nextRightX =
+      normalized.pairAlignment === "horizontal"
+        ? leftGroupX + leftCard.width + pairGap
+        : leftGroupX;
+    let nextLeftY = topGroupY;
+    let nextRightY =
+      normalized.pairAlignment === "horizontal"
+        ? targetCenterY - rightCard.height / 2
+        : topGroupY + leftCard.height + pairGap;
+
+    if (normalized.pairAlignment === "horizontal") {
+      nextLeftY = targetCenterY - leftCard.height / 2;
+      nextRightY = targetCenterY - rightCard.height / 2;
+
+      const minY = Math.min(nextLeftY, nextRightY);
+      const maxY = Math.max(
+        nextLeftY + leftCard.height,
+        nextRightY + rightCard.height,
+      );
+
+      if (minY < boardMetrics.minInset) {
+        const shift = boardMetrics.minInset - minY;
+        nextLeftY += shift;
+        nextRightY += shift;
+      }
+
+      if (maxY > boardMetrics.bottomLimit) {
+        const shift = maxY - boardMetrics.bottomLimit;
+        nextLeftY -= shift;
+        nextRightY -= shift;
+      }
+    } else {
+      nextLeftX = targetCenterX - leftCard.width / 2;
+      nextRightX = targetCenterX - rightCard.width / 2;
+
+      const minX = Math.min(nextLeftX, nextRightX);
+      const maxX = Math.max(
+        nextLeftX + leftCard.width,
+        nextRightX + rightCard.width,
+      );
+
+      if (minX < boardMetrics.minInset) {
+        const shift = boardMetrics.minInset - minX;
+        nextLeftX += shift;
+        nextRightX += shift;
+      }
+
+      if (maxX > boardMetrics.width - boardMetrics.minInset) {
+        const shift = maxX - (boardMetrics.width - boardMetrics.minInset);
+        nextLeftX -= shift;
+        nextRightX -= shift;
+      }
+    }
 
     return nextCards.map((card) => {
       if (card.id === leftCard.id) {
         return {
           ...card,
           groupId,
-          x: clampedX,
-          y: clampedY,
+          x: nextLeftX,
+          y: nextLeftY,
         };
       }
 
@@ -3351,14 +3305,8 @@ function MatchingPairsActivity({
         return {
           ...card,
           groupId,
-          x:
-            normalized.pairAlignment === "horizontal"
-              ? clampedX + leftCard.width + pairGap
-              : clampedX,
-          y:
-            normalized.pairAlignment === "horizontal"
-              ? clampedY
-              : clampedY + leftCard.height + pairGap,
+          x: nextRightX,
+          y: nextRightY,
         };
       }
 
@@ -3382,6 +3330,15 @@ function MatchingPairsActivity({
   };
 
   const groupStatuses = useMemo(() => buildMatchingGroupStatuses(cards), [cards]);
+  const mergePreview = useMemo(() => {
+    if (!draggingGroupId) {
+      return null;
+    }
+
+    return (
+      findMatchingMergeCandidate(cards, draggingGroupId) ?? null
+    );
+  }, [cards, draggingGroupId]);
   const groupConnectors = useMemo(
     () =>
       Array.from(collectMatchingGroups(cards).entries())
@@ -3540,10 +3497,18 @@ function MatchingPairsActivity({
           >
         {cards.map((card) => {
           const normalizedCardContent = normalizeMatchingSide(card.content);
+          const isPreviewSourceGroup =
+            mergePreview?.movedCard.groupId === card.groupId;
+          const isPreviewTargetGroup =
+            mergePreview?.candidate.groupId === card.groupId;
           return (
             <div
               className={`matching-drag-card ${
                 card.side === "right" ? "matching-drag-card--right" : ""
+              } ${
+                normalizedCardContent.kind === "video"
+                  ? "matching-drag-card--video"
+                  : ""
               } ${draggingGroupId === card.groupId ? "matching-drag-card--dragging" : ""} ${
                 normalized.colorByGroup && card.side === "left"
                   ? "matching-drag-card--group-left"
@@ -3564,6 +3529,10 @@ function MatchingPairsActivity({
                 groupStatuses.get(card.groupId) === "incorrect" && showGroupFeedback
                   ? "matching-drag-card--incorrect"
                   : ""
+              } ${
+                isPreviewSourceGroup ? "matching-drag-card--merge-preview" : ""
+              } ${
+                isPreviewTargetGroup ? "matching-drag-card--merge-target" : ""
               }`}
               key={card.id}
               role="group"
@@ -3626,7 +3595,13 @@ function MatchingPairsActivity({
             >
               <MatchingCardContent
                 cardSide={card.side}
-                cardHeight={Math.max(card.height - 32, 56)}
+                cardHeight={Math.max(
+                  card.height -
+                    (normalizedCardContent.kind === "video"
+                      ? MATCHING_VIDEO_CARD_VERTICAL_INSET
+                      : MATCHING_CARD_VERTICAL_INSET),
+                  56,
+                )}
                 cardWidth={Math.max(card.width - 32, 96)}
                 content={normalizedCardContent}
                 onOpenMedia={setActiveMedia}
@@ -3911,15 +3886,18 @@ function getClassificationCardMetrics(
         height: clamp(Math.round(normalized.size * 0.34) + 54, 88, 122),
       };
     case "video": {
-      const frameWidth = clamp(Math.round(normalized.size * 0.8), 164, 230);
+      const frameWidth = clamp(Math.round(normalized.size * 0.66), 148, 204);
       const frameHeight = Math.round(frameWidth * 0.5625);
+      const captionHeight = normalized.label.trim()
+        ? estimateMatchingTextHeight(normalized.label, frameWidth + 18, 18) + 8
+        : 0;
 
       return {
         width: frameWidth + 18,
         height: clamp(
-          frameHeight + (normalized.label.trim() ? 58 : 46),
-          138,
-          188,
+          frameHeight + captionHeight + 18,
+          126,
+          176,
         ),
       };
     }
@@ -6087,10 +6065,32 @@ export function ExercisePlayer({
   );
   const instructionsText = instructionOverride ?? draft.instructions;
   const showInstructions = compactHead ? Boolean(instructionOverride) : Boolean(instructionsText);
+  const introText = draft.type === "matching-pairs" ? draft.description.trim() : "";
+  const introKey = introText
+    ? [
+        draft.type,
+        draft.title.trim(),
+        introText,
+        boardOnly ? "board" : "full",
+        compactHead ? "compact" : "default",
+      ].join("|")
+    : null;
+  const [isIntroOpen, setIsIntroOpen] = useState(
+    () => (introKey ? !dismissedMatchingIntroKeys.has(introKey) : false),
+  );
 
   useEffect(() => {
     setStatus(null);
   }, [revisionKey]);
+
+  useEffect(() => {
+    if (!introKey) {
+      setIsIntroOpen(false);
+      return;
+    }
+
+    setIsIntroOpen(!dismissedMatchingIntroKeys.has(introKey));
+  }, [introKey]);
 
   const reportResult = (score: number, solved: boolean, detail?: string) => {
     const safeScore = clamp(Math.round(score), 0, 100);
@@ -6110,6 +6110,15 @@ export function ExercisePlayer({
       );
     }
   };
+
+  const closeIntro = () => {
+    if (introKey) {
+      dismissedMatchingIntroKeys.add(introKey);
+    }
+
+    setIsIntroOpen(false);
+  };
+
   return (
     <section
       className={`exercise-player ${
@@ -6126,8 +6135,46 @@ export function ExercisePlayer({
         ) : null}
       </div> : null}
       <div className="exercise-player__body">
-        {bodyOverlay ? (
-          <div className="exercise-player__overlay">{bodyOverlay}</div>
+        {introKey || bodyOverlay ? (
+          <div className="exercise-player__overlay">
+            <div className="exercise-player__overlay-start">
+              {introKey ? (
+                <button
+                  aria-label="Показать задание"
+                  className="exercise-player__help-button"
+                  type="button"
+                  onClick={() => setIsIntroOpen(true)}
+                >
+                  ?
+                </button>
+              ) : null}
+            </div>
+            <div className="exercise-player__overlay-end">{bodyOverlay}</div>
+          </div>
+        ) : null}
+        {isIntroOpen ? (
+          <div
+            className="exercise-player-intro"
+            data-card-interactive="true"
+            role="presentation"
+            onClick={closeIntro}
+          >
+            <div
+              aria-label="Задание"
+              aria-modal="true"
+              className="exercise-player-intro__dialog"
+              role="dialog"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <h2>Задание</h2>
+              <div className="exercise-player-intro__text">{introText}</div>
+              <div className="exercise-player-intro__actions">
+                <button className="ghost-button" type="button" onClick={closeIntro}>
+                  OK
+                </button>
+              </div>
+            </div>
+          </div>
         ) : null}
         {renderActivity(draft, revisionKey, reportResult, boardOnly)}
       </div>
