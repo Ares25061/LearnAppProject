@@ -1,18 +1,56 @@
 # LearningApps Studio
 
-Конструктор интерактивных упражнений в стиле LearningApps: создание упражнений без авторизации, редактирование и библиотека для авторизованных пользователей, экспорт в SCORM-архив.
+LearningApps Studio — это open-source конструктор интерактивных учебных упражнений в духе LearningApps. Проект позволяет создавать задания в браузере, сохранять и редактировать их, открывать страницы воспроизведения и экспортировать упражнения в формате SCORM для LMS.
 
-## Что уже готово
+Проект написан на `Next.js 16`, `React 19`, `TypeScript` и использует `MariaDB/MySQL`.
 
-- Next.js 16 + React 19
-- MariaDB / MySQL через `mariadb`
-- Локальная регистрация и вход
-- Создание, сохранение и редактирование упражнений
-- Экспорт SCORM-архива
-- Docker-конфиг для Railway
-- Отдельный MariaDB service для Railway с кастомным `my.cnf`
+## Возможности проекта
 
-## Локальный запуск
+- создание, редактирование и хранение интерактивных упражнений
+- публикация страниц воспроизведения для готовых материалов
+- экспорт упражнений в SCORM-архивы
+- работа с текстом, изображениями, аудио и видео внутри заданий
+- библиотека сохранённых материалов для авторизованных пользователей
+- локальный запуск и деплой на Railway
+
+## Поддерживаемые типы упражнений
+
+В репозитории уже реализовано более 20 форматов упражнений, включая:
+
+- найди пару
+- классификация / распределение по группам
+- линия времени
+- простой порядок
+- свободный текстовый ответ
+- сопоставление изображений
+- тест с выбором ответа
+- текст с пропусками
+- заметки к медиа
+- викторина в стиле «Кто хочет стать миллионером»
+- групповая головоломка
+- кроссворд
+- поиск слов в сетке
+- задание «где что находится»
+- угадай слово
+- скачки
+- игра на сопоставление
+- угадайка
+- матрица соответствий
+- заполнение таблицы
+- текстовая викторина с вводом ответа
+
+## Технологический стек
+
+- `Next.js 16`
+- `React 19`
+- `TypeScript`
+- `MariaDB` / `MySQL`
+- `jose` для сессий и авторизации
+- `bcryptjs` для хеширования паролей
+- `JSZip` для сборки SCORM-архивов
+- `ffmpeg-static` для медиа-обработки
+
+## Быстрый старт
 
 1. Установите зависимости:
 
@@ -20,54 +58,101 @@
 npm install
 ```
 
-2. Создайте `.env.local` на основе `.env.example`.
+2. Создайте локальный файл окружения:
 
-3. Поднимите MySQL / MariaDB и укажите `DATABASE_URL`.
+```bash
+cp .env.example .env.local
+```
 
-4. Запустите проект:
+Для Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env.local
+```
+
+3. Запустите MySQL или MariaDB и укажите актуальный `DATABASE_URL` в `.env.local`.
+
+4. Выполните миграции:
+
+```bash
+npm run migrate:mysql
+```
+
+5. Запустите проект в режиме разработки:
 
 ```bash
 npm run dev
 ```
 
-Откройте [http://localhost:3000](http://localhost:3000).
+6. Откройте [http://localhost:3000](http://localhost:3000).
 
 ## Переменные окружения
 
-Пример есть в `.env.example`.
+Базовый шаблон находится в `.env.example`.
 
-- `SESSION_SECRET` - длинный случайный секрет для cookie-сессий
-- `NEXT_PUBLIC_APP_URL` - публичный URL приложения
-- `PUBLIC_APP_URL` - серверный публичный origin приложения
-- `DATABASE_URL` - строка подключения `mysql://...`
-- `DATABASE_POOL_LIMIT` - верхний лимит соединений пула
-- `DATABASE_POOL_MIN_IDLE` - сколько idle-соединений держать постоянно
-- `DATABASE_POOL_IDLE_TIMEOUT` - через сколько секунд закрывать idle-соединения
+- `DATABASE_URL` — строка подключения к MySQL/MariaDB
+- `DATABASE_POOL_LIMIT` — максимальный размер пула соединений
+- `DATABASE_POOL_MIN_IDLE` — минимальное число idle-соединений
+- `DATABASE_POOL_IDLE_TIMEOUT` — таймаут idle-соединений в секундах
+- `SESSION_SECRET` — длинный случайный секрет для cookie-сессий
+- `PUBLIC_APP_URL` — публичный origin приложения на сервере
+- `NEXT_PUBLIC_APP_URL` — публичный URL для клиентской части
+- `YTDLP_YOUTUBE_COOKIES_B64` — необязательные YouTube cookies для production-сценариев экспорта и конвертации
 
-## YouTube На Railway
+Не коммитьте `.env.local` и любые реальные секреты в репозиторий.
 
-Для автономного SCORM-экспорта YouTube Railway часто получает bot-check от датацентрового IP. В этом случае сервису нужны свежие cookies браузера.
+## Полезные скрипты
 
-Самый быстрый способ обновить их из локального браузера в Railway:
+- `npm run dev` — запуск локального сервера разработки
+- `npm run build` — сборка приложения и ресурсов SCORM-плеера
+- `npm run start` — запуск production-сервера
+- `npm run lint` — запуск ESLint
+- `npm run migrate:mysql` — применение миграций базы данных
+- `npm run build:scorm-player` — отдельная пересборка офлайн-ресурсов SCORM-плеера
+- `npm run setup:media-tools` — подготовка локальных инструментов для работы с медиа
+
+## Деплой
+
+### Деплой приложения на Railway
+
+Репозиторий подготовлен для деплоя на Railway. Для базового запуска приложения достаточно настроить:
+
+- `DATABASE_URL`
+- `SESSION_SECRET`
+- `PUBLIC_APP_URL`
+- `NEXT_PUBLIC_APP_URL`
+
+### Отдельный MariaDB service для Railway
+
+Если managed MySQL в Railway оказывается слишком ограниченным, в репозитории есть отдельная конфигурация MariaDB в [railway/mariadb/README.md](C:/GitHub/LearnAppProject/railway/mariadb/README.md).
+
+Типовой сценарий настройки:
+
+1. Создайте новый Railway service из этого же репозитория.
+2. Укажите `RAILWAY_DOCKERFILE_PATH=railway/mariadb/Dockerfile`.
+3. Подключите volume к `/var/lib/mysql`.
+4. Задайте `MARIADB_DATABASE`, `MARIADB_USER`, `MARIADB_PASSWORD` и `MARIADB_ROOT_PASSWORD`.
+5. В приложении укажите `DATABASE_URL`, ведущий на этот приватный сервис базы данных.
+
+### YouTube cookies для Railway
+
+Для автономного SCORM-экспорта и некоторых медиа-сценариев Railway может упираться в YouTube bot-check. В таком случае можно синхронизировать свежие cookies из локального браузера в Railway:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\sync-railway-youtube-cookies.ps1 -Service LearnAppProject-branch -Environment production
 ```
 
-Скрипт:
+Скрипт экспортирует cookies из локального браузера, записывает их в переменные Railway и при необходимости запускает новый деплой.
 
-- экспортирует cookies из локального браузера через `yt-dlp`
-- кладёт их в `YTDLP_YOUTUBE_COOKIES_B64` для указанного Railway service
-- запускает новый deploy, если не передан `-SkipDeploys`
+## Структура репозитория
 
-## MariaDB Для Railway
+- `src/app` — маршруты, страницы и API-обработчики
+- `src/components` — редакторы и плееры упражнений
+- `src/lib` — доменная логика, типы, экспорт и медиа-утилиты
+- `scripts` — локальные скрипты, миграции и вспомогательные инструменты
+- `railway` — файлы для деплоя
+- `scorm-template` — ресурсы офлайн-SCORM-плеера
 
-Если managed MySQL Railway упирается в память, можно поднять отдельный DB service из этого репозитория.
+## Статус проекта
 
-1. Создайте новый Railway service из того же репозитория.
-2. Для этого service задайте `RAILWAY_DOCKERFILE_PATH=railway/mariadb/Dockerfile`.
-3. Подключите Volume к `/var/lib/mysql`.
-4. Задайте переменные `MARIADB_DATABASE`, `MARIADB_USER`, `MARIADB_PASSWORD`, `MARIADB_ROOT_PASSWORD`.
-5. В app service укажите `DATABASE_URL` через private domain этого DB service.
-
-Подробная инструкция лежит в [railway/mariadb/README.md](/C:/GitHub/LearnAppProject/railway/mariadb/README.md).
+Проект активно развивается. Интерфейсы, поведение упражнений и детали экспорта могут меняться.
