@@ -244,23 +244,75 @@ async function buildDraftJsonExportPayload(draft: AnyExerciseDraft) {
   };
 }
 
-async function uploadDraftEmbeddedAsset(asset: DraftJsonEmbeddedAsset) {
-  const sourceResponse = await fetch(asset.dataUrl);
-
-  if (!sourceResponse.ok) {
-    throw new Error(`Не удалось прочитать вложенный файл «${asset.fileName}».`);
+function restoreDraftJsonAssets(
+  draft: AnyExerciseDraft,
+  assets: DraftJsonEmbeddedAsset[],
+) {
+  if (assets.length === 0) {
+    return draft;
   }
 
-  const blob = await sourceResponse.blob();
-  const uploadFile = new File(
-    [blob],
-    asset.fileName || "media.bin",
-    {
-      type: asset.contentType || blob.type || "application/octet-stream",
-    },
-  );
+  const assetUrlLookup = new Map<string, string>();
+
+  for (const asset of assets) {
+    assetUrlLookup.set(createDraftEmbeddedAssetUrl(asset.id), asset.dataUrl);
+    assetUrlLookup.set(asset.sourceUrl, asset.dataUrl);
+  }
+
+  return replaceDraftAssetUrls(draft, assetUrlLookup);
+}
+
+function isDataUrl(value: string) {
+  return value.trim().startsWith("data:");
+}
+
+function dataUrlToFile(
+  dataUrl: string,
+  fileName: string,
+  contentType?: string,
+) {
+  const trimmed = dataUrl.trim();
+  const match = trimmed.match(/^data:([^;,]+)?(;base64)?,([\s\S]*)$/);
+
+  if (!match) {
+    throw new Error(`Не удалось подготовить файл «${fileName}».`);
+  }
+
+  const [, detectedContentType, isBase64, payload] = match;
+  const resolvedContentType =
+    contentType || detectedContentType || "application/octet-stream";
+  let bytes: Uint8Array;
+
+  if (isBase64) {
+    const normalizedPayload = payload.replace(/\s+/g, "");
+    const decoded = atob(normalizedPayload);
+    bytes = new Uint8Array(decoded.length);
+
+    for (let index = 0; index < decoded.length; index += 1) {
+      bytes[index] = decoded.charCodeAt(index);
+    }
+  } else {
+    bytes = new TextEncoder().encode(decodeURIComponent(payload));
+  }
+
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+
+  return new File([buffer], fileName || "media.bin", {
+    type: resolvedContentType,
+  });
+}
+
+async function uploadDraftDataUrlAsset(input: {
+  contentType?: string;
+  dataUrl: string;
+  fileName: string;
+}) {
   const formData = new FormData();
-  formData.set("file", uploadFile);
+  formData.set(
+    "file",
+    dataUrlToFile(input.dataUrl, input.fileName, input.contentType),
+  );
 
   const uploadResponse = await fetch("/api/media/stored", {
     method: "POST",
@@ -273,30 +325,64 @@ async function uploadDraftEmbeddedAsset(asset: DraftJsonEmbeddedAsset) {
   if (!uploadResponse.ok || !uploadResult?.url) {
     throw new Error(
       uploadResult?.error ??
-        `Не удалось восстановить файл «${asset.fileName}» из JSON.`,
+        `Не удалось сохранить файл «${input.fileName}» на сервере.`,
     );
   }
 
   return uploadResult.url;
 }
 
-async function restoreDraftJsonAssets(
-  draft: AnyExerciseDraft,
-  assets: DraftJsonEmbeddedAsset[],
-) {
-  if (assets.length === 0) {
-    return draft;
-  }
+async function persistDraftEmbeddedVideoAssets(draft: AnyExerciseDraft) {
+  const uploadLookup = new Map<string, Promise<string>>();
 
-  const assetUrlLookup = new Map<string, string>();
+  const visit = async (value: unknown): Promise<unknown> => {
+    if (Array.isArray(value)) {
+      return Promise.all(value.map((item) => visit(item)));
+    }
 
-  for (const asset of assets) {
-    const restoredUrl = await uploadDraftEmbeddedAsset(asset);
-    assetUrlLookup.set(createDraftEmbeddedAssetUrl(asset.id), restoredUrl);
-    assetUrlLookup.set(asset.sourceUrl, restoredUrl);
-  }
+    if (!value || typeof value !== "object") {
+      return value;
+    }
 
-  return replaceDraftAssetUrls(draft, assetUrlLookup);
+    const record = value as Record<string, unknown>;
+    const rawKind = typeof record.kind === "string" ? record.kind : "";
+    const rawUrl = typeof record.url === "string" ? record.url.trim() : "";
+    const rawFileName =
+      typeof record.fileName === "string" && record.fileName.trim()
+        ? record.fileName.trim()
+        : "video.mp4";
+    const rawContentType =
+      typeof record.contentType === "string" ? record.contentType.trim() : undefined;
+
+    if (rawKind === "video" && rawUrl && isDataUrl(rawUrl)) {
+      if (!uploadLookup.has(rawUrl)) {
+        uploadLookup.set(
+          rawUrl,
+          uploadDraftDataUrlAsset({
+            contentType: rawContentType,
+            dataUrl: rawUrl,
+            fileName: rawFileName,
+          }),
+        );
+      }
+
+      return {
+        ...record,
+        url: await uploadLookup.get(rawUrl),
+      };
+    }
+
+    const entries = await Promise.all(
+      Object.entries(record).map(async ([key, currentValue]) => [
+        key,
+        await visit(currentValue),
+      ]),
+    );
+
+    return Object.fromEntries(entries);
+  };
+
+  return (await visit(structuredClone(draft))) as AnyExerciseDraft;
 }
 
 export function StudioEditor({
@@ -326,6 +412,7 @@ export function StudioEditor({
   const [dataError, setDataError] = useState<string | null>(null);
   const [notice, setNotice] = useState<EditorNotice | null>(null);
   const [exportTask, setExportTask] = useState<ExportTaskState | null>(null);
+  const [isDraftMediaPreparing, setIsDraftMediaPreparing] = useState(false);
   const [isJsonTransferBusy, setIsJsonTransferBusy] = useState(false);
   const [isPreviewFullscreen, setIsPreviewFullscreen] = useState(false);
   const [isMeshExportOpen, setIsMeshExportOpen] = useState(false);
@@ -335,7 +422,11 @@ export function StudioEditor({
   const isMatchingPairs = draft.type === "matching-pairs";
   const isClassification = draft.type === "group-assignment";
   const isCustomVisualEditor = isMatchingPairs || isClassification;
-  const isEditorBusy = isPending || Boolean(exportTask) || isJsonTransferBusy;
+  const isEditorBusy =
+    isPending ||
+    Boolean(exportTask) ||
+    isJsonTransferBusy ||
+    isDraftMediaPreparing;
   const matchingPairsData = isMatchingPairs
     ? (draft.data as MatchingPairsData)
     : null;
@@ -584,25 +675,40 @@ export function StudioEditor({
       return;
     }
 
-    const payload = {
-      id: currentId,
-      draft: resolvedDraft,
-      action,
-      variant: action === "export" ? variant : undefined,
-    };
-
     if (action === "export") {
-      void downloadExportArchive(endpoint, {
-        id: currentId,
-        draft: resolvedDraft,
-        action: "export",
-        variant,
-      });
+      void (async () => {
+        setIsDraftMediaPreparing(true);
+
+        try {
+          const preparedDraft = await persistDraftEmbeddedVideoAssets(resolvedDraft);
+          await downloadExportArchive(endpoint, {
+            id: currentId,
+            draft: preparedDraft,
+            action: "export",
+            variant,
+          });
+        } catch (error) {
+          showNotice(
+            error instanceof Error ? error.message : "Операция не завершилась.",
+            "mesh",
+          );
+        } finally {
+          setIsDraftMediaPreparing(false);
+        }
+      })();
       return;
     }
 
     startTransition(async () => {
+      setIsDraftMediaPreparing(true);
+
       try {
+        const preparedDraft = await persistDraftEmbeddedVideoAssets(resolvedDraft);
+        const payload = {
+          action,
+          draft: preparedDraft,
+          id: currentId,
+        };
         const response = await fetch(endpoint, {
           method: "POST",
           headers: {
@@ -680,6 +786,8 @@ export function StudioEditor({
           error instanceof Error ? error.message : "Операция не завершилась.",
           "draft",
         );
+      } finally {
+        setIsDraftMediaPreparing(false);
       }
     });
   };
@@ -748,7 +856,7 @@ export function StudioEditor({
         return;
       }
 
-      const restoredDraft = await restoreDraftJsonAssets(
+      const restoredDraft = restoreDraftJsonAssets(
         importedDraft,
         importedAssets,
       );
