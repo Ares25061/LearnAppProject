@@ -18,6 +18,14 @@ import {
   exerciseDefinitionMap,
   parseDraft,
 } from "@/lib/exercise-definitions";
+import {
+  collectDraftAssetSources,
+  createDraftEmbeddedAssetUrl,
+  DRAFT_JSON_FORMAT,
+  DRAFT_JSON_VERSION,
+  replaceDraftAssetUrls,
+  type DraftJsonEmbeddedAsset,
+} from "@/lib/draft-json";
 import type {
   AnyExerciseDraft,
   GroupAssignmentData,
@@ -110,6 +118,187 @@ function stripTransientObjectUrls<T>(value: T): T {
   return value;
 }
 
+type DraftJsonImportSource = {
+  assets?: unknown;
+  draft?: unknown;
+};
+
+function getBrowserOrigin() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const { origin, protocol } = window.location;
+  if ((protocol !== "http:" && protocol !== "https:") || !origin || origin === "null") {
+    return null;
+  }
+
+  return origin;
+}
+
+function blobToDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+
+      reject(new Error("Не удалось подготовить файл для JSON-экспорта."));
+    };
+
+    reader.onerror = () => {
+      reject(reader.error ?? new Error("Не удалось подготовить файл для JSON-экспорта."));
+    };
+
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function downloadDraftEmbeddedAsset(sourceUrl: string, fileName: string) {
+  const response = await fetch(sourceUrl);
+
+  if (!response.ok) {
+    throw new Error(`Не удалось прочитать файл «${fileName}» для JSON-экспорта.`);
+  }
+
+  const blob = await response.blob();
+  const contentType =
+    blob.type ||
+    response.headers.get("Content-Type")?.split(";")[0]?.trim() ||
+    "application/octet-stream";
+
+  return {
+    contentType,
+    dataUrl: await blobToDataUrl(blob),
+    fileName,
+  };
+}
+
+function parseDraftJsonEmbeddedAssets(input: unknown) {
+  if (!Array.isArray(input)) {
+    return [] as DraftJsonEmbeddedAsset[];
+  }
+
+  return input.flatMap((item) => {
+    if (!item || typeof item !== "object") {
+      return [];
+    }
+
+    const raw = item as Record<string, unknown>;
+    const id = typeof raw.id === "string" ? raw.id.trim() : "";
+    const sourceUrl = typeof raw.sourceUrl === "string" ? raw.sourceUrl.trim() : "";
+    const fileName = typeof raw.fileName === "string" ? raw.fileName.trim() : "";
+    const dataUrl = typeof raw.dataUrl === "string" ? raw.dataUrl.trim() : "";
+
+    if (!id || !sourceUrl || !fileName || !dataUrl) {
+      return [];
+    }
+
+    return [
+      {
+        contentType:
+          typeof raw.contentType === "string" && raw.contentType.trim()
+            ? raw.contentType.trim()
+            : undefined,
+        dataUrl,
+        fileName,
+        id,
+        sourceUrl,
+      } satisfies DraftJsonEmbeddedAsset,
+    ];
+  });
+}
+
+async function buildDraftJsonExportPayload(draft: AnyExerciseDraft) {
+  const assetSources = collectDraftAssetSources(draft, getBrowserOrigin());
+  const embeddedAssets: DraftJsonEmbeddedAsset[] = [];
+  const assetUrlLookup = new Map<string, string>();
+
+  for (const [index, assetSource] of assetSources.entries()) {
+    const assetId = `asset-${index + 1}`;
+    const embeddedAsset = await downloadDraftEmbeddedAsset(
+      assetSource.sourceUrl,
+      assetSource.fileName,
+    );
+
+    embeddedAssets.push({
+      ...embeddedAsset,
+      id: assetId,
+      sourceUrl: assetSource.sourceUrl,
+    });
+    assetUrlLookup.set(
+      assetSource.sourceUrl,
+      createDraftEmbeddedAssetUrl(assetId),
+    );
+  }
+
+  return {
+    assets: embeddedAssets,
+    draft: replaceDraftAssetUrls(structuredClone(draft), assetUrlLookup),
+    exportedAt: new Date().toISOString(),
+    format: DRAFT_JSON_FORMAT,
+    version: DRAFT_JSON_VERSION,
+  };
+}
+
+async function uploadDraftEmbeddedAsset(asset: DraftJsonEmbeddedAsset) {
+  const sourceResponse = await fetch(asset.dataUrl);
+
+  if (!sourceResponse.ok) {
+    throw new Error(`Не удалось прочитать вложенный файл «${asset.fileName}».`);
+  }
+
+  const blob = await sourceResponse.blob();
+  const uploadFile = new File(
+    [blob],
+    asset.fileName || "media.bin",
+    {
+      type: asset.contentType || blob.type || "application/octet-stream",
+    },
+  );
+  const formData = new FormData();
+  formData.set("file", uploadFile);
+
+  const uploadResponse = await fetch("/api/media/stored", {
+    method: "POST",
+    body: formData,
+  });
+  const uploadResult = (await uploadResponse.json().catch(() => null)) as
+    | { error?: string; url?: string }
+    | null;
+
+  if (!uploadResponse.ok || !uploadResult?.url) {
+    throw new Error(
+      uploadResult?.error ??
+        `Не удалось восстановить файл «${asset.fileName}» из JSON.`,
+    );
+  }
+
+  return uploadResult.url;
+}
+
+async function restoreDraftJsonAssets(
+  draft: AnyExerciseDraft,
+  assets: DraftJsonEmbeddedAsset[],
+) {
+  if (assets.length === 0) {
+    return draft;
+  }
+
+  const assetUrlLookup = new Map<string, string>();
+
+  for (const asset of assets) {
+    const restoredUrl = await uploadDraftEmbeddedAsset(asset);
+    assetUrlLookup.set(createDraftEmbeddedAssetUrl(asset.id), restoredUrl);
+    assetUrlLookup.set(asset.sourceUrl, restoredUrl);
+  }
+
+  return replaceDraftAssetUrls(draft, assetUrlLookup);
+}
+
 export function StudioEditor({
   initialDraft,
   user,
@@ -137,6 +326,7 @@ export function StudioEditor({
   const [dataError, setDataError] = useState<string | null>(null);
   const [notice, setNotice] = useState<EditorNotice | null>(null);
   const [exportTask, setExportTask] = useState<ExportTaskState | null>(null);
+  const [isJsonTransferBusy, setIsJsonTransferBusy] = useState(false);
   const [isPreviewFullscreen, setIsPreviewFullscreen] = useState(false);
   const [isMeshExportOpen, setIsMeshExportOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -145,7 +335,7 @@ export function StudioEditor({
   const isMatchingPairs = draft.type === "matching-pairs";
   const isClassification = draft.type === "group-assignment";
   const isCustomVisualEditor = isMatchingPairs || isClassification;
-  const isEditorBusy = isPending || Boolean(exportTask);
+  const isEditorBusy = isPending || Boolean(exportTask) || isJsonTransferBusy;
   const matchingPairsData = isMatchingPairs
     ? (draft.data as MatchingPairsData)
     : null;
@@ -341,11 +531,14 @@ export function StudioEditor({
     showNotice(nextNotice, "draft");
   };
 
-  const resolveCurrentDraft = () => {
+  const resolveCurrentDraft = (options?: { stripTransientUrls?: boolean }) => {
     if (isCustomVisualEditor) {
+      const shouldStripTransientUrls = options?.stripTransientUrls !== false;
       return {
         ...draft,
-        data: stripTransientObjectUrls(draft.data),
+        data: shouldStripTransientUrls
+          ? stripTransientObjectUrls(draft.data)
+          : draft.data,
       } as AnyExerciseDraft;
     }
 
@@ -491,31 +684,39 @@ export function StudioEditor({
     });
   };
 
-  const handleJsonExport = () => {
-    const resolvedDraft = resolveCurrentDraft();
+  const handleJsonExport = async () => {
+    const resolvedDraft = resolveCurrentDraft({ stripTransientUrls: false });
     if (!resolvedDraft) {
       return;
     }
 
-    const exportPayload = {
-      format: "learningapps-studio/draft",
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      draft: resolvedDraft,
-    };
+    setIsJsonTransferBusy(true);
 
-    const blob = new Blob([JSON.stringify(exportPayload, null, 2)], {
-      type: "application/json",
-    });
-    const downloadUrl = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = downloadUrl;
-    anchor.download = `${safeFilename(resolvedDraft.title)}.json`;
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(downloadUrl);
-    showNotice("JSON-экспорт скачан.");
+    try {
+      const exportPayload = await buildDraftJsonExportPayload(resolvedDraft);
+      const blob = new Blob([JSON.stringify(exportPayload, null, 2)], {
+        type: "application/json",
+      });
+      const downloadUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = downloadUrl;
+      anchor.download = `${safeFilename(resolvedDraft.title)}.json`;
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(downloadUrl);
+      showNotice(
+        exportPayload.assets.length > 0
+          ? "JSON-экспорт скачан вместе с вложенными файлами."
+          : "JSON-экспорт скачан.",
+      );
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : "Не удалось скачать JSON.",
+      );
+    } finally {
+      setIsJsonTransferBusy(false);
+    }
   };
 
   const handleJsonImport = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -526,10 +727,16 @@ export function StudioEditor({
       return;
     }
 
+    setIsJsonTransferBusy(true);
+
     try {
       const source = JSON.parse(await file.text()) as
-        | { draft?: unknown }
+        | DraftJsonImportSource
         | AnyExerciseDraft;
+      const importedAssets =
+        source && typeof source === "object" && "assets" in source
+          ? parseDraftJsonEmbeddedAssets(source.assets)
+          : [];
       const importedDraft = parseDraft(
         source && typeof source === "object" && "draft" in source
           ? source.draft
@@ -541,14 +748,25 @@ export function StudioEditor({
         return;
       }
 
-      setDraft(importedDraft);
-      setDataText(JSON.stringify(importedDraft.data, null, 2));
+      const restoredDraft = await restoreDraftJsonAssets(
+        importedDraft,
+        importedAssets,
+      );
+
+      setDraft(restoredDraft);
+      setDataText(JSON.stringify(restoredDraft.data, null, 2));
       setDataError(null);
-      showNotice("Черновик импортирован из JSON.");
+      showNotice(
+        importedAssets.length > 0
+          ? "Черновик импортирован вместе со своими файлами."
+          : "Черновик импортирован из JSON.",
+      );
     } catch (error) {
       showNotice(
         error instanceof Error ? error.message : "Не удалось импортировать JSON.",
       );
+    } finally {
+      setIsJsonTransferBusy(false);
     }
   };
 
