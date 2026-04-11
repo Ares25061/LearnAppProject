@@ -14,6 +14,7 @@ import {
 } from "@/lib/media-conversion";
 import { getConvertibleAudioProvider } from "@/lib/media-audio";
 import { normalizeMatchingSide } from "@/lib/matching-pairs";
+import { readStoredMediaAssetFromUrl } from "@/lib/stored-media";
 import type {
   AnyExerciseDraft,
   ClassificationGroupBackground,
@@ -671,6 +672,20 @@ async function localizeDraftForOfflineExport(input: AnyExerciseDraft) {
       );
     }
 
+    const storedMediaAsset = await readStoredMediaAssetFromUrl(source);
+    if (storedMediaAsset) {
+      return persistArchiveAsset(
+        kind,
+        {
+          buffer: storedMediaAsset.buffer,
+          contentType: storedMediaAsset.contentType,
+          url: source,
+        },
+        source,
+        storedMediaAsset.extension,
+      );
+    }
+
     if (!isExternalOrEmbeddedResource(source)) {
       throw new ScormArchiveError(
         `Автономный SCORM не может упаковать относительный ресурс ${source}. Используйте абсолютную ссылку или загрузите файл в редакторе.`,
@@ -1148,16 +1163,30 @@ async function prepareHostlessDraftForArchive(input: AnyExerciseDraft) {
     }
 
     const nextPromise = (async () => {
+      if (source.toLowerCase().startsWith("data:")) {
+        return persistArchiveAsset("video", decodeDataUrl(source), source);
+      }
+
+      const storedMediaAsset = await readStoredMediaAssetFromUrl(source);
+      if (storedMediaAsset) {
+        return persistArchiveAsset(
+          "video",
+          {
+            buffer: storedMediaAsset.buffer,
+            contentType: storedMediaAsset.contentType,
+            url: source,
+          },
+          source,
+          storedMediaAsset.extension,
+        );
+      }
+
       let parsedUrl: URL;
 
       try {
         parsedUrl = new URL(source);
       } catch {
         return source;
-      }
-
-      if (source.toLowerCase().startsWith("data:")) {
-        return persistArchiveAsset("video", decodeDataUrl(source), source);
       }
 
       try {
