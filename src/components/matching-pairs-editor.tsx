@@ -38,6 +38,13 @@ const matchingConnectorStyleOptions: Array<{
   { id: "circle", label: "Кружок" },
 ];
 
+type PendingMediaUpload = {
+  fileName: string;
+  kind: "image" | "audio" | "video";
+  previewUrl: string;
+  requestId: number;
+};
+
 function MatchingTypeIcon({
   kind,
 }: Readonly<{
@@ -348,6 +355,31 @@ async function uploadStoredMediaFile(file: File) {
   return result.url;
 }
 
+function createPendingMediaPreviewUrl(
+  kind: "image" | "audio" | "video",
+  file: File,
+) {
+  return kind === "image" ? URL.createObjectURL(file) : "";
+}
+
+function revokePendingMediaPreviewUrl(url: string) {
+  if (url.startsWith("blob:")) {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function getPendingMediaStatus(kind: "image" | "audio" | "video") {
+  switch (kind) {
+    case "image":
+      return "Изображение обрабатывается...";
+    case "audio":
+      return "Аудио обрабатывается...";
+    case "video":
+    default:
+      return "Видео загружается...";
+  }
+}
+
 function isAcceptedMediaFile(
   kind: "image" | "audio" | "video",
   file: File,
@@ -505,7 +537,12 @@ function MatchingSideFieldsCompact({
 }>) {
   const [isMediaDialogOpen, setIsMediaDialogOpen] = useState(false);
   const [isMediaDropActive, setIsMediaDropActive] = useState(false);
+  const [pendingMediaUpload, setPendingMediaUpload] =
+    useState<PendingMediaUpload | null>(null);
   const mediaInputRef = useRef<HTMLInputElement | null>(null);
+  const latestContentRef = useRef(content);
+  const nextUploadRequestIdRef = useRef(0);
+  const previewUrlRef = useRef<string>("");
   const activeOption =
     matchingContentOptions.find((option) => option.id === content.kind) ??
     matchingContentOptions[0];
@@ -521,12 +558,49 @@ function MatchingSideFieldsCompact({
   const videoContent = content.kind === "video" ? content : null;
   const isMediaContent = mediaContent !== null;
   const isMediaDialogVisible = isMediaContent && isMediaDialogOpen;
-  const hasEmbeddedFile = Boolean(mediaContent?.url.trim().startsWith("data:"));
-  const hasStoredFile = Boolean(mediaContent && isStoredMediaUrl(mediaContent.url));
-  const hasUploadedFile = hasEmbeddedFile || hasStoredFile;
-  const selectedFileLabel = mediaContent?.fileName?.trim() ?? "";
+  const activePendingMediaUpload =
+    mediaContent && pendingMediaUpload?.kind === mediaContent.kind
+      ? pendingMediaUpload
+      : null;
+  const effectiveMediaUrl =
+    activePendingMediaUpload?.previewUrl || mediaContent?.url || "";
+  const hasEmbeddedFile = Boolean(effectiveMediaUrl.trim().startsWith("data:"));
+  const hasStoredFile = Boolean(
+    mediaContent && isStoredMediaUrl(mediaContent.url),
+  );
+  const hasUploadedFile =
+    hasEmbeddedFile || hasStoredFile || Boolean(activePendingMediaUpload);
+  const selectedFileLabel =
+    activePendingMediaUpload?.fileName ||
+    mediaContent?.fileName?.trim() ||
+    "";
   const mediaUi = mediaContent ? getMatchingMediaUi(mediaContent.kind) : null;
   const mediaUrlValue = hasUploadedFile ? "" : mediaContent?.url ?? "";
+
+  useEffect(() => {
+    latestContentRef.current = content;
+  }, [content]);
+
+  useEffect(() => {
+    const nextPreviewUrl = pendingMediaUpload?.previewUrl ?? "";
+    if (
+      previewUrlRef.current &&
+      previewUrlRef.current !== nextPreviewUrl
+    ) {
+      revokePendingMediaPreviewUrl(previewUrlRef.current);
+    }
+
+    previewUrlRef.current = nextPreviewUrl;
+  }, [pendingMediaUpload?.previewUrl]);
+
+  useEffect(
+    () => () => {
+      if (previewUrlRef.current) {
+        revokePendingMediaPreviewUrl(previewUrlRef.current);
+      }
+    },
+    [],
+  );
 
   const setField = (
     field: "text" | "url" | "alt" | "label",
@@ -568,45 +642,100 @@ function MatchingSideFieldsCompact({
       return;
     }
 
+    const requestId = nextUploadRequestIdRef.current + 1;
+    nextUploadRequestIdRef.current = requestId;
+    const baseLabel = getBaseFileLabel(file.name);
+    const previewUrl = createPendingMediaPreviewUrl(kind, file);
+
     try {
+      setPendingMediaUpload({
+        fileName: file.name,
+        kind,
+        previewUrl,
+        requestId,
+      });
+
+      const latestContent = latestContentRef.current;
+      if (kind === "image" && latestContent.kind === "image") {
+        onChange({
+          ...latestContent,
+          alt: latestContent.alt.trim() ? latestContent.alt : baseLabel,
+          fileName: file.name,
+        });
+      } else if (kind === "audio" && latestContent.kind === "audio") {
+        onChange({
+          ...latestContent,
+          label: latestContent.label.trim() ? latestContent.label : baseLabel,
+          fileName: file.name,
+        });
+      } else if (kind === "video" && latestContent.kind === "video") {
+        onChange({
+          ...latestContent,
+          label: latestContent.label.trim() ? latestContent.label : baseLabel,
+          fileName: file.name,
+        });
+      }
+
       const storedUrl =
         kind === "video"
           ? await uploadStoredMediaFile(file)
           : await readFileAsDataUrl(file);
-      const baseLabel = getBaseFileLabel(file.name);
 
-      if (kind === "image" && content.kind === "image") {
+      if (nextUploadRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      const currentContent = latestContentRef.current;
+
+      if (kind === "image" && currentContent.kind === "image") {
         onChange({
-          ...content,
+          ...currentContent,
           url: storedUrl,
-          alt: content.alt.trim() ? content.alt : baseLabel,
+          alt: currentContent.alt.trim() ? currentContent.alt : baseLabel,
           fileName: file.name,
         });
+        setPendingMediaUpload((current) =>
+          current?.requestId === requestId ? null : current,
+        );
         onNotice?.("Изображение встроено в карточку.");
         return;
       }
 
-      if (kind === "audio" && content.kind === "audio") {
+      if (kind === "audio" && currentContent.kind === "audio") {
         onChange({
-          ...content,
+          ...currentContent,
           url: storedUrl,
-          label: content.label.trim() ? content.label : baseLabel,
+          label: currentContent.label.trim() ? currentContent.label : baseLabel,
           fileName: file.name,
         });
+        setPendingMediaUpload((current) =>
+          current?.requestId === requestId ? null : current,
+        );
         onNotice?.("Аудиофайл встроен в карточку.");
         return;
       }
 
-      if (kind === "video" && content.kind === "video") {
+      if (kind === "video" && currentContent.kind === "video") {
         onChange({
-          ...content,
+          ...currentContent,
           url: storedUrl,
-          label: content.label.trim() ? content.label : baseLabel,
+          label: currentContent.label.trim() ? currentContent.label : baseLabel,
           fileName: file.name,
         });
+        setPendingMediaUpload((current) =>
+          current?.requestId === requestId ? null : current,
+        );
         onNotice?.("Видеофайл загружен и прикреплен к карточке.");
+        return;
       }
+
+      setPendingMediaUpload((current) =>
+        current?.requestId === requestId ? null : current,
+      );
     } catch (error) {
+      setPendingMediaUpload((current) =>
+        current?.requestId === requestId ? null : current,
+      );
       onNotice?.(
         error instanceof Error
           ? error.message
@@ -706,7 +835,23 @@ function MatchingSideFieldsCompact({
   const dropZoneText = selectedFileLabel
     ? mediaUi?.dropReplaceText || ""
     : "Нажмите, чтобы выбрать файл в проводнике, или просто перетащите его сюда";
-  const mediaSummary = mediaContent ? getMatchingMediaSummary(mediaContent) : null;
+  const mediaSummaryBase = mediaContent
+    ? getMatchingMediaSummary({
+        ...mediaContent,
+        fileName:
+          activePendingMediaUpload?.fileName || mediaContent.fileName,
+        url: effectiveMediaUrl,
+      })
+    : null;
+  const mediaSummary = mediaSummaryBase
+    ? activePendingMediaUpload
+      ? {
+          ...mediaSummaryBase,
+          hasMedia: true,
+          meta: getPendingMediaStatus(activePendingMediaUpload.kind),
+        }
+      : mediaSummaryBase
+    : null;
 
   return (
     <div className="matching-editor-side matching-editor-side--compact">
@@ -729,9 +874,9 @@ function MatchingSideFieldsCompact({
               type="button"
               onClick={() => setIsMediaDialogOpen(true)}
             >
-              {imageContent && imageContent.url.trim() ? (
+              {imageContent && effectiveMediaUrl.trim() ? (
                 <span className="matching-editor-media-summary__preview matching-editor-media-summary__preview--image">
-                  <img alt={mediaSummary.title} src={imageContent.url} />
+                  <img alt={mediaSummary.title} src={effectiveMediaUrl} />
                 </span>
               ) : (
                 <span className="matching-editor-media-summary__preview">
