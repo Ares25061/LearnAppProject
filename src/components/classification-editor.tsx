@@ -360,7 +360,7 @@ function ContentEditor({
         onChange({
           ...latestContent,
           url: previewUrl,
-          label: latestContent.label.trim() ? latestContent.label : baseLabel,
+          label: latestContent.label,
           fileName: file.name,
         });
       }
@@ -394,7 +394,7 @@ function ContentEditor({
         onChange({
           ...currentContent,
           url: storedUrl,
-          label: currentContent.label.trim() ? currentContent.label : baseLabel,
+          label: currentContent.label,
           fileName: file.name,
         });
       }

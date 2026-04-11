@@ -675,7 +675,7 @@ function MatchingSideFieldsCompact({
         onChange({
           ...latestContent,
           url: previewUrl,
-          label: latestContent.label.trim() ? latestContent.label : baseLabel,
+          label: latestContent.label,
           fileName: file.name,
         });
       }
@@ -723,7 +723,7 @@ function MatchingSideFieldsCompact({
         onChange({
           ...currentContent,
           url: storedUrl,
-          label: currentContent.label.trim() ? currentContent.label : baseLabel,
+          label: currentContent.label,
           fileName: file.name,
         });
         setPendingMediaUpload((current) =>
