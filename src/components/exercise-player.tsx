@@ -79,6 +79,37 @@ type ActivityProps<T extends ExerciseTypeId> = {
   boardOnly?: boolean;
 };
 
+type MatchingYouTubePlayerEvent = {
+  target: MatchingYouTubePlayer;
+  data?: unknown;
+};
+
+type MatchingYouTubePlayer = {
+  destroy: () => void;
+  getVolume: () => number;
+  setVolume: (volume: number) => void;
+  unMute: () => void;
+};
+
+type MatchingYouTubeApi = {
+  Player: new (
+    target: HTMLIFrameElement | string,
+    options?: {
+      events?: {
+        onReady?: (event: MatchingYouTubePlayerEvent) => void;
+      };
+    },
+  ) => MatchingYouTubePlayer;
+};
+
+declare global {
+  interface Window {
+    YT?: MatchingYouTubeApi;
+    onYouTubeIframeAPIReady?: () => void;
+    __learnAppYouTubeIframeApiPromise__?: Promise<MatchingYouTubeApi>;
+  }
+}
+
 function normalizeRememberedMediaVolume(value: unknown, fallback = MATCHING_AUDIO_VOLUME_DEFAULT) {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return clamp(fallback, 0, 100);
@@ -151,6 +182,84 @@ function rememberMediaVolume(nextVolume: number) {
   }
 
   return normalizedVolume;
+}
+
+function loadMatchingYouTubeIframeApi() {
+  if (typeof window === "undefined") {
+    return Promise.reject(new Error("YouTube IFrame API доступен только в браузере."));
+  }
+
+  if (window.YT?.Player) {
+    return Promise.resolve(window.YT);
+  }
+
+  if (window.__learnAppYouTubeIframeApiPromise__) {
+    return window.__learnAppYouTubeIframeApiPromise__;
+  }
+
+  let script = document.querySelector(
+    'script[src="https://www.youtube.com/iframe_api"]',
+  ) as HTMLScriptElement | null;
+  if (!(script instanceof HTMLScriptElement)) {
+    script = document.createElement("script");
+    script.src = "https://www.youtube.com/iframe_api";
+    script.async = true;
+    document.head.appendChild(script);
+  }
+
+  const previousReady = window.onYouTubeIframeAPIReady;
+  let resolvePromise: ((api: MatchingYouTubeApi) => void) | null = null;
+  let rejectPromise: ((error: Error) => void) | null = null;
+
+  const promise = new Promise<MatchingYouTubeApi>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+
+  const cleanup = () => {
+    if (timeoutId !== null) {
+      window.clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+
+    script.removeEventListener("error", handleError);
+  };
+
+  const resolveApi = () => {
+    if (!window.YT?.Player) {
+      return false;
+    }
+
+    cleanup();
+    resolvePromise?.(window.YT);
+    return true;
+  };
+
+  const handleError = () => {
+    cleanup();
+    delete window.__learnAppYouTubeIframeApiPromise__;
+    rejectPromise?.(new Error("Не удалось загрузить YouTube IFrame API."));
+  };
+
+  let timeoutId: number | null = window.setTimeout(() => {
+    cleanup();
+    delete window.__learnAppYouTubeIframeApiPromise__;
+    rejectPromise?.(new Error("YouTube IFrame API не ответил вовремя."));
+  }, 15000);
+
+  window.onYouTubeIframeAPIReady = () => {
+    previousReady?.();
+    resolveApi();
+  };
+
+  script.addEventListener("error", handleError, { once: true });
+
+  window.__learnAppYouTubeIframeApiPromise__ = promise;
+  void Promise.resolve().then(() => {
+    void resolveApi();
+  });
+
+  return promise;
 }
 
 function useRememberedMediaVolume(initialVolume: number, resetKey: string) {
@@ -1222,7 +1331,11 @@ function getMatchingMediaType(
   if (dataMimeType) {
     if (
       kind === "audio" &&
-      (dataMimeType.startsWith("audio/") || dataMimeType === "video/mp4")
+      (
+        dataMimeType.startsWith("audio/") ||
+        dataMimeType === "video/mp4" ||
+        dataMimeType === "video/webm"
+      )
     ) {
       return dataMimeType;
     }
@@ -1245,6 +1358,9 @@ function getMatchingMediaType(
     }
     if (normalized.endsWith(".m4a")) {
       return "audio/mp4";
+    }
+    if (normalized.endsWith(".webm")) {
+      return "audio/webm";
     }
     if (normalized.endsWith(".wav")) {
       return "audio/wav";
@@ -1881,6 +1997,15 @@ function isMatchingInteractiveTarget(target: EventTarget | null) {
     target instanceof Element &&
     Boolean(target.closest("[data-card-interactive='true']"))
   );
+}
+
+function getMatchingInteractiveElement(target: EventTarget | null) {
+  if (!(target instanceof Element)) {
+    return null;
+  }
+
+  const interactiveElement = target.closest("[data-card-interactive='true']");
+  return interactiveElement instanceof HTMLElement ? interactiveElement : null;
 }
 
 function isMatchingHardInteractiveTarget(target: EventTarget | null) {
@@ -2639,13 +2764,69 @@ function MatchingEmbeddedVideoFrame({
   title: string;
 }>) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
+  const youtubePlayerRef = useRef<MatchingYouTubePlayer | null>(null);
+  const isYouTubePlayerReadyRef = useRef(false);
   const lastIframeVolumeRef = useRef<number | null>(null);
   const [volume] = useRememberedMediaVolume(
     MATCHING_AUDIO_VOLUME_DEFAULT,
     `${meta.provider}:${meta.embedUrl}`,
   );
+  const syncRememberedYouTubeVolume = useEffectEvent((nextVolume: unknown) => {
+    const normalizedVolume = normalizeRememberedMediaVolume(
+      typeof nextVolume === "number" ? nextVolume : Number(nextVolume),
+    );
+    if (lastIframeVolumeRef.current === normalizedVolume) {
+      return;
+    }
+
+    lastIframeVolumeRef.current = normalizedVolume;
+    rememberMediaVolume(normalizedVolume);
+  });
   const syncYouTubeVolume = useEffectEvent(() => {
     if (meta.provider !== "youtube") {
+      return;
+    }
+
+    const player = youtubePlayerRef.current;
+    const iframe = frameRef.current;
+    if (!iframe) {
+      return;
+    }
+
+    const nextVolume = Math.round(volume);
+    lastIframeVolumeRef.current = nextVolume;
+    if (player && isYouTubePlayerReadyRef.current) {
+      try {
+        player.unMute();
+        player.setVolume(nextVolume);
+        return;
+      } catch {
+        // Fall back to direct postMessage commands below.
+      }
+    }
+
+    postMatchingYouTubeCommand(iframe, "unMute");
+    postMatchingYouTubeCommand(iframe, "setVolume", [nextVolume]);
+  });
+  const pollYouTubeVolume = useEffectEvent(() => {
+    if (meta.provider !== "youtube") {
+      return;
+    }
+
+    const player = youtubePlayerRef.current;
+    if (!player || !isYouTubePlayerReadyRef.current) {
+      return;
+    }
+
+    try {
+      syncRememberedYouTubeVolume(player.getVolume());
+    } catch {
+      // Ignore transient YouTube API errors while the iframe is reloading.
+    }
+  });
+
+  useEffect(() => {
+    if (meta.provider !== "youtube" || typeof window === "undefined") {
       return;
     }
 
@@ -2654,11 +2835,62 @@ function MatchingEmbeddedVideoFrame({
       return;
     }
 
-    const nextVolume = Math.round(volume);
-    lastIframeVolumeRef.current = nextVolume;
-    postMatchingYouTubeCommand(iframe, "unMute");
-    postMatchingYouTubeCommand(iframe, "setVolume", [nextVolume]);
-  });
+    let cancelled = false;
+    let volumePollId: number | null = null;
+    let player: MatchingYouTubePlayer | null = null;
+    isYouTubePlayerReadyRef.current = false;
+    youtubePlayerRef.current = null;
+
+    void loadMatchingYouTubeIframeApi()
+      .then((api) => {
+        if (cancelled) {
+          return;
+        }
+
+        player = new api.Player(iframe, {
+          events: {
+            onReady: () => {
+              if (cancelled || !player) {
+                return;
+              }
+
+              youtubePlayerRef.current = player;
+              isYouTubePlayerReadyRef.current = true;
+              syncYouTubeVolume();
+              pollYouTubeVolume();
+              volumePollId = window.setInterval(() => {
+                pollYouTubeVolume();
+              }, 500);
+            },
+          },
+        });
+
+        youtubePlayerRef.current = player;
+      })
+      .catch(() => {
+        youtubePlayerRef.current = null;
+        isYouTubePlayerReadyRef.current = false;
+      });
+
+    return () => {
+      cancelled = true;
+      isYouTubePlayerReadyRef.current = false;
+
+      if (volumePollId !== null) {
+        window.clearInterval(volumePollId);
+      }
+
+      const currentPlayer = player ?? youtubePlayerRef.current;
+      youtubePlayerRef.current = null;
+      if (currentPlayer) {
+        try {
+          currentPlayer.destroy();
+        } catch {
+          // Ignore cleanup errors from the YouTube widget.
+        }
+      }
+    };
+  }, [meta.embedUrl, meta.provider]);
 
   useEffect(() => {
     if (meta.provider !== "youtube") {
@@ -2706,15 +2938,19 @@ function MatchingEmbeddedVideoFrame({
     }
 
     const handleMessage = (event: MessageEvent) => {
-      if (event.source !== iframe.contentWindow || typeof event.data !== "string") {
+      if (event.source !== iframe.contentWindow) {
         return;
       }
 
       let payload: unknown;
-      try {
-        payload = JSON.parse(event.data);
-      } catch {
-        return;
+      if (typeof event.data === "string") {
+        try {
+          payload = JSON.parse(event.data);
+        } catch {
+          return;
+        }
+      } else {
+        payload = event.data;
       }
 
       if (!payload || typeof payload !== "object") {
@@ -2728,13 +2964,7 @@ function MatchingEmbeddedVideoFrame({
         return;
       }
 
-      const normalizedVolume = normalizeRememberedMediaVolume(nextVolume);
-      if (lastIframeVolumeRef.current === normalizedVolume) {
-        return;
-      }
-
-      lastIframeVolumeRef.current = normalizedVolume;
-      rememberMediaVolume(normalizedVolume);
+      syncRememberedYouTubeVolume(nextVolume);
     };
 
     window.addEventListener("message", handleMessage);
@@ -2948,13 +3178,16 @@ const MatchingCardContent = memo(function MatchingCardContent({
         normalized.label.trim() ||
         getMatchingMediaSourceLabel(normalized.url) ||
         "Аудио";
+      const audioCardLabel = "Прослушать звук";
       return (
         <div className={contentClassName}>
           <div className="matching-card-media-frame matching-card-media-frame--audio">
             {normalized.url && canPlayAudio ? (
               <button
-                className="ghost-button matching-media-launch matching-media-launch--audio"
+                aria-label={audioTitle ? `${audioCardLabel}: ${audioTitle}` : audioCardLabel}
+                className="ghost-button matching-media-launch matching-media-launch--audio matching-media-launch--audio-simple"
                 data-card-interactive="true"
+                title={audioTitle}
                 type="button"
                 onClick={(event) => {
                   event.stopPropagation();
@@ -2962,16 +3195,8 @@ const MatchingCardContent = memo(function MatchingCardContent({
                 }}
               >
                 <span className="matching-media-launch__icon">{"\u25b6"}</span>
-                <span className="matching-media-launch__body">
-                  <span
-                    className="matching-media-launch__title"
-                    title={audioTitle}
-                  >
-                    {audioTitle}
-                  </span>
-                  <span className="matching-media-launch__hint">
-                    {"\u041e\u0442\u043a\u0440\u044b\u0442\u044c \u0430\u0443\u0434\u0438\u043e"}
-                  </span>
+                <span className="matching-media-launch__simple-label">
+                  {audioCardLabel}
                 </span>
               </button>
             ) : normalized.url ? (
@@ -3285,6 +3510,7 @@ function MatchingPairsActivity({
     startY: number;
     active: boolean;
     startedOnInteractive: boolean;
+    interactiveElement: HTMLElement | null;
   } | null>(null);
   const boardMetrics = useMemo(
     () => getMatchingBoardMetrics(boardSize),
@@ -3739,7 +3965,7 @@ function MatchingPairsActivity({
     dragRef.current = null;
   };
 
-  const applyDragMove = useEffectEvent(() => {
+  const applyDragMove = () => {
     const currentDrag = dragRef.current;
     const pendingPoint = pendingDragPointRef.current;
     if (!currentDrag || !currentDrag.active || !pendingPoint) {
@@ -3764,9 +3990,9 @@ function MatchingPairsActivity({
         };
       }),
     );
-  });
+  };
 
-  const scheduleDragMove = useEffectEvent(() => {
+  const scheduleDragMove = () => {
     if (typeof window === "undefined" || dragFrameRef.current !== null) {
       return;
     }
@@ -3775,16 +4001,16 @@ function MatchingPairsActivity({
       dragFrameRef.current = null;
       applyDragMove();
     });
-  });
+  };
 
-  const flushPendingDragMove = useEffectEvent(() => {
+  const flushPendingDragMove = () => {
     if (typeof window !== "undefined" && dragFrameRef.current !== null) {
       window.cancelAnimationFrame(dragFrameRef.current);
       dragFrameRef.current = null;
     }
 
     applyDragMove();
-  });
+  };
 
   const beginDrag = (
     event: ReactPointerEvent<HTMLDivElement>,
@@ -3808,7 +4034,9 @@ function MatchingPairsActivity({
       startY: event.clientY,
       active: false,
       startedOnInteractive: isMatchingInteractiveTarget(event.target),
+      interactiveElement: getMatchingInteractiveElement(event.target),
     };
+    event.currentTarget.setPointerCapture(event.pointerId);
     pendingDragPointRef.current = {
       clientX: event.clientX,
       clientY: event.clientY,
@@ -3926,7 +4154,6 @@ function MatchingPairsActivity({
                   }
 
                   event.preventDefault();
-                  event.currentTarget.setPointerCapture(event.pointerId);
                   setHasChecked(false);
                   setBoardResultVisible(false);
                   setDraggingGroupId(card.groupId);
@@ -3949,7 +4176,7 @@ function MatchingPairsActivity({
                   return;
                 }
 
-                if (currentDrag.active && event.currentTarget.hasPointerCapture(event.pointerId)) {
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
                   event.currentTarget.releasePointerCapture(event.pointerId);
                 }
 
@@ -3962,11 +4189,22 @@ function MatchingPairsActivity({
                   setCards((current) => snapIfMatched(current, currentDrag.groupId));
                 }
 
+                const shouldReplayInteractiveClick =
+                  currentDrag.startedOnInteractive && !currentDrag.active;
+                const interactiveElement = currentDrag.interactiveElement;
                 pendingDragPointRef.current = null;
                 dragRef.current = null;
                 setDraggingGroupId(null);
+
+                if (shouldReplayInteractiveClick) {
+                  interactiveElement?.click();
+                }
               }}
-              onPointerCancel={() => {
+              onPointerCancel={(event) => {
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                  event.currentTarget.releasePointerCapture(event.pointerId);
+                }
+
                 if (typeof window !== "undefined" && dragFrameRef.current !== null) {
                   window.cancelAnimationFrame(dragFrameRef.current);
                   dragFrameRef.current = null;

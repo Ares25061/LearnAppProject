@@ -386,7 +386,7 @@ function getClassificationMediaUi(kind: "image" | "audio" | "video") {
 
   if (kind === "audio") {
     return {
-      accept: "audio/*,video/mp4,.mp3,.mp4,.m4a,.wav,.ogg",
+      accept: "audio/*,video/mp4,video/webm,.mp3,.mp4,.m4a,.webm,.wav,.ogg",
       description: "Выберите аудио файлом или вставьте ссылку на источник.",
       detailLabel: "Название",
       detailPlaceholder: "Как подписать аудио",
@@ -394,7 +394,7 @@ function getClassificationMediaUi(kind: "image" | "audio" | "video") {
       dropReplaceText:
         "Нажмите, чтобы заменить аудио, или перетащите новый файл сюда",
       dropTitle: "Перетащите аудио сюда",
-      formatsHint: "MP3, MP4, M4A, WAV, OGG",
+      formatsHint: "MP3, MP4, M4A, WEBM, WAV, OGG",
       note: "Громкость задаётся для карточки и сохранится в упражнении.",
       urlLabel: "Ссылка на аудио",
     };
@@ -483,9 +483,11 @@ function isAcceptedMediaFile(
     return (
       mimeType.startsWith("audio/") ||
       mimeType === "video/mp4" ||
+      mimeType === "video/webm" ||
       fileName.endsWith(".mp3") ||
       fileName.endsWith(".mp4") ||
       fileName.endsWith(".m4a") ||
+      fileName.endsWith(".webm") ||
       fileName.endsWith(".wav") ||
       fileName.endsWith(".ogg")
     );
@@ -709,7 +711,7 @@ function ContentEditor({
       }
 
       const storedUrl =
-        content.kind === "video"
+        content.kind === "audio" || content.kind === "video"
           ? await uploadStoredMediaFile(file)
           : await readFileAsDataUrl(file);
 
@@ -749,7 +751,9 @@ function ContentEditor({
       onNotice?.(
         content.kind === "video"
           ? "Видеофайл загружен и прикреплен к карточке."
-          : "Файл встроен в карточку.",
+          : content.kind === "audio"
+            ? "Аудиофайл загружен и прикреплен к карточке."
+            : "Файл встроен в карточку.",
       );
     } catch (error) {
       if (nextUploadRequestIdRef.current === requestId) {
@@ -878,7 +882,7 @@ function ContentEditor({
                 content.kind === "image"
                   ? "image/*"
                   : content.kind === "audio"
-                    ? "audio/*,video/mp4,.mp3,.mp4,.m4a,.wav,.ogg"
+                    ? "audio/*,video/mp4,video/webm,.mp3,.mp4,.m4a,.webm,.wav,.ogg"
                     : "video/*,.mp4,.webm,.ogv,.ogg"
               }
               className="editor-input"
@@ -1020,7 +1024,7 @@ function getClassificationMediaUiCompact(kind: "image" | "audio" | "video") {
 
   if (kind === "audio") {
     return {
-      accept: "audio/*,video/mp4,.mp3,.mp4,.m4a,.wav,.ogg",
+      accept: "audio/*,video/mp4,video/webm,.mp3,.mp4,.m4a,.webm,.wav,.ogg",
       description: "Выберите аудио файлом или вставьте ссылку на источник.",
       detailLabel: "Название",
       detailPlaceholder: "Как подписать аудио",
@@ -1028,7 +1032,7 @@ function getClassificationMediaUiCompact(kind: "image" | "audio" | "video") {
       dropReplaceText:
         "Нажмите, чтобы заменить аудио, или перетащите новый файл сюда",
       dropTitle: "Перетащите аудио сюда",
-      formatsHint: "MP3, MP4, M4A, WAV, OGG",
+      formatsHint: "MP3, MP4, M4A, WEBM, WAV, OGG",
       note: "Громкость сохраняется вместе с карточкой.",
       urlLabel: "Ссылка на аудио",
     };
@@ -1282,7 +1286,7 @@ function CompactClassificationContentEditor({
       }
 
       const storedUrl =
-        kind === "video"
+        kind === "audio" || kind === "video"
           ? await uploadStoredMediaFile(file)
           : await readFileAsDataUrl(file);
 
@@ -1316,7 +1320,7 @@ function CompactClassificationContentEditor({
         setPendingMediaUpload((current) =>
           current?.requestId === requestId ? null : current,
         );
-        onNotice?.("Аудиофайл встроен в карточку.");
+        onNotice?.("Аудиофайл загружен и прикреплен к карточке.");
         return;
       }
 
