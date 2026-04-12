@@ -6,7 +6,6 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
-import { createRequire } from "node:module";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { getConvertibleAudioProvider, getYouTubeVideoId } from "@/lib/media-audio";
@@ -22,8 +21,6 @@ const VIDEO_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 const THUMBNAIL_PROBE_TIMEOUT_MS = 20_000;
 const THUMBNAIL_SUCCESS_CACHE_TTL_MS = 1000 * 60 * 60 * 6;
 const THUMBNAIL_FAILURE_CACHE_TTL_MS = 1000 * 30;
-const require = createRequire(import.meta.url);
-const ffmpegStatic = require("ffmpeg-static") as string | null;
 const RUTUBE_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
 const RUTUBE_REQUEST_HEADERS = {
@@ -736,10 +733,6 @@ function resolveFfmpegBin(): string {
   const bundledPath = getBundledFfmpegPath();
   if (isExecutableFile(bundledPath)) {
     return bundledPath;
-  }
-
-  if (typeof ffmpegStatic === "string" && isExecutableFile(ffmpegStatic)) {
-    return ffmpegStatic;
   }
 
   return "ffmpeg";

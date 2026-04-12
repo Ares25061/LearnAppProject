@@ -1151,17 +1151,20 @@ export function StudioEditor({
       } as AnyExerciseDraft)
     : deferredDraft;
   const previewDraft = isMatchingPairs ? matchingPreviewDraft : deferredDraft;
+  const showPreviewHead = !(isPreviewFullscreen && isCustomVisualEditor);
 
   const previewBlock = (
     <div
       className={`editor-block ${isPreviewFullscreen ? "editor-block--preview-fullscreen" : ""}`}
       ref={previewHostRef}
     >
-      <div className="editor-block__head">
-        <div>
-          <strong>Предварительный просмотр</strong>
+      {showPreviewHead ? (
+        <div className="editor-block__head">
+          <div>
+            <strong>Предварительный просмотр</strong>
+          </div>
         </div>
-      </div>
+      ) : null}
       <ExercisePlayer
         boardOnly={isCustomVisualEditor && isPreviewFullscreen}
         bodyOverlay={

@@ -3,6 +3,7 @@
 
 import {
   type DragEvent as ReactDragEvent,
+  memo,
   useEffect,
   useEffectEvent,
   useMemo,
@@ -62,6 +63,7 @@ declare const __SCORM_OFFLINE_BUNDLE__: boolean | undefined;
 const IS_SCORM_OFFLINE_BUNDLE =
   typeof __SCORM_OFFLINE_BUNDLE__ !== "undefined" && __SCORM_OFFLINE_BUNDLE__;
 const REMEMBERED_MEDIA_VOLUME_STORAGE_KEY = "learnapp:media-volume";
+const REMEMBERED_MEDIA_VOLUME_EVENT = "learnapp:media-volume-change";
 const STORED_MEDIA_ROUTE_PREFIX = "/api/media/stored/";
 
 let rememberedMediaVolume: number | null = null;
@@ -138,17 +140,49 @@ function rememberMediaVolume(nextVolume: number) {
     } catch {
       // Ignore storage errors and keep the in-memory fallback.
     }
+
+    window.dispatchEvent(
+      new CustomEvent(REMEMBERED_MEDIA_VOLUME_EVENT, {
+        detail: {
+          volume: normalizedVolume,
+        },
+      }),
+    );
   }
 
   return normalizedVolume;
 }
 
-function useRememberedMediaVolume(_initialVolume: number, resetKey: string) {
-  const [volume, setVolume] = useState(() => getRememberedMediaVolume());
+function useRememberedMediaVolume(initialVolume: number, resetKey: string) {
+  const [volume, setVolume] = useState(() =>
+    getRememberedMediaVolume(initialVolume),
+  );
 
   useEffect(() => {
-    setVolume(getRememberedMediaVolume());
-  }, [resetKey]);
+    setVolume(getRememberedMediaVolume(initialVolume));
+  }, [initialVolume, resetKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const handleVolumeSync = (event: Event) => {
+      const nextVolume =
+        event instanceof CustomEvent &&
+        typeof event.detail?.volume === "number"
+          ? normalizeRememberedMediaVolume(event.detail.volume)
+          : getRememberedMediaVolume(initialVolume);
+      setVolume(nextVolume);
+    };
+
+    window.addEventListener(REMEMBERED_MEDIA_VOLUME_EVENT, handleVolumeSync);
+    return () =>
+      window.removeEventListener(
+        REMEMBERED_MEDIA_VOLUME_EVENT,
+        handleVolumeSync,
+      );
+  }, [initialVolume]);
 
   const handleVolumeChange = (nextVolume: number) => {
     setVolume(rememberMediaVolume(nextVolume));
@@ -612,11 +646,11 @@ function getMatchingCardHeight(
 
   if (normalized.kind === "audio") {
     const audioSize = getMatchingAudioSize(normalized);
-    return clamp(Math.round(audioSize * 0.16) + 60, 90, 106);
+    return clamp(Math.round(audioSize * 0.14) + 58, 86, 104);
   }
 
   if (normalized.kind === "spoken-text") {
-    return clamp(Math.round(Math.max(78, width * 0.38)), 78, 94);
+    return clamp(Math.round(Math.max(72, width * 0.34)), 72, 88);
   }
 
   if (normalized.kind === "text") {
@@ -659,8 +693,8 @@ function getMatchingCardBaseWidth(
 
   if (normalized.kind === "audio") {
     const audioSize = getMatchingAudioSize(normalized);
-    const preferredWidth = Math.round(148 + audioSize * 0.62);
-    return clamp(preferredWidth, Math.min(188, maxWidth), Math.min(252, maxWidth));
+    const preferredWidth = Math.round(156 + audioSize * 0.5);
+    return clamp(preferredWidth, Math.min(196, maxWidth), Math.min(272, maxWidth));
   }
 
   if (normalized.kind === "image") {
@@ -677,7 +711,7 @@ function getMatchingCardBaseWidth(
   }
 
   if (normalized.kind === "spoken-text") {
-    return clamp(Math.round(132 + Math.min(normalized.size, 260) * 0.05), 124, 176);
+    return clamp(Math.round(142 + Math.min(normalized.size, 260) * 0.03), 138, 192);
   }
 
   const normalizedText = normalized.text.trim();
@@ -741,19 +775,19 @@ function getMatchingCardSize(
     normalized.kind === "text"
       ? 78
         : normalized.kind === "spoken-text"
-          ? 124
+          ? 138
             : normalized.kind === "audio"
-              ? 188
-            : normalized.kind === "image"
+              ? 196
+              : normalized.kind === "image"
               ? 116
               : 148;
   const minimumHeightFloor =
     normalized.kind === "text"
       ? 38
       : normalized.kind === "spoken-text"
-        ? 74
+        ? 72
         : normalized.kind === "audio"
-          ? 88
+          ? 86
           : 72;
   const minimumWidth = Math.min(
     maxWidth,
@@ -1079,11 +1113,12 @@ function createMatchingCards(
   data: Extract<AnyExerciseDraft, { type: "matching-pairs" }>["data"],
   boardSize: Partial<MatchingBoardSize> = {},
   imageAspectRatios: MatchingImageAspectRatioMap = {},
+  shuffleSeed = "",
 ): MatchingDragCard[] {
   const normalized = normalizeMatchingPairsData(data);
   const { extras, pairs } = normalized;
   const metrics = getMatchingBoardMetrics(boardSize);
-  const leftCards: MatchingDragCardSeed[] = [
+  const leftCardsSource: MatchingDragCardSeed[] = [
     ...pairs.map((pair, index) => ({
       id: `left-${index}`,
       content: pair.left,
@@ -1105,6 +1140,10 @@ function createMatchingCards(
         groupId: `group-extra-left-${index}`,
       })),
   ];
+  const leftCards = deterministicShuffle(
+    leftCardsSource,
+    `${JSON.stringify(normalized)}|${shuffleSeed}|left`,
+  );
   const rightCardsSource: MatchingDragCardSeed[] = [
     ...pairs.map((pair, index) => ({
       pairIndex: index,
@@ -1129,7 +1168,7 @@ function createMatchingCards(
   ];
   const rightCards = deterministicShuffle(
     rightCardsSource,
-    JSON.stringify(normalized),
+    `${JSON.stringify(normalized)}|${shuffleSeed}|right`,
   );
   const scale = Math.min(
     1,
@@ -1335,6 +1374,7 @@ function buildMatchingYouTubeEmbedUrl(videoId: string, startSeconds = 0) {
   const params = new URLSearchParams({
     autoplay: "1",
     controls: "1",
+    enablejsapi: "1",
     playsinline: "1",
     modestbranding: "1",
     rel: "0",
@@ -1350,6 +1390,21 @@ function buildMatchingYouTubeEmbedUrl(videoId: string, startSeconds = 0) {
   }
 
   return `https://www.youtube-nocookie.com/embed/${videoId}?${params.toString()}`;
+}
+
+function postMatchingYouTubeCommand(
+  iframe: HTMLIFrameElement,
+  command: string,
+  args: unknown[] = [],
+) {
+  iframe.contentWindow?.postMessage(
+    JSON.stringify({
+      event: "command",
+      func: command,
+      args,
+    }),
+    "*",
+  );
 }
 
 function buildMatchingYouTubeThumbnailUrl(videoId: string) {
@@ -1559,7 +1614,9 @@ function formatMatchingMediaTime(value: number) {
   return `${minutes}:${seconds}`;
 }
 
-function getMatchingAudioVolume(content: MatchingAudioContent) {
+function getMatchingAudioVolume(
+  content: MatchingAudioContent | MatchingVideoContent,
+) {
   const volume =
     typeof content.volume === "number" && Number.isFinite(content.volume)
       ? Math.round(content.volume)
@@ -1823,6 +1880,17 @@ function isMatchingInteractiveTarget(target: EventTarget | null) {
   return (
     target instanceof Element &&
     Boolean(target.closest("[data-card-interactive='true']"))
+  );
+}
+
+function isMatchingHardInteractiveTarget(target: EventTarget | null) {
+  return (
+    target instanceof Element &&
+    Boolean(
+      target.closest(
+        "audio, input, select, textarea, iframe, [contenteditable='true']",
+      ),
+    )
   );
 }
 
@@ -2563,6 +2631,131 @@ function MatchingModalAudioPlayer({
   );
 }
 
+function MatchingEmbeddedVideoFrame({
+  meta,
+  title,
+}: Readonly<{
+  meta: MatchingEmbeddedVideoMeta;
+  title: string;
+}>) {
+  const frameRef = useRef<HTMLIFrameElement | null>(null);
+  const lastIframeVolumeRef = useRef<number | null>(null);
+  const [volume] = useRememberedMediaVolume(
+    MATCHING_AUDIO_VOLUME_DEFAULT,
+    `${meta.provider}:${meta.embedUrl}`,
+  );
+  const syncYouTubeVolume = useEffectEvent(() => {
+    if (meta.provider !== "youtube") {
+      return;
+    }
+
+    const iframe = frameRef.current;
+    if (!iframe) {
+      return;
+    }
+
+    const nextVolume = Math.round(volume);
+    lastIframeVolumeRef.current = nextVolume;
+    postMatchingYouTubeCommand(iframe, "unMute");
+    postMatchingYouTubeCommand(iframe, "setVolume", [nextVolume]);
+  });
+
+  useEffect(() => {
+    if (meta.provider !== "youtube") {
+      return;
+    }
+
+    const iframe = frameRef.current;
+    if (!iframe || typeof window === "undefined") {
+      return;
+    }
+
+    const timeouts = new Set<number>();
+    const queueSync = () => {
+      syncYouTubeVolume();
+      [180, 480, 960].forEach((delay) => {
+        const timeoutId = window.setTimeout(() => {
+          timeouts.delete(timeoutId);
+          syncYouTubeVolume();
+        }, delay);
+        timeouts.add(timeoutId);
+      });
+    };
+
+    iframe.addEventListener("load", queueSync);
+    queueSync();
+
+    return () => {
+      iframe.removeEventListener("load", queueSync);
+      timeouts.forEach((timeoutId) => window.clearTimeout(timeoutId));
+    };
+  }, [meta.embedUrl, meta.provider]);
+
+  useEffect(() => {
+    syncYouTubeVolume();
+  }, [meta.embedUrl, meta.provider, volume]);
+
+  useEffect(() => {
+    if (meta.provider !== "youtube" || typeof window === "undefined") {
+      return;
+    }
+
+    const iframe = frameRef.current;
+    if (!iframe) {
+      return;
+    }
+
+    const handleMessage = (event: MessageEvent) => {
+      if (event.source !== iframe.contentWindow || typeof event.data !== "string") {
+        return;
+      }
+
+      let payload: unknown;
+      try {
+        payload = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+
+      if (!payload || typeof payload !== "object") {
+        return;
+      }
+
+      const nextVolume = Number(
+        (payload as { info?: { volume?: unknown } }).info?.volume,
+      );
+      if (!Number.isFinite(nextVolume)) {
+        return;
+      }
+
+      const normalizedVolume = normalizeRememberedMediaVolume(nextVolume);
+      if (lastIframeVolumeRef.current === normalizedVolume) {
+        return;
+      }
+
+      lastIframeVolumeRef.current = normalizedVolume;
+      rememberMediaVolume(normalizedVolume);
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [meta.embedUrl, meta.provider]);
+
+  return (
+    <div className="matching-media-modal__frame-wrap">
+      <iframe
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        allowFullScreen
+        className="matching-media-modal__frame"
+        ref={frameRef}
+        referrerPolicy="strict-origin-when-cross-origin"
+        src={meta.embedUrl}
+        title={title}
+      />
+    </div>
+  );
+}
+
 function MatchingModalVideoPlayer({
   media,
   poster,
@@ -2572,9 +2765,23 @@ function MatchingModalVideoPlayer({
   poster?: string;
   startSeconds: number;
 }>) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const { isResolvingSrc, playbackSrc, playbackType } = useMatchingModalVideoSource(
     media.url,
   );
+  const [rememberedVolume] = useRememberedMediaVolume(
+    getMatchingAudioVolume(media),
+    media.url,
+  );
+
+  useEffect(() => {
+    const element = videoRef.current;
+    if (!element) {
+      return;
+    }
+
+    element.volume = rememberedVolume / 100;
+  }, [playbackSrc, rememberedVolume]);
 
   if (isResolvingSrc) {
     return (
@@ -2599,6 +2806,7 @@ function MatchingModalVideoPlayer({
         className="matching-media-modal__video"
         controls
         key={`${media.kind}:${playbackSrc}:${startSeconds}`}
+        ref={videoRef}
         onVolumeChange={(event) => {
           rememberMediaVolume(event.currentTarget.volume * 100);
         }}
@@ -2607,7 +2815,7 @@ function MatchingModalVideoPlayer({
         preload={isMatchingUploadedFileUrl(media.url) ? "metadata" : "auto"}
         onLoadedMetadata={(event) => {
           const element = event.currentTarget;
-          element.volume = getRememberedMediaVolume() / 100;
+          element.volume = rememberedVolume / 100;
           if (startSeconds > 0) {
             const maxStart = Number.isFinite(element.duration)
               ? Math.max(element.duration - 0.1, 0)
@@ -2644,25 +2852,28 @@ function MatchingSpokenCardIcon() {
   );
 }
 
-function MatchingCardContent({
-  cardSide,
-  cardHeight,
-  cardWidth,
-  content,
-  onOpenMedia,
-}: Readonly<{
+type MatchingCardContentProps = Readonly<{
   cardSide?: "left" | "right";
   cardHeight: number;
   cardWidth: number;
   content: MatchingContent;
   onOpenMedia: (next: MatchingOpenableContent) => void;
-}>) {
-  const normalized = normalizeMatchingSide(content);
+}>;
+
+const MatchingCardContent = memo(function MatchingCardContent({
+  cardSide,
+  cardHeight,
+  cardWidth,
+  content,
+  onOpenMedia,
+}: MatchingCardContentProps) {
+  const normalized = useMemo(() => normalizeMatchingSide(content), [content]);
   const contentClassName = `matching-card-content matching-card-content--${normalized.kind}`;
 
   switch (normalized.kind) {
     case "spoken-text": {
       const spokenTitle = getMatchingSpokenCardTitle(cardSide);
+      const spokenButtonLabel = "Озвучить";
       const canSpeak = Boolean(normalized.text.trim());
       return (
         <div className={`${contentClassName} matching-card-content--spoken`}>
@@ -2680,7 +2891,9 @@ function MatchingCardContent({
             }}
           >
             <MatchingSpokenCardIcon />
-            <span className="matching-spoken-card__label">{spokenTitle}</span>
+            <span className="matching-spoken-card__label">
+              {spokenButtonLabel}
+            </span>
           </button>
         </div>
       );
@@ -2730,12 +2943,17 @@ function MatchingCardContent({
       const audioServiceMeta = getMatchingEmbeddedVideoMeta(normalized.url);
       const convertedAudioUrl = getMatchingConvertedAudioUrl(normalized.url);
       const canPlayAudio = isMatchingAudioPlayable(normalized.url);
+      const audioTitle =
+        normalized.fileName?.trim() ||
+        normalized.label.trim() ||
+        getMatchingMediaSourceLabel(normalized.url) ||
+        "Аудио";
       return (
         <div className={contentClassName}>
           <div className="matching-card-media-frame matching-card-media-frame--audio">
             {normalized.url && canPlayAudio ? (
               <button
-                className="ghost-button matching-media-launch"
+                className="ghost-button matching-media-launch matching-media-launch--audio"
                 data-card-interactive="true"
                 type="button"
                 onClick={(event) => {
@@ -2744,7 +2962,17 @@ function MatchingCardContent({
                 }}
               >
                 <span className="matching-media-launch__icon">{"\u25b6"}</span>
-                <span>{"\u041f\u0440\u043e\u0438\u0433\u0440\u0430\u0442\u044c \u0437\u0432\u0443\u043a"}</span>
+                <span className="matching-media-launch__body">
+                  <span
+                    className="matching-media-launch__title"
+                    title={audioTitle}
+                  >
+                    {audioTitle}
+                  </span>
+                  <span className="matching-media-launch__hint">
+                    {"\u041e\u0442\u043a\u0440\u044b\u0442\u044c \u0430\u0443\u0434\u0438\u043e"}
+                  </span>
+                </span>
               </button>
             ) : normalized.url ? (
               <div className="matching-card-placeholder">
@@ -2854,7 +3082,14 @@ function MatchingCardContent({
       );
     }
   }
-}
+}, (previousProps, nextProps) => (
+  previousProps.cardSide === nextProps.cardSide &&
+  previousProps.cardHeight === nextProps.cardHeight &&
+  previousProps.cardWidth === nextProps.cardWidth &&
+  previousProps.content === nextProps.content &&
+  previousProps.onOpenMedia === nextProps.onOpenMedia
+));
+
 function MatchingMediaDialog({
   media,
   onClose,
@@ -2912,6 +3147,7 @@ function MatchingMediaDialog({
     media.kind === "image"
       ? media.alt || sourceLabel || "\u0418\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0435"
       : media.label ||
+          sourceLabel ||
           (media.kind === "audio"
             ? "\u0410\u0443\u0434\u0438\u043e"
             : "\u0412\u0438\u0434\u0435\u043e");
@@ -2996,18 +3232,10 @@ function MatchingMediaDialog({
               src={media.url}
             />
           ) : shouldUseEmbeddedVideoIframe && embeddedVideoMeta ? (
-            <>
-              <div className="matching-media-modal__frame-wrap">
-                <iframe
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                  allowFullScreen
-                  className="matching-media-modal__frame"
-                  referrerPolicy="strict-origin-when-cross-origin"
-                  src={embeddedVideoMeta.embedUrl}
-                  title={title}
-                />
-              </div>
-            </>
+            <MatchingEmbeddedVideoFrame
+              meta={embeddedVideoMeta}
+              title={title}
+            />
           ) : (
             <MatchingModalVideoPlayer
               media={media}
@@ -3041,19 +3269,42 @@ function MatchingPairsActivity({
   );
   const [imageAspectRatios, setImageAspectRatios] =
     useState<MatchingImageAspectRatioMap>({});
+  const [shuffleSeed, setShuffleSeed] = useState("initial");
   const [boardScale, setBoardScale] = useState(1);
   const [boardResultVisible, setBoardResultVisible] = useState(false);
+  const suppressClickUntilRef = useRef(0);
+  const pendingDragPointRef = useRef<{ clientX: number; clientY: number } | null>(
+    null,
+  );
+  const dragFrameRef = useRef<number | null>(null);
   const dragRef = useRef<{
     pointerId: number;
     groupId: string;
     positions: Record<string, { x: number; y: number }>;
     startX: number;
     startY: number;
+    active: boolean;
+    startedOnInteractive: boolean;
   } | null>(null);
   const boardMetrics = useMemo(
     () => getMatchingBoardMetrics(boardSize),
     [boardSize],
   );
+  const logicalBoardMetrics = useMemo(() => {
+    const safeScale = Math.max(boardScale, MATCHING_BOARD_SCALE_MIN);
+
+    return {
+      minInset: boardMetrics.minInset / safeScale,
+      width: boardMetrics.width / safeScale,
+      bottomLimit: boardMetrics.bottomLimit / safeScale,
+    };
+  }, [boardMetrics.bottomLimit, boardMetrics.minInset, boardMetrics.width, boardScale]);
+
+  useEffect(() => () => {
+    if (typeof window !== "undefined" && dragFrameRef.current !== null) {
+      window.cancelAnimationFrame(dragFrameRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     const node = boardRef.current;
@@ -3087,14 +3338,33 @@ function MatchingPairsActivity({
   }, []);
 
   useEffect(() => {
-    setCards(createMatchingCards(draft.data, boardSize, imageAspectRatios));
+    setCards(
+      createMatchingCards(
+        draft.data,
+        boardSize,
+        imageAspectRatios,
+        shuffleSeed,
+      ),
+    );
     setSolvedPairs(new Set());
     setHasChecked(false);
     setBoardResultVisible(false);
     setDraggingGroupId(null);
     setActiveMedia(null);
     dragRef.current = null;
-  }, [boardSize, draft.data, imageAspectRatios]);
+  }, [boardSize, draft.data, imageAspectRatios, shuffleSeed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const nextSeed =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    setShuffleSeed(nextSeed);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -3165,15 +3435,15 @@ function MatchingPairsActivity({
   }, [onReport, solvedPairs, totalPairs]);
 
   const getCardBounds = (card: Pick<MatchingDragCard, "height" | "width">) => ({
-    minX: boardMetrics.minInset,
+    minX: logicalBoardMetrics.minInset,
     maxX: Math.max(
-      boardMetrics.minInset,
-      boardMetrics.width - card.width - boardMetrics.minInset,
+      logicalBoardMetrics.minInset,
+      logicalBoardMetrics.width - card.width - logicalBoardMetrics.minInset,
     ),
-    minY: boardMetrics.minInset,
+    minY: logicalBoardMetrics.minInset,
     maxY: Math.max(
-      boardMetrics.minInset,
-      boardMetrics.bottomLimit - card.height,
+      logicalBoardMetrics.minInset,
+      logicalBoardMetrics.bottomLimit - card.height,
     ),
   });
 
@@ -3219,35 +3489,43 @@ function MatchingPairsActivity({
     const maxGroupX =
       normalized.pairAlignment === "horizontal"
         ? Math.max(
-            boardMetrics.minInset,
-            boardMetrics.width -
+            logicalBoardMetrics.minInset,
+            logicalBoardMetrics.width -
               leftCard.width -
               pairGap -
               rightCard.width -
-              boardMetrics.minInset,
+              logicalBoardMetrics.minInset,
           )
         : Math.max(
-            boardMetrics.minInset,
-            boardMetrics.width -
+            logicalBoardMetrics.minInset,
+            logicalBoardMetrics.width -
               Math.max(leftCard.width, rightCard.width) -
-              boardMetrics.minInset,
+              logicalBoardMetrics.minInset,
           );
     const maxGroupY =
       normalized.pairAlignment === "horizontal"
         ? Math.max(
-            boardMetrics.minInset,
-            boardMetrics.bottomLimit -
+            logicalBoardMetrics.minInset,
+            logicalBoardMetrics.bottomLimit -
               Math.max(leftCard.height, rightCard.height),
           )
         : Math.max(
-            boardMetrics.minInset,
-            boardMetrics.bottomLimit -
+            logicalBoardMetrics.minInset,
+            logicalBoardMetrics.bottomLimit -
               leftCard.height -
               pairGap -
               rightCard.height,
           );
-    const leftGroupX = clamp(initialLeftX, boardMetrics.minInset, maxGroupX);
-    const topGroupY = clamp(initialTopY, boardMetrics.minInset, maxGroupY);
+    const leftGroupX = clamp(
+      initialLeftX,
+      logicalBoardMetrics.minInset,
+      maxGroupX,
+    );
+    const topGroupY = clamp(
+      initialTopY,
+      logicalBoardMetrics.minInset,
+      maxGroupY,
+    );
 
     let nextLeftX = leftGroupX;
     let nextRightX =
@@ -3270,14 +3548,14 @@ function MatchingPairsActivity({
         nextRightY + rightCard.height,
       );
 
-      if (minY < boardMetrics.minInset) {
-        const shift = boardMetrics.minInset - minY;
+      if (minY < logicalBoardMetrics.minInset) {
+        const shift = logicalBoardMetrics.minInset - minY;
         nextLeftY += shift;
         nextRightY += shift;
       }
 
-      if (maxY > boardMetrics.bottomLimit) {
-        const shift = maxY - boardMetrics.bottomLimit;
+      if (maxY > logicalBoardMetrics.bottomLimit) {
+        const shift = maxY - logicalBoardMetrics.bottomLimit;
         nextLeftY -= shift;
         nextRightY -= shift;
       }
@@ -3291,14 +3569,15 @@ function MatchingPairsActivity({
         nextRightX + rightCard.width,
       );
 
-      if (minX < boardMetrics.minInset) {
-        const shift = boardMetrics.minInset - minX;
+      if (minX < logicalBoardMetrics.minInset) {
+        const shift = logicalBoardMetrics.minInset - minX;
         nextLeftX += shift;
         nextRightX += shift;
       }
 
-      if (maxX > boardMetrics.width - boardMetrics.minInset) {
-        const shift = maxX - (boardMetrics.width - boardMetrics.minInset);
+      if (maxX > logicalBoardMetrics.width - logicalBoardMetrics.minInset) {
+        const shift =
+          maxX - (logicalBoardMetrics.width - logicalBoardMetrics.minInset);
         nextLeftX -= shift;
         nextRightX -= shift;
       }
@@ -3438,7 +3717,20 @@ function MatchingPairsActivity({
   };
 
   const resetBoard = () => {
-    setCards(createMatchingCards(draft.data, boardSize));
+    if (typeof window !== "undefined" && dragFrameRef.current !== null) {
+      window.cancelAnimationFrame(dragFrameRef.current);
+      dragFrameRef.current = null;
+    }
+
+    pendingDragPointRef.current = null;
+    setCards(
+      createMatchingCards(
+        draft.data,
+        boardSize,
+        imageAspectRatios,
+        shuffleSeed,
+      ),
+    );
     setSolvedPairs(new Set());
     setHasChecked(false);
     setBoardResultVisible(false);
@@ -3447,18 +3739,61 @@ function MatchingPairsActivity({
     dragRef.current = null;
   };
 
+  const applyDragMove = useEffectEvent(() => {
+    const currentDrag = dragRef.current;
+    const pendingPoint = pendingDragPointRef.current;
+    if (!currentDrag || !currentDrag.active || !pendingPoint) {
+      return;
+    }
+
+    const deltaX = (pendingPoint.clientX - currentDrag.startX) / boardScale;
+    const deltaY = (pendingPoint.clientY - currentDrag.startY) / boardScale;
+
+    setCards((current) =>
+      current.map((currentCard) => {
+        const initialPosition = currentDrag.positions[currentCard.id];
+        if (!initialPosition) {
+          return currentCard;
+        }
+
+        const bounds = getCardBounds(currentCard);
+        return {
+          ...currentCard,
+          x: clamp(initialPosition.x + deltaX, bounds.minX, bounds.maxX),
+          y: clamp(initialPosition.y + deltaY, bounds.minY, bounds.maxY),
+        };
+      }),
+    );
+  });
+
+  const scheduleDragMove = useEffectEvent(() => {
+    if (typeof window === "undefined" || dragFrameRef.current !== null) {
+      return;
+    }
+
+    dragFrameRef.current = window.requestAnimationFrame(() => {
+      dragFrameRef.current = null;
+      applyDragMove();
+    });
+  });
+
+  const flushPendingDragMove = useEffectEvent(() => {
+    if (typeof window !== "undefined" && dragFrameRef.current !== null) {
+      window.cancelAnimationFrame(dragFrameRef.current);
+      dragFrameRef.current = null;
+    }
+
+    applyDragMove();
+  });
+
   const beginDrag = (
     event: ReactPointerEvent<HTMLDivElement>,
     card: MatchingDragCard,
   ) => {
-    if (isMatchingInteractiveTarget(event.target)) {
+    if (isMatchingHardInteractiveTarget(event.target)) {
       return;
     }
 
-    event.preventDefault();
-    setHasChecked(false);
-    setBoardResultVisible(false);
-    event.currentTarget.setPointerCapture(event.pointerId);
     const groupCards = cards.filter((groupCard) => groupCard.groupId === card.groupId);
     dragRef.current = {
       pointerId: event.pointerId,
@@ -3471,8 +3806,13 @@ function MatchingPairsActivity({
       ),
       startX: event.clientX,
       startY: event.clientY,
+      active: false,
+      startedOnInteractive: isMatchingInteractiveTarget(event.target),
     };
-    setDraggingGroupId(card.groupId);
+    pendingDragPointRef.current = {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    };
   };
 
   const handleCheck = () => {
@@ -3487,9 +3827,6 @@ function MatchingPairsActivity({
   const boardScore = percentage(boardCorrect, totalPairs);
   const boardSolved = boardCorrect === totalPairs && totalPairs > 0;
   const showBoardStatus = hasChecked || boardSolved;
-  const boardStatusDetail = boardSolved
-    ? draft.successMessage
-    : `\u0420\u0435\u0437\u0443\u043B\u044C\u0442\u0430\u0442: ${boardScore}%`;
 
   return (
     <div className="stack matching-pairs-stack">
@@ -3507,9 +3844,9 @@ function MatchingPairsActivity({
             style={{
               transform: `scale(${boardScale})`,
             }}
-          >
+        >
         {cards.map((card) => {
-          const normalizedCardContent = normalizeMatchingSide(card.content);
+          const cardKind = card.content.kind;
           const isPreviewSourceGroup =
             mergePreview?.movedCard.groupId === card.groupId;
           const isPreviewTargetGroup =
@@ -3519,7 +3856,7 @@ function MatchingPairsActivity({
               className={`matching-drag-card ${
                 card.side === "right" ? "matching-drag-card--right" : ""
               } ${
-                normalizedCardContent.kind === "video"
+                cardKind === "video"
                   ? "matching-drag-card--video"
                   : ""
               } ${draggingGroupId === card.groupId ? "matching-drag-card--dragging" : ""} ${
@@ -3551,10 +3888,17 @@ function MatchingPairsActivity({
               role="group"
               aria-label={card.label}
               style={{
-                left: `${card.x}px`,
-                top: `${card.y}px`,
+                left: "0px",
+                top: "0px",
+                transform: `translate3d(${card.x}px, ${card.y}px, 0)`,
                 width: `${card.width}px`,
                 height: `${card.height}px`,
+              }}
+              onClickCapture={(event) => {
+                if (Date.now() < suppressClickUntilRef.current) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }
               }}
               onPointerDown={(event) => beginDrag(event, card)}
               onPointerMove={(event) => {
@@ -3567,24 +3911,33 @@ function MatchingPairsActivity({
                   return;
                 }
 
-                const deltaX = (event.clientX - currentDrag.startX) / boardScale;
-                const deltaY = (event.clientY - currentDrag.startY) / boardScale;
+                if (!currentDrag.active) {
+                  const distance = Math.hypot(
+                    event.clientX - currentDrag.startX,
+                    event.clientY - currentDrag.startY,
+                  );
 
-                setCards((current) =>
-                  current.map((currentCard) => {
-                    const initialPosition = currentDrag.positions[currentCard.id];
-                    if (!initialPosition) {
-                      return currentCard;
-                    }
+                  if (distance < 6) {
+                    return;
+                  }
 
-                    const bounds = getCardBounds(currentCard);
-                    return {
-                      ...currentCard,
-                      x: clamp(initialPosition.x + deltaX, bounds.minX, bounds.maxX),
-                      y: clamp(initialPosition.y + deltaY, bounds.minY, bounds.maxY),
-                    };
-                  }),
-                );
+                  if (currentDrag.startedOnInteractive) {
+                    suppressClickUntilRef.current = Date.now() + 160;
+                  }
+
+                  event.preventDefault();
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  setHasChecked(false);
+                  setBoardResultVisible(false);
+                  setDraggingGroupId(card.groupId);
+                  currentDrag.active = true;
+                }
+
+                pendingDragPointRef.current = {
+                  clientX: event.clientX,
+                  clientY: event.clientY,
+                };
+                scheduleDragMove();
               }}
               onPointerUp={(event) => {
                 const currentDrag = dragRef.current;
@@ -3596,12 +3949,30 @@ function MatchingPairsActivity({
                   return;
                 }
 
-                event.currentTarget.releasePointerCapture(event.pointerId);
-                setCards((current) => snapIfMatched(current, currentDrag.groupId));
+                if (currentDrag.active && event.currentTarget.hasPointerCapture(event.pointerId)) {
+                  event.currentTarget.releasePointerCapture(event.pointerId);
+                }
+
+                if (currentDrag.active) {
+                  pendingDragPointRef.current = {
+                    clientX: event.clientX,
+                    clientY: event.clientY,
+                  };
+                  flushPendingDragMove();
+                  setCards((current) => snapIfMatched(current, currentDrag.groupId));
+                }
+
+                pendingDragPointRef.current = null;
                 dragRef.current = null;
                 setDraggingGroupId(null);
               }}
               onPointerCancel={() => {
+                if (typeof window !== "undefined" && dragFrameRef.current !== null) {
+                  window.cancelAnimationFrame(dragFrameRef.current);
+                  dragFrameRef.current = null;
+                }
+
+                pendingDragPointRef.current = null;
                 dragRef.current = null;
                 setDraggingGroupId(null);
               }}
@@ -3610,13 +3981,13 @@ function MatchingPairsActivity({
                 cardSide={card.side}
                 cardHeight={Math.max(
                   card.height -
-                    (normalizedCardContent.kind === "video"
+                    (cardKind === "video"
                       ? MATCHING_VIDEO_CARD_VERTICAL_INSET
                       : MATCHING_CARD_VERTICAL_INSET),
                   56,
                 )}
                 cardWidth={Math.max(card.width - 32, 96)}
-                content={normalizedCardContent}
+                content={card.content}
                 onOpenMedia={setActiveMedia}
               />
             </div>
@@ -3744,9 +4115,7 @@ function MatchingPairsActivity({
               aria-label={"\u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442"}
               onClick={(event) => event.stopPropagation()}
             >
-              <span className="eyebrow">{"\u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442"}</span>
-              <strong>{`${boardScore}%`}</strong>
-              <p>{boardStatusDetail}</p>
+              <strong>{`\u0420\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442: ${boardScore}%`}</strong>
               <div className="inline-actions">
                 <button
                   className="primary-button"
@@ -3938,6 +4307,7 @@ function getClassificationDefaultAnchor(order: number) {
 function getClassificationDropAnchor(
   event: ReactDragEvent<HTMLElement>,
   metrics: ClassificationCardMetrics,
+  scale = 1,
 ) {
   const rect = event.currentTarget.getBoundingClientRect();
   const availableWidth = Math.max(rect.width - CLASSIFICATION_CARD_INSET * 2, 1);
@@ -3947,8 +4317,10 @@ function getClassificationDropAnchor(
   );
   const rawX = (event.clientX - rect.left - CLASSIFICATION_CARD_INSET) / availableWidth;
   const rawY = (event.clientY - rect.top - CLASSIFICATION_CARD_INSET) / availableHeight;
-  const horizontalPadding = metrics.width / Math.max(availableWidth * 2, 1);
-  const verticalPadding = metrics.height / Math.max(availableHeight * 2, 1);
+  const horizontalPadding =
+    (metrics.width * scale) / Math.max(availableWidth * 2, 1);
+  const verticalPadding =
+    (metrics.height * scale) / Math.max(availableHeight * 2, 1);
 
   return {
     anchorX: clamp(rawX, horizontalPadding, 1 - horizontalPadding),
@@ -3974,11 +4346,19 @@ function getClassificationPlacementStyle(
 }
 
 function getClassificationRowPattern(groupCount: number) {
-  if (groupCount <= 6) {
-    return [groupCount];
-  }
-
   switch (groupCount) {
+    case 1:
+      return [1];
+    case 2:
+      return [2];
+    case 3:
+      return [3];
+    case 4:
+      return [2, 2];
+    case 5:
+      return [3, 2];
+    case 6:
+      return [3, 3];
     case 7:
       return [4, 3];
     case 8:
@@ -4025,14 +4405,14 @@ function getClassificationSpanDistribution(
 function getClassificationClusterLayout(groupCount: number): ClassificationClusterLayout {
   const rowPattern = getClassificationRowPattern(groupCount);
 
-  if (groupCount <= 6) {
+  if (groupCount <= 3) {
     return {
       columnCount: Math.max(groupCount, 1),
       rowCount: 1,
       spans: Array.from({ length: groupCount }, () => 1),
       titleSize:
-        groupCount >= 5
-          ? "clamp(1.05rem, 1.9vw, 1.55rem)"
+        groupCount >= 3
+          ? "clamp(1.08rem, 2vw, 1.62rem)"
           : "clamp(1.18rem, 2.2vw, 1.85rem)",
     };
   }
@@ -4055,6 +4435,7 @@ function getClassificationClusterLayout(groupCount: number): ClassificationClust
 function buildClassificationDeck(
   groups: ReturnType<typeof normalizeGroupAssignmentData>["groups"],
   order: "random" | "rounds",
+  shuffleSeed = "",
 ) {
   const seeds: Array<{
     groupIndex: number;
@@ -4092,7 +4473,13 @@ function buildClassificationDeck(
     });
   }
 
-  const orderedSeeds = order === "random" ? shuffleArray(seeds) : seeds;
+  const orderedSeeds =
+    order === "random"
+      ? deterministicShuffle(
+          seeds,
+          `classification:${shuffleSeed}:${groups.length}:${seeds.length}`,
+        )
+      : seeds;
 
   return orderedSeeds.map((seed, index) => ({
     id: `classification-${seed.groupIndex}-${seed.itemIndex}-${index}`,
@@ -4177,9 +4564,32 @@ function GroupAssignmentActivityBoard({
     () => getClassificationClusterLayout(normalized.groups.length),
     [normalized.groups.length],
   );
+  const shuffleSeed = useMemo(
+    () =>
+      [
+        revisionKey,
+        normalized.cardOrder,
+        normalized.cardDisplayMode,
+        normalized.groups.length,
+        JSON.stringify(normalized.groups),
+      ].join("|"),
+    [
+      normalized.cardDisplayMode,
+      normalized.cardOrder,
+      normalized.groups,
+      normalized.groups.length,
+      revisionKey,
+    ],
+  );
+  const boardScale = 1;
   const deck = useMemo(
-    () => buildClassificationDeck(normalized.groups, normalized.cardOrder ?? "random"),
-    [normalized.cardOrder, normalized.groups],
+    () =>
+      buildClassificationDeck(
+        normalized.groups,
+        normalized.cardOrder ?? "random",
+        shuffleSeed,
+      ),
+    [normalized.cardOrder, normalized.groups, shuffleSeed],
   );
   const cardMetricsById = useMemo(
     () =>
@@ -4202,6 +4612,7 @@ function GroupAssignmentActivityBoard({
     solved: boolean;
     score: number;
   } | null>(null);
+  const [isResultDialogOpen, setIsResultDialogOpen] = useState(false);
   const [activeMedia, setActiveMedia] = useState<MatchingOpenableContent | null>(
     null,
   );
@@ -4212,6 +4623,7 @@ function GroupAssignmentActivityBoard({
     setDraggedCardId(null);
     setHint(null);
     setCheckResult(null);
+    setIsResultDialogOpen(false);
     setActiveMedia(null);
   }, [revisionKey]);
 
@@ -4274,11 +4686,13 @@ function GroupAssignmentActivityBoard({
     setDraggedCardId(null);
     setHint(null);
     setCheckResult(null);
+    setIsResultDialogOpen(false);
   };
 
   const selectCard = (cardId: string) => {
     setSelectedCardId((current) => (current === cardId ? null : cardId));
     setCheckResult(null);
+    setIsResultDialogOpen(false);
     setHint(null);
   };
 
@@ -4291,6 +4705,7 @@ function GroupAssignmentActivityBoard({
     event.dataTransfer.effectAllowed = "move";
     setSelectedCardId(cardId);
     setCheckResult(null);
+    setIsResultDialogOpen(false);
     window.requestAnimationFrame(() => {
       setDraggedCardId(cardId);
     });
@@ -4339,7 +4754,8 @@ function GroupAssignmentActivityBoard({
       solved,
       score,
     });
-    setHint(detail);
+    setIsResultDialogOpen(true);
+    setHint(null);
     onReport(score, solved, detail);
   };
 
@@ -4348,17 +4764,25 @@ function GroupAssignmentActivityBoard({
       .map((cardId) => placements[cardId]?.groupIndex)
       .filter((value): value is number => typeof value === "number"),
   );
+  const canCheck = deck.length > 0;
+  const scalePercentage = 100;
 
+  const updateBoardScale = (_nextScale: number) => {
+    // Classification keeps a fixed 100% scale; the zoom UI is hidden.
+  };
+  const resultSummary = checkResult
+    ? `Результат: ${Math.round(checkResult.score)}%`
+    : "";
   return (
     <div
       className={`stack classification-activity ${
         boardOnly ? "classification-activity--board-only" : ""
       }`}
     >
-      <div className="classification-activity__meta">
+      {!boardOnly ? <div className="classification-activity__meta">
         <span>{progressText}</span>
         {hint ? <span className="classification-activity__hint">{hint}</span> : null}
-      </div>
+      </div> : null}
 
       <div
         className={`classification-board ${
@@ -4367,16 +4791,17 @@ function GroupAssignmentActivityBoard({
             : "classification-board--all-at-once"
         }`}
       >
-        <div
-          className="classification-clusters"
-          style={
-            {
-              "--classification-title-size": clusterLayout.titleSize,
-              "--classification-grid-columns": clusterLayout.columnCount,
-              "--classification-grid-rows": clusterLayout.rowCount,
-            } as CSSProperties
-          }
-        >
+        <div className="classification-board__canvas">
+          <div
+            className="classification-clusters"
+            style={
+              {
+                "--classification-title-size": clusterLayout.titleSize,
+                "--classification-grid-columns": clusterLayout.columnCount,
+                "--classification-grid-rows": clusterLayout.rowCount,
+              } as CSSProperties
+            }
+          >
           {normalized.groups.map((group, groupIndex) => {
             const background = normalizeClassificationBackground(group.background);
             const accentColor =
@@ -4415,7 +4840,7 @@ function GroupAssignmentActivityBoard({
                     groupIndex,
                     sourceCardId,
                     metrics
-                      ? getClassificationDropAnchor(event, metrics)
+                      ? getClassificationDropAnchor(event, metrics, boardScale)
                       : undefined,
                   );
                   setDraggedCardId(null);
@@ -4626,9 +5051,112 @@ function GroupAssignmentActivityBoard({
           </div>
         ) : null}
 
+        </div>
+
+        <div className="classification-board__controls" data-card-interactive="true">
+          <button
+            className="ghost-button classification-board__action"
+            disabled={!canCheck}
+            type="button"
+            onClick={handleCheck}
+          >
+            Проверить
+          </button>
+          <button
+            className="ghost-button classification-board__action"
+            type="button"
+            onClick={resetBoard}
+          >
+            Сбросить
+          </button>
+        </div>
+
+        <div
+          aria-label="Масштаб поля"
+          className="classification-board__zoom"
+          data-card-interactive="true"
+          role="group"
+        >
+          <button
+            aria-label="Уменьшить масштаб"
+            className="ghost-button classification-board__zoom-button"
+            disabled={boardScale <= MATCHING_BOARD_SCALE_MIN}
+            type="button"
+            onClick={() =>
+              updateBoardScale(boardScale - MATCHING_BOARD_SCALE_STEP)
+            }
+          >
+            -
+          </button>
+          <input
+            aria-label="Масштаб поля"
+            className="classification-board__zoom-range"
+            max={MATCHING_BOARD_SCALE_MAX}
+            min={MATCHING_BOARD_SCALE_MIN}
+            step={MATCHING_BOARD_SCALE_STEP}
+            type="range"
+            value={boardScale}
+            onChange={(event) =>
+              updateBoardScale(Number.parseFloat(event.target.value))
+            }
+          />
+          <button
+            aria-label="Сбросить масштаб"
+            className="ghost-button classification-board__zoom-reset"
+            type="button"
+            onClick={() => updateBoardScale(1)}
+          >
+            {`${scalePercentage}%`}
+          </button>
+          <button
+            aria-label="Увеличить масштаб"
+            className="ghost-button classification-board__zoom-button"
+            disabled={boardScale >= MATCHING_BOARD_SCALE_MAX}
+            type="button"
+            onClick={() =>
+              updateBoardScale(boardScale + MATCHING_BOARD_SCALE_STEP)
+            }
+          >
+            +
+          </button>
+        </div>
+
+        {checkResult && isResultDialogOpen ? (
+          <div
+            className="classification-result-modal"
+            data-card-interactive="true"
+            role="presentation"
+            onClick={() => setIsResultDialogOpen(false)}
+          >
+            <div
+              aria-label="Результат"
+              aria-modal="true"
+              className="classification-result-modal__dialog"
+              role="dialog"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <strong className="classification-result-modal__score">
+                {resultSummary}
+              </strong>
+              <div className="classification-result-modal__actions">
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={() => setIsResultDialogOpen(false)}
+                >
+                  Продолжить
+                </button>
+                <button className="ghost-button" type="button" onClick={resetBoard}>
+                  Сбросить
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
       </div>
 
-      {!boardOnly ? (
+      {false ? (
         <ActionRow>
           <PlayerButton onClick={handleCheck}>Проверить</PlayerButton>
           <button className="ghost-button" type="button" onClick={resetBoard}>
@@ -6078,8 +6606,30 @@ export function ExercisePlayer({
   );
   const instructionsText = instructionOverride ?? draft.instructions;
   const showInstructions = compactHead ? Boolean(instructionOverride) : Boolean(instructionsText);
-  const introText = draft.type === "matching-pairs" ? draft.description.trim() : "";
-  const introKey = introText
+  const introText = useMemo(() => {
+    if (draft.type === "matching-pairs") {
+      return draft.description.trim();
+    }
+
+    if (draft.type === "group-assignment") {
+      return [
+        "\u041f\u0435\u0440\u0435\u0442\u0430\u0449\u0438\u0442\u0435 \u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0438 \u0432 \u043f\u043e\u0434\u0445\u043e\u0434\u044f\u0449\u0438\u0435 \u0433\u0440\u0443\u043f\u043f\u044b.",
+        "\u0415\u0441\u043b\u0438 \u043d\u0443\u0436\u043d\u043e \u0438\u0437\u043c\u0435\u043d\u0438\u0442\u044c \u043e\u0442\u0432\u0435\u0442, \u043f\u0440\u043e\u0441\u0442\u043e \u043f\u0435\u0440\u0435\u043d\u0435\u0441\u0438\u0442\u0435 \u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0443 \u0432 \u0434\u0440\u0443\u0433\u0443\u044e \u0433\u0440\u0443\u043f\u043f\u0443.",
+      ].join("\n");
+    }
+
+    if (false && draft.type === "group-assignment") {
+      return [
+        "Перетащите карточки в подходящие группы.",
+        "Если нужно изменить выбор, просто перенесите карточку в другую группу.",
+        "Когда закончите, нажмите «Проверить».",
+      ].join("\n\n");
+    }
+
+    return "";
+  }, [draft.description, draft.type, instructionsText]);
+  const allowBoardOnlyIntro = draft.type === "group-assignment";
+  const introKey = introText && (!boardOnly || allowBoardOnlyIntro)
     ? [
         draft.type,
         draft.title.trim(),
@@ -6088,9 +6638,18 @@ export function ExercisePlayer({
         compactHead ? "compact" : "default",
       ].join("|")
     : null;
-  const [isIntroOpen, setIsIntroOpen] = useState(
-    () => (introKey ? !dismissedMatchingIntroKeys.has(introKey) : false),
-  );
+  const [isIntroOpen, setIsIntroOpen] = useState(false);
+  const introHeadingValue =
+    draft.type === "group-assignment"
+      ? "\u041f\u0440\u0430\u0432\u0438\u043b\u0430 \u0438\u0433\u0440\u044b"
+      : "\u0417\u0430\u0434\u0430\u043d\u0438\u0435";
+  const introButtonLabel =
+    draft.type === "group-assignment"
+      ? "\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c \u043f\u0440\u0430\u0432\u0438\u043b\u0430"
+      : "\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c \u0437\u0430\u0434\u0430\u043d\u0438\u0435";
+  const introActionLabel =
+    draft.type === "group-assignment" ? "\u041d\u0430\u0447\u0430\u0442\u044c" : "OK";
+  const showTypeBadge = !compactHead && draft.type !== "group-assignment";
 
   useEffect(() => {
     setStatus(null);
@@ -6140,7 +6699,7 @@ export function ExercisePlayer({
       style={themeStyle}
     >
       {!boardOnly ? <div className="exercise-player__head">
-        {!compactHead ? <span className="eyebrow">{"\u0422\u0438\u043f"}: {draft.type}</span> : null}
+        {showTypeBadge ? <span className="eyebrow">{"\u0422\u0438\u043f"}: {draft.type}</span> : null}
         <h1>{draft.title}</h1>
         <p>{draft.description}</p>
         {showInstructions ? (
@@ -6153,12 +6712,22 @@ export function ExercisePlayer({
             <div className="exercise-player__overlay-start">
               {introKey ? (
                 <button
-                  aria-label="Показать задание"
+                  aria-label={introButtonLabel}
                   className="exercise-player__help-button"
+                  title={introHeadingValue}
                   type="button"
                   onClick={() => setIsIntroOpen(true)}
                 >
-                  ?
+                  <svg aria-hidden="true" viewBox="0 0 24 24">
+                    <path
+                      d="M12 18.2h.01M9.35 9.45a2.65 2.65 0 1 1 4.6 1.8c-.6.63-1.26 1.02-1.57 1.88-.13.35-.18.72-.18 1.09M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="1.8"
+                    />
+                  </svg>
                 </button>
               ) : null}
             </div>
@@ -6173,17 +6742,17 @@ export function ExercisePlayer({
             onClick={closeIntro}
           >
             <div
-              aria-label="Задание"
+              aria-label={introHeadingValue}
               aria-modal="true"
               className="exercise-player-intro__dialog"
               role="dialog"
               onClick={(event) => event.stopPropagation()}
             >
-              <h2>Задание</h2>
+              <h2>{introHeadingValue}</h2>
               <div className="exercise-player-intro__text">{introText}</div>
               <div className="exercise-player-intro__actions">
                 <button className="ghost-button" type="button" onClick={closeIntro}>
-                  OK
+                  {introActionLabel}
                 </button>
               </div>
             </div>
@@ -6191,7 +6760,10 @@ export function ExercisePlayer({
         ) : null}
         {renderActivity(draft, revisionKey, reportResult, boardOnly)}
       </div>
-      {status && !boardOnly && draft.type !== "matching-pairs" ? (
+      {status &&
+      !boardOnly &&
+      draft.type !== "matching-pairs" &&
+      draft.type !== "group-assignment" ? (
         <div
           className={`player-status ${
             status.solved ? "player-status--success" : ""
