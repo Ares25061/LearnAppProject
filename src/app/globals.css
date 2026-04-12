@@ -937,6 +937,8 @@ video {
 
 .matching-card-image--interactive {
   cursor: zoom-in;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .matching-media-modal__image-wrap {
@@ -5217,6 +5219,20 @@ body {
   padding-bottom: 0;
 }
 
+.classification-board__overlay-start {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 6;
+  display: flex;
+  align-items: flex-start;
+  pointer-events: none;
+}
+
+.classification-board__overlay-start > * {
+  pointer-events: auto;
+}
+
 .classification-clusters {
   display: grid;
   height: 100%;
@@ -5491,6 +5507,13 @@ body {
   min-height: 46px;
   justify-content: center;
   border-radius: 16px;
+}
+
+.classification-board__action--primary {
+  box-shadow: 0 18px 32px rgba(11, 88, 128, 0.24);
+}
+
+.classification-board__action--secondary {
   background: rgba(255, 252, 246, 0.94);
   box-shadow: 0 14px 28px rgba(18, 35, 38, 0.12);
 }
@@ -5564,6 +5587,17 @@ body {
   flex-wrap: wrap;
 }
 
+.classification-result-modal__action {
+  min-width: 154px;
+  min-height: 46px;
+  justify-content: center;
+  border-radius: 16px;
+}
+
+.classification-result-modal__action--primary {
+  box-shadow: 0 18px 32px rgba(11, 88, 128, 0.24);
+}
+
 .classification-activity--board-only .classification-board {
   min-height: 100vh;
   height: 100vh;
@@ -5622,7 +5656,16 @@ body {
     flex-wrap: nowrap;
   }
 
+  .classification-board__overlay-start {
+    top: 12px;
+    left: 12px;
+  }
+
   .classification-board__action {
+    min-width: 120px;
+  }
+
+  .classification-result-modal__action {
     min-width: 120px;
   }
 

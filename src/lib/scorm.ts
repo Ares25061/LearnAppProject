@@ -13,6 +13,7 @@ import {
   verifyConvertibleAudioSource,
 } from "@/lib/media-conversion";
 import { getConvertibleAudioProvider } from "@/lib/media-audio";
+import { normalizeGroupAssignmentData } from "@/lib/classification";
 import { normalizeMatchingSide } from "@/lib/matching-pairs";
 import { readStoredMediaAssetFromUrl } from "@/lib/stored-media";
 import type {
@@ -575,7 +576,7 @@ function collectDraftResourceUrls(draft: AnyExerciseDraft) {
       }
       break;
     case "group-assignment":
-      for (const group of draft.data.groups) {
+      for (const group of normalizeGroupAssignmentData(draft.data).groups) {
         pushClassificationBackgroundResourceUrl(urls, group.background);
 
         for (const item of group.items) {
@@ -878,6 +879,7 @@ async function localizeDraftForOfflineExport(input: AnyExerciseDraft) {
       );
       break;
     case "group-assignment":
+      draft.data = normalizeGroupAssignmentData(draft.data);
       draft.data.groups = await Promise.all(
         draft.data.groups.map(async (group) => ({
           ...group,
@@ -1009,6 +1011,7 @@ async function prepareHostlessDraftForArchive(input: AnyExerciseDraft) {
   const files: ArchiveFile[] = [];
   const convertedAudioUrlMap = new Map<string, Promise<string>>();
   const convertedVideoUrlMap = new Map<string, Promise<string>>();
+  const localizedImageUrlMap = new Map<string, Promise<string>>();
   const localizedThumbnailMap = new Map<string, Promise<string | null>>();
   const mediaThumbnails = new Map<string, string>();
   let assetCounter = 0;
@@ -1151,6 +1154,49 @@ async function prepareHostlessDraftForArchive(input: AnyExerciseDraft) {
     return nextPromise;
   };
 
+  const localizeHostlessImageUrl = async (url: string) => {
+    const source = url.trim();
+    if (!source) {
+      return source;
+    }
+
+    const existingPromise = localizedImageUrlMap.get(source);
+    if (existingPromise) {
+      return existingPromise;
+    }
+
+    const nextPromise = (async () => {
+      if (source.toLowerCase().startsWith("data:")) {
+        return persistArchiveAsset("image", decodeDataUrl(source), source);
+      }
+
+      const storedMediaAsset = await readStoredMediaAssetFromUrl(source);
+      if (storedMediaAsset) {
+        return persistArchiveAsset(
+          "image",
+          {
+            buffer: storedMediaAsset.buffer,
+            contentType: storedMediaAsset.contentType,
+            url: source,
+          },
+          source,
+          storedMediaAsset.extension,
+        );
+      }
+
+      if (!isExternalOrEmbeddedResource(source)) {
+        throw new ScormArchiveError(
+          `Автономный SCORM не может упаковать относительный ресурс ${source}. Используйте абсолютную ссылку или загрузите файл в редакторе.`,
+        );
+      }
+
+      return persistArchiveAsset("image", await downloadRemoteAsset(source), source);
+    })();
+
+    localizedImageUrlMap.set(source, nextPromise);
+    return nextPromise;
+  };
+
   const localizeHostlessVideoUrl = async (url: string) => {
     const source = url.trim();
     if (!source) {
@@ -1249,6 +1295,40 @@ async function prepareHostlessDraftForArchive(input: AnyExerciseDraft) {
     }
   };
 
+  const prepareClassificationSide = async (
+    side: MatchingPairSide,
+  ): Promise<MatchingPairSide> => {
+    if (typeof side === "string") {
+      return side;
+    }
+
+    switch (side.kind) {
+      case "image":
+        return {
+          ...side,
+          url: await localizeHostlessImageUrl(side.url),
+        } satisfies MatchingImageContent;
+      case "audio":
+      case "video":
+        return prepareMatchingSide(side);
+      default:
+        return side;
+    }
+  };
+
+  const localizeHostlessClassificationBackground = async (
+    background: ClassificationGroupBackground,
+  ): Promise<ClassificationGroupBackground> => {
+    if (typeof background === "string" || background.kind !== "image") {
+      return background;
+    }
+
+    return {
+      ...background,
+      url: await localizeHostlessImageUrl(background.url),
+    } satisfies MatchingImageContent;
+  };
+
   switch (draft.type) {
     case "matching-pairs":
       draft.data.pairs = await Promise.all(
@@ -1266,10 +1346,14 @@ async function prepareHostlessDraftForArchive(input: AnyExerciseDraft) {
       );
       break;
     case "group-assignment":
+      draft.data = normalizeGroupAssignmentData(draft.data);
       draft.data.groups = await Promise.all(
         draft.data.groups.map(async (group) => ({
           ...group,
-          items: await Promise.all(group.items.map((item) => prepareMatchingSide(item))),
+          background: await localizeHostlessClassificationBackground(group.background),
+          items: await Promise.all(
+            group.items.map((item) => prepareClassificationSide(item)),
+          ),
         })),
       );
       break;

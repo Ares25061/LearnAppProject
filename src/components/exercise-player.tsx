@@ -321,6 +321,30 @@ function PlayerButton(
   );
 }
 
+function InstructionHelpButton(
+  props: Readonly<React.ButtonHTMLAttributes<HTMLButtonElement>>,
+) {
+  const { className, ...rest } = props;
+  return (
+    <button
+      className={className ? `exercise-player__help-button ${className}` : "exercise-player__help-button"}
+      type="button"
+      {...rest}
+    >
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <path
+          d="M12 18.2h.01M9.35 9.45a2.65 2.65 0 1 1 4.6 1.8c-.6.63-1.26 1.02-1.57 1.88-.13.35-.18.72-.18 1.09M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z"
+          fill="none"
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="1.8"
+        />
+      </svg>
+    </button>
+  );
+}
+
 function cellsKey(cells: GridPoint[]) {
   return cells.map((cell) => `${cell.row}:${cell.column}`).join("|");
 }
@@ -3151,7 +3175,9 @@ const MatchingCardContent = memo(function MatchingCardContent({
                 }
                 className="matching-card-image matching-card-image--interactive"
                 data-card-interactive="true"
+                draggable={false}
                 src={normalized.url}
+                onDragStart={(event) => event.preventDefault()}
                 onClick={(event) => {
                   event.stopPropagation();
                   onOpenMedia(normalized);
@@ -4788,12 +4814,17 @@ function GroupAssignmentActivity({
   );
 }
 
+type GroupAssignmentActivityBoardProps = ActivityProps<"group-assignment"> & {
+  introTrigger?: React.ReactNode;
+};
+
 function GroupAssignmentActivityBoard({
   draft,
   revisionKey,
   onReport,
   boardOnly = false,
-}: ActivityProps<"group-assignment">) {
+  introTrigger = null,
+}: GroupAssignmentActivityBoardProps) {
   const normalized = useMemo(
     () => normalizeGroupAssignmentData(draft.data),
     [draft.data],
@@ -5029,6 +5060,11 @@ function GroupAssignmentActivityBoard({
             : "classification-board--all-at-once"
         }`}
       >
+        {introTrigger ? (
+          <div className="classification-board__overlay-start" data-card-interactive="true">
+            {introTrigger}
+          </div>
+        ) : null}
         <div className="classification-board__canvas">
           <div
             className="classification-clusters"
@@ -5292,16 +5328,15 @@ function GroupAssignmentActivityBoard({
         </div>
 
         <div className="classification-board__controls" data-card-interactive="true">
-          <button
-            className="ghost-button classification-board__action"
+          <PlayerButton
+            className="classification-board__action classification-board__action--primary"
             disabled={!canCheck}
-            type="button"
             onClick={handleCheck}
           >
             Проверить
-          </button>
+          </PlayerButton>
           <button
-            className="ghost-button classification-board__action"
+            className="ghost-button classification-board__action classification-board__action--secondary"
             type="button"
             onClick={resetBoard}
           >
@@ -5377,14 +5412,17 @@ function GroupAssignmentActivityBoard({
                 {resultSummary}
               </strong>
               <div className="classification-result-modal__actions">
-                <button
-                  className="ghost-button"
-                  type="button"
+                <PlayerButton
+                  className="classification-result-modal__action classification-result-modal__action--primary"
                   onClick={() => setIsResultDialogOpen(false)}
                 >
                   Продолжить
-                </button>
-                <button className="ghost-button" type="button" onClick={resetBoard}>
+                </PlayerButton>
+                <button
+                  className="ghost-button classification-result-modal__action classification-result-modal__action--secondary"
+                  type="button"
+                  onClick={resetBoard}
+                >
                   Сбросить
                 </button>
               </div>
@@ -6644,6 +6682,7 @@ function renderActivity(
   revisionKey: string,
   onReport: ReportResult,
   boardOnly = false,
+  groupAssignmentIntroTrigger: React.ReactNode = null,
 ) {
   switch (draft.type) {
     case "matching-pairs":
@@ -6660,6 +6699,7 @@ function renderActivity(
         <GroupAssignmentActivityBoard
           boardOnly={boardOnly}
           draft={draft}
+          introTrigger={groupAssignmentIntroTrigger}
           onReport={onReport}
           revisionKey={revisionKey}
         />
@@ -6888,6 +6928,16 @@ export function ExercisePlayer({
   const introActionLabel =
     draft.type === "group-assignment" ? "\u041d\u0430\u0447\u0430\u0442\u044c" : "OK";
   const showTypeBadge = !compactHead && draft.type !== "group-assignment";
+  const showBoardIntroButton =
+    Boolean(introKey) && draft.type === "group-assignment" && !boardOnly;
+  const showOverlayHelpButton = Boolean(introKey) && !showBoardIntroButton;
+  const classificationIntroTrigger = showBoardIntroButton ? (
+    <InstructionHelpButton
+      aria-label={introButtonLabel}
+      title={introHeadingValue}
+      onClick={() => setIsIntroOpen(true)}
+    />
+  ) : null;
 
   useEffect(() => {
     setStatus(null);
@@ -6945,28 +6995,15 @@ export function ExercisePlayer({
         ) : null}
       </div> : null}
       <div className="exercise-player__body">
-        {introKey || bodyOverlay ? (
+        {showOverlayHelpButton || bodyOverlay ? (
           <div className="exercise-player__overlay">
             <div className="exercise-player__overlay-start">
-              {introKey ? (
-                <button
+              {showOverlayHelpButton ? (
+                <InstructionHelpButton
                   aria-label={introButtonLabel}
-                  className="exercise-player__help-button"
                   title={introHeadingValue}
-                  type="button"
                   onClick={() => setIsIntroOpen(true)}
-                >
-                  <svg aria-hidden="true" viewBox="0 0 24 24">
-                    <path
-                      d="M12 18.2h.01M9.35 9.45a2.65 2.65 0 1 1 4.6 1.8c-.6.63-1.26 1.02-1.57 1.88-.13.35-.18.72-.18 1.09M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="1.8"
-                    />
-                  </svg>
-                </button>
+                />
               ) : null}
             </div>
             <div className="exercise-player__overlay-end">{bodyOverlay}</div>
@@ -6996,7 +7033,13 @@ export function ExercisePlayer({
             </div>
           </div>
         ) : null}
-        {renderActivity(draft, revisionKey, reportResult, boardOnly)}
+        {renderActivity(
+          draft,
+          revisionKey,
+          reportResult,
+          boardOnly,
+          classificationIntroTrigger,
+        )}
       </div>
       {status &&
       !boardOnly &&
