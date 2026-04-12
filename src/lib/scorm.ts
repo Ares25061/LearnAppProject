@@ -324,7 +324,7 @@ function buildManifest(title: string, fileHrefs: string[]) {
   </metadata>
   <organizations default="LearningAppsStudio">
     <organization identifier="LearningAppsStudio" structure="hierarchical">
-      <title>LearningApps Studio</title>
+      <title>LearnApp Studio</title>
       <item identifier="LearningAppsStudioItem" isvisible="true" identifierref="LAFiles0">
         <title>${safeTitle}</title>
       </item>

@@ -265,17 +265,64 @@ export function normalizeMatchingPairsData(data: MatchingPairsData) {
 export function getMatchingContentSummary(input: MatchingPairSide) {
   const content = normalizeMatchingSide(input);
 
+  const getMediaSummary = (
+    fallback: string,
+    options?: {
+      label?: string;
+      fileName?: string;
+      url?: string;
+    },
+  ) => {
+    const label = options?.label?.trim();
+    if (label) {
+      return label;
+    }
+
+    const fileName = options?.fileName?.trim();
+    if (fileName) {
+      return fileName;
+    }
+
+    const url = options?.url?.trim() ?? "";
+    if (url && !url.startsWith("blob:") && !url.startsWith("data:")) {
+      return url;
+    }
+
+    return fallback;
+  };
+
   switch (content.kind) {
     case "text":
       return content.text.trim() || "\u0422\u0435\u043A\u0441\u0442 \u043D\u0435 \u0437\u0430\u043F\u043E\u043B\u043D\u0435\u043D";
     case "spoken-text":
       return content.text.trim() || "\u0422\u0435\u043A\u0441\u0442 \u0434\u043B\u044F \u043E\u0437\u0432\u0443\u0447\u0438\u0432\u0430\u043D\u0438\u044F \u043D\u0435 \u0437\u0430\u043F\u043E\u043B\u043D\u0435\u043D";
     case "image":
-      return content.alt.trim() || content.url.trim() || "\u041A\u0430\u0440\u0442\u0438\u043D\u043A\u0430 \u043D\u0435 \u0437\u0430\u043F\u043E\u043B\u043D\u0435\u043D\u0430";
+      return getMediaSummary(
+        "\u041A\u0430\u0440\u0442\u0438\u043D\u043A\u0430 \u043D\u0435 \u0437\u0430\u043F\u043E\u043B\u043D\u0435\u043D\u0430",
+        {
+          label: content.alt,
+          fileName: content.fileName,
+          url: content.url,
+        },
+      );
     case "audio":
-      return content.label.trim() || content.url.trim() || "\u0410\u0443\u0434\u0438\u043E \u043D\u0435 \u0437\u0430\u043F\u043E\u043B\u043D\u0435\u043D\u043E";
+      return getMediaSummary(
+        "\u0410\u0443\u0434\u0438\u043E \u043D\u0435 \u0437\u0430\u043F\u043E\u043B\u043D\u0435\u043D\u043E",
+        {
+          label: content.label,
+          fileName: content.fileName,
+          url: content.url,
+        },
+      );
     case "video":
-      return content.label.trim() || content.url.trim() || "\u0412\u0438\u0434\u0435\u043E \u043D\u0435 \u0437\u0430\u043F\u043E\u043B\u043D\u0435\u043D\u043E";
+      return getMediaSummary(
+        "\u0412\u0438\u0434\u0435\u043E \u043D\u0435 \u0437\u0430\u043F\u043E\u043B\u043D\u0435\u043D\u043E",
+        {
+          label: content.label,
+          fileName: content.fileName,
+          url: content.url,
+        },
+      );
     default:
       return "\u041F\u0443\u0441\u0442\u0430\u044F \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0430";
   }
@@ -284,17 +331,64 @@ export function getMatchingContentSummary(input: MatchingPairSide) {
 export function getMatchingContentAriaLabel(input: MatchingPairSide) {
   const content = normalizeMatchingSide(input);
 
+  const getMediaAriaLabel = (
+    fallback: string,
+    options?: {
+      label?: string;
+      fileName?: string;
+      url?: string;
+    },
+  ) => {
+    const label = options?.label?.trim();
+    if (label) {
+      return label;
+    }
+
+    const fileName = options?.fileName?.trim();
+    if (fileName) {
+      return fileName;
+    }
+
+    const url = options?.url?.trim() ?? "";
+    if (url && !url.startsWith("blob:") && !url.startsWith("data:")) {
+      return url;
+    }
+
+    return fallback;
+  };
+
   switch (content.kind) {
     case "text":
       return content.text || "\u0422\u0435\u043A\u0441\u0442\u043E\u0432\u0430\u044F \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0430";
     case "spoken-text":
       return content.text || "\u041A\u0430\u0440\u0442\u043E\u0447\u043A\u0430 \u0441 \u043E\u0437\u0432\u0443\u0447\u0438\u0432\u0430\u0435\u043C\u044B\u043C \u0442\u0435\u043A\u0441\u0442\u043E\u043C";
     case "image":
-      return content.alt || content.url || "\u041A\u0430\u0440\u0442\u043E\u0447\u043A\u0430 \u0441 \u0438\u0437\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u0438\u0435\u043C";
+      return getMediaAriaLabel(
+        "\u041A\u0430\u0440\u0442\u043E\u0447\u043A\u0430 \u0441 \u0438\u0437\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u0438\u0435\u043C",
+        {
+          label: content.alt,
+          fileName: content.fileName,
+          url: content.url,
+        },
+      );
     case "audio":
-      return content.label || content.url || "\u041A\u0430\u0440\u0442\u043E\u0447\u043A\u0430 \u0441 \u0430\u0443\u0434\u0438\u043E";
+      return getMediaAriaLabel(
+        "\u041A\u0430\u0440\u0442\u043E\u0447\u043A\u0430 \u0441 \u0430\u0443\u0434\u0438\u043E",
+        {
+          label: content.label,
+          fileName: content.fileName,
+          url: content.url,
+        },
+      );
     case "video":
-      return content.label || content.url || "\u041A\u0430\u0440\u0442\u043E\u0447\u043A\u0430 \u0441 \u0432\u0438\u0434\u0435\u043E";
+      return getMediaAriaLabel(
+        "\u041A\u0430\u0440\u0442\u043E\u0447\u043A\u0430 \u0441 \u0432\u0438\u0434\u0435\u043E",
+        {
+          label: content.label,
+          fileName: content.fileName,
+          url: content.url,
+        },
+      );
     default:
       return "\u041A\u0430\u0440\u0442\u043E\u0447\u043A\u0430 \u043F\u0430\u0440\u044B";
   }

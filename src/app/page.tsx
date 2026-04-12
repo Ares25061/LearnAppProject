@@ -15,7 +15,7 @@ export default async function Home() {
       <main className="page-content">
         <section className="hero-card">
           <span className="eyebrow">21 шаблон упражнения</span>
-          <h1>Конструктор интерактивных приложений наподобие LearningApps</h1>
+          <h1>Конструктор интерактивных приложений</h1>
           <p>
             Выберите тип упражнения, отредактируйте данные шаблона и скачайте
             SCORM-архив той же базовой структуры, что и в примере с

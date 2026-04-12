@@ -10,7 +10,7 @@ export function SiteHeader({
     <header className="site-header">
       <Link className="brand" href="/">
         <span className="brand-mark">LA</span>
-        <span className="brand-title">LearningApps Studio</span>
+        <span className="brand-title">LearnApp Studio</span>
       </Link>
 
       <nav className="site-nav" aria-label="Основная навигация">
