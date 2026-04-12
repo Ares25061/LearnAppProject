@@ -392,9 +392,11 @@ function isAcceptedMediaFile(
     return (
       mimeType.startsWith("audio/") ||
       mimeType === "video/mp4" ||
+      mimeType === "video/webm" ||
       fileName.endsWith(".mp3") ||
       fileName.endsWith(".mp4") ||
       fileName.endsWith(".m4a") ||
+      fileName.endsWith(".webm") ||
       fileName.endsWith(".wav") ||
       fileName.endsWith(".ogg")
     );
@@ -426,7 +428,7 @@ function getMatchingMediaUi(kind: "image" | "audio" | "video") {
       };
     case "audio":
       return {
-        accept: "audio/*,video/mp4,.mp3,.mp4,.m4a,.wav,.ogg",
+        accept: "audio/*,video/mp4,video/webm,.mp3,.mp4,.m4a,.webm,.wav,.ogg",
         dialogLabel: "Настроить аудио",
         urlLabel: "Ссылка на аудио или видео",
         detailLabel: "Подпись карточки",
@@ -435,8 +437,8 @@ function getMatchingMediaUi(kind: "image" | "audio" | "video") {
           "Добавьте звук ссылкой или файлом. Поддерживаются прямые ссылки и ссылки на видеосервисы, а для YouTube, VK Видео и Rutube звук при необходимости подготавливается сервером.",
         dropTitle: "Перетащите аудиофайл сюда",
         dropReplaceText: "Нажмите, чтобы заменить аудио, или перетащите другой файл",
-        formatsHint: "MP3, M4A, WAV, OGG или MP4 со звуком",
-        note: "Подходят прямые ссылки, MP4 со звуком и ссылки на поддерживаемые видеосервисы. Для YouTube, VK Видео и Rutube подготовка звука на сервере может занять около 20 секунд.",
+        formatsHint: "MP3, M4A, WAV, OGG, WEBM или MP4 со звуком",
+        note: "Подходят прямые ссылки, WEBM/MP4 со звуком и ссылки на поддерживаемые видеосервисы. Для YouTube, VK Видео и Rutube подготовка звука на сервере может занять около 20 секунд.",
       };
     case "video":
     default:
@@ -681,7 +683,7 @@ function MatchingSideFieldsCompact({
       }
 
       const storedUrl =
-        kind === "video"
+        kind === "audio" || kind === "video"
           ? await uploadStoredMediaFile(file)
           : await readFileAsDataUrl(file);
 
@@ -715,7 +717,7 @@ function MatchingSideFieldsCompact({
         setPendingMediaUpload((current) =>
           current?.requestId === requestId ? null : current,
         );
-        onNotice?.("Аудиофайл встроен в карточку.");
+        onNotice?.("Аудиофайл загружен и прикреплен к карточке.");
         return;
       }
 
