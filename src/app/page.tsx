@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { HomeHeroBackground } from "@/components/home-hero-background";
 import { SiteHeader } from "@/components/site-header";
 import { getCurrentUser } from "@/lib/auth";
 import { listAppsByOwner } from "@/lib/apps";
@@ -49,16 +50,28 @@ export default async function Home() {
       <SiteHeader user={user} />
       <main className="page-content home-page">
         <section className="hero-card home-hero">
-          <div className="home-hero__copy">
-            <h1>Создавайте упражнения, экспортируйте в МЭШ и возвращайтесь к ним за пару кликов</h1>
-          </div>
-          <div className="hero-actions home-hero__actions">
-            <Link className="primary-button" href="/templates">
-              Открыть шаблоны
-            </Link>
-            <Link className="ghost-button" href={user ? "/library" : "/login"}>
-              {user ? "Библиотека" : "Войти"}
-            </Link>
+          <HomeHeroBackground />
+          <div className="home-hero__layout">
+            <div className="home-hero__copy">
+              <h1>
+                <span className="home-hero__headline-row">Создавайте упражнения,</span>
+                <span className="home-hero__headline-row">экспортируйте в МЭШ</span>
+                <span className="home-hero__headline-row">и возвращайтесь к ним</span>
+                <span className="home-hero__headline-row">за пару кликов</span>
+              </h1>
+              <p className="home-hero__lead">
+                Собирайте задания из готовых шаблонов, запускайте их онлайн, сохраняйте в библиотеку и выгружайте
+                готовую версию для МЭШ.
+              </p>
+              <div className="hero-actions home-hero__actions">
+                <Link className="primary-button" href="/templates">
+                  Открыть шаблоны
+                </Link>
+                <Link className="ghost-button" href="/login">
+                  Войти
+                </Link>
+              </div>
+            </div>
           </div>
         </section>
 

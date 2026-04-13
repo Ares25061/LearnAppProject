@@ -1,0 +1,22 @@
+<svg width="880" height="360" viewBox="0 0 880 360" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="880" height="360" fill="white"/>
+  <g transform="translate(40 42)" stroke="#6E7980" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M62 216V54C92 58 116 74 132 102C148 74 172 58 202 54V70C182 74 166 84 154 100C142 116 136 136 136 160V170H128H120V160C120 136 114 116 102 100C90 84 74 74 54 70V216H62Z" fill="none"/>
+    <path d="M70 162H134" />
+    <path d="M70 194H124" />
+    <path d="M154 118C160 102 172 90 188 82C202 74 218 70 236 70" />
+    <path d="M164 146C170 132 180 122 194 114C206 106 220 102 236 102" />
+    <path d="M174 172C180 160 188 152 198 146C208 140 220 138 232 138" />
+    <g transform="translate(214 122) rotate(-45 54 54)">
+      <rect x="18" y="18" width="72" height="72" rx="16" fill="white"/>
+      <path d="M18 42V34C18 25.2 25.2 18 34 18H42" />
+      <path d="M18 42V74C18 82.8 25.2 90 34 90H74C82.8 90 90 82.8 90 74V34C90 25.2 82.8 18 74 18H42L58 34" />
+    </g>
+  </g>
+
+  <g fill="#6E7980" font-family="Arial, Helvetica, sans-serif" font-weight="700">
+    <text x="390" y="120" font-size="70" letter-spacing="1">МОСКОВСКАЯ</text>
+    <text x="390" y="208" font-size="70" letter-spacing="1">ЭЛЕКТРОННАЯ</text>
+    <text x="390" y="296" font-size="70" letter-spacing="1">ШКОЛА</text>
+  </g>
+</svg>
