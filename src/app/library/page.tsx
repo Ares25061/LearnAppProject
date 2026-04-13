@@ -15,9 +15,9 @@ export default async function LibraryPage() {
         <div className="section-head">
           <div>
             <span className="eyebrow">Библиотека</span>
-            <h1>Сохраненные упражнения</h1>
+            <h1>Сохранённые упражнения</h1>
           </div>
-          <Link className="primary-button" href="/create/matching-pairs">
+          <Link className="primary-button" href="/templates">
             Новое упражнение
           </Link>
         </div>
@@ -26,21 +26,20 @@ export default async function LibraryPage() {
           <section className="hero-card">
             <h2>Пока ничего не сохранено</h2>
             <p>
-              Создайте первое упражнение, скачайте SCORM или сохраните его для
-              дальнейшего редактирования.
+              Перейдите в раздел шаблонов, создайте первое упражнение и
+              сохраните его для дальнейшего редактирования.
             </p>
           </section>
         ) : (
           <div className="template-grid">
             {apps.map((app) => (
               <article className="template-card" key={app.id}>
-                <span className="tag">{app.type}</span>
                 <h3>{app.title}</h3>
                 <p>{app.draft.description}</p>
                 <small>Обновлено: {formatDateTime(app.updatedAt)}</small>
                 <div className="card-actions">
                   <Link href={`/edit/${app.id}`}>Редактировать</Link>
-                  <Link href={`/play/${app.slug}`}>Открыть</Link>
+                  <Link href={`/play/${app.slug}`}>Играть</Link>
                 </div>
               </article>
             ))}
