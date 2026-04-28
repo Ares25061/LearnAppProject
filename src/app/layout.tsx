@@ -15,7 +15,7 @@ const headingFont = Montserrat({
 });
 
 export const metadata: Metadata = {
-  title: "LearnApp Studio",
+  title: "Интерактивные приложения",
   description: "Конструктор интерактивных упражнений с экспортом в SCORM.",
 };
 

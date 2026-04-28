@@ -12,7 +12,9 @@ import {
 import { useRouter } from "next/navigation";
 import { ClassificationEditor } from "@/components/classification-editor";
 import { ExercisePlayer } from "@/components/exercise-player";
+import { GenericDataEditor } from "@/components/generic-data-editor";
 import { MatchingPairsEditor } from "@/components/matching-pairs-editor";
+import { NumberLineEditor } from "@/components/number-line-editor";
 import {
   createDefaultDraft,
   exerciseDefinitionMap,
@@ -30,6 +32,7 @@ import type {
   AnyExerciseDraft,
   GroupAssignmentData,
   MatchingPairsData,
+  NumberLineData,
   PublicUser,
 } from "@/lib/types";
 import { safeFilename } from "@/lib/utils";
@@ -421,7 +424,10 @@ export function StudioEditor({
   const definition = exerciseDefinitionMap[draft.type];
   const isMatchingPairs = draft.type === "matching-pairs";
   const isClassification = draft.type === "group-assignment";
+  const isNumberLine = draft.type === "number-line";
   const isCustomVisualEditor = isMatchingPairs || isClassification;
+  const isStateDrivenDataEditor = isCustomVisualEditor || isNumberLine;
+  const usesSingleEditorFlow = true;
   const isEditorBusy =
     isPending ||
     Boolean(exportTask) ||
@@ -433,6 +439,7 @@ export function StudioEditor({
   const classificationData = isClassification
     ? (draft.data as GroupAssignmentData)
     : null;
+  const numberLineData = isNumberLine ? (draft.data as NumberLineData) : null;
   const showNotice = (
     message: string | null,
     scope: EditorNoticeScope = "draft",
@@ -613,7 +620,7 @@ export function StudioEditor({
     }) as AnyExerciseDraft);
     setDataText(
       JSON.stringify(
-        isCustomVisualEditor ? stripTransientObjectUrls(nextData) : nextData,
+        isStateDrivenDataEditor ? stripTransientObjectUrls(nextData) : nextData,
         null,
         2,
       ),
@@ -623,7 +630,7 @@ export function StudioEditor({
   };
 
   const resolveCurrentDraft = (options?: { stripTransientUrls?: boolean }) => {
-    if (isCustomVisualEditor) {
+    if (isStateDrivenDataEditor) {
       const shouldStripTransientUrls = options?.stripTransientUrls !== false;
       return {
         ...draft,
@@ -1113,7 +1120,7 @@ export function StudioEditor({
         <button className="ghost-button" type="button" onClick={handleReset}>
           Сбросить пример
         </button>
-        {!isMatchingPairs ? (
+        {!isMatchingPairs && !isNumberLine ? (
           <button className="ghost-button" type="button" onClick={applyDataText}>
             Обновить превью
           </button>
@@ -1207,9 +1214,9 @@ export function StudioEditor({
   );
 
   return (
-    <div className={`editor-shell ${isCustomVisualEditor ? "editor-shell--single" : ""}`}>
+    <div className={`editor-shell ${usesSingleEditorFlow ? "editor-shell--single" : ""}`}>
       <aside className="editor-sidebar">
-        {!isCustomVisualEditor ? (
+        {!usesSingleEditorFlow ? (
           <div className="editor-block editor-block--hero">
             <span className="eyebrow">Редактор упражнения</span>
             <h2>{definition.title}</h2>
@@ -1325,11 +1332,52 @@ export function StudioEditor({
           />
         ) : null}
 
-        {isCustomVisualEditor ? previewBlock : null}
+        {isNumberLine && numberLineData ? (
+          <NumberLineEditor
+            themeColor={draft.themeColor}
+            value={numberLineData}
+            onChange={(nextData) => setDraftData(nextData)}
+            onThemeColorChange={(nextColor) =>
+              setDraft((current) => ({
+                ...current,
+                themeColor: nextColor,
+              }) as AnyExerciseDraft)
+            }
+          />
+        ) : null}
 
-        {!isCustomVisualEditor ? (
-          <details className="editor-block editor-details" open>
-            <summary className="editor-details__summary">JSON упражнения</summary>
+        {!isCustomVisualEditor && !isNumberLine ? (
+          <>
+            <div className="editor-block">
+              <label className="matching-editor-field" htmlFor="themeColor">
+                <span className="field-label">Цвет оформления</span>
+                <input
+                  className="editor-input editor-input--color"
+                  id="themeColor"
+                  type="color"
+                  value={draft.themeColor}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      themeColor: event.target.value,
+                    }) as AnyExerciseDraft)
+                  }
+                />
+              </label>
+            </div>
+
+            <GenericDataEditor
+              value={draft.data}
+              onChange={(nextData) => setDraftData(nextData)}
+            />
+          </>
+        ) : null}
+
+        {usesSingleEditorFlow ? previewBlock : null}
+
+        {!isCustomVisualEditor && !isNumberLine ? (
+          <details className="editor-block editor-details">
+            <summary className="editor-details__summary">JSON структуры</summary>
             <p className="editor-hint">
               Используйте этот блок, если нужно вручную поправить структуру данных.
             </p>
@@ -1348,7 +1396,7 @@ export function StudioEditor({
         {draftActionsBlock}
       </aside>
 
-      {!isCustomVisualEditor ? (
+      {!usesSingleEditorFlow ? (
         <section className="editor-preview">
           {previewBlock}
         </section>

@@ -20,7 +20,7 @@ import {
 } from "@/lib/classification";
 import {
   MATCHING_AUDIO_VOLUME_DEFAULT,
-  createMatchingContent,
+  convertMatchingContentKind,
   matchingContentOptions,
   normalizeMatchingSide,
 } from "@/lib/matching-pairs";
@@ -506,61 +506,7 @@ function convertContentKind(
   current: MatchingContent,
   nextKind: MatchingContentKind,
 ) {
-  const next = createMatchingContent(nextKind);
-  const currentText =
-    current.kind === "text" || current.kind === "spoken-text"
-      ? current.text
-      : current.kind === "image"
-        ? current.alt
-        : current.label;
-
-  if (next.kind === "text" || next.kind === "spoken-text") {
-    next.text = currentText;
-    return next;
-  }
-
-  if (next.kind === "image") {
-    if (current.kind === "image") {
-      return { ...current };
-    }
-
-    next.alt = currentText;
-    return next;
-  }
-
-  if (next.kind === "audio") {
-    if (current.kind === "audio") {
-      return { ...current };
-    }
-
-    if (current.kind === "video") {
-      return {
-        ...next,
-        url: current.url,
-        label: current.label,
-        volume: current.volume,
-      };
-    }
-
-    next.label = currentText;
-    return next;
-  }
-
-  if (current.kind === "video") {
-    return { ...current };
-  }
-
-  if (current.kind === "audio") {
-    return {
-      ...next,
-      url: current.url,
-      label: current.label,
-      volume: current.volume,
-    };
-  }
-
-  next.label = currentText;
-  return next;
+  return convertMatchingContentKind(current, nextKind);
 }
 
 function applyMediaLabel(
@@ -793,17 +739,21 @@ function ContentEditor({
       <label className="matching-editor-field">
         <span className="field-label">{label}</span>
       </label>
-      <div className="matching-setting-options classification-editor-kind-row">
+      <div className="matching-editor-types classification-editor-kind-row">
         {options.map((option) => (
           <button
-            className={`matching-setting-chip ${
-              content.kind === option.id ? "matching-setting-chip--active" : ""
+            aria-label={option.label}
+            aria-pressed={content.kind === option.id}
+            className={`matching-editor-type ${
+              content.kind === option.id ? "matching-editor-type--active" : ""
             }`}
             key={option.id}
+            title={option.label}
             type="button"
             onClick={() => onChange(convertContentKind(content, option.id))}
           >
-            {option.label}
+            <ClassificationTypeIcon kind={option.id} />
+            <span className="sr-only">{option.label}</span>
           </button>
         ))}
       </div>
@@ -1437,7 +1387,7 @@ function CompactClassificationContentEditor({
     setIsMediaDropActive(false);
 
     if (content.kind !== nextKind) {
-      onChange(createMatchingContent(nextKind));
+      onChange(convertContentKind(content, nextKind));
     }
 
     setIsMediaDialogOpen(true);

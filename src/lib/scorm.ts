@@ -325,7 +325,7 @@ function buildManifest(title: string, fileHrefs: string[]) {
   </metadata>
   <organizations default="LearningAppsStudio">
     <organization identifier="LearningAppsStudio" structure="hierarchical">
-      <title>LearnApp Studio</title>
+      <title>Интерактивные приложения</title>
       <item identifier="LearningAppsStudioItem" isvisible="true" identifierref="LAFiles0">
         <title>${safeTitle}</title>
       </item>
@@ -582,6 +582,11 @@ function collectDraftResourceUrls(draft: AnyExerciseDraft) {
         for (const item of group.items) {
           pushMatchingSideResourceUrl(urls, item);
         }
+      }
+      break;
+    case "number-line":
+      for (const item of draft.data.items) {
+        pushMatchingSideResourceUrl(urls, item.content);
       }
       break;
     case "matching-images":
@@ -885,6 +890,14 @@ async function localizeDraftForOfflineExport(input: AnyExerciseDraft) {
           ...group,
           background: await localizeClassificationBackground(group.background),
           items: await Promise.all(group.items.map((item) => localizeMatchingSide(item))),
+        })),
+      );
+      break;
+    case "number-line":
+      draft.data.items = await Promise.all(
+        draft.data.items.map(async (item) => ({
+          ...item,
+          content: await localizeMatchingSide(item.content),
         })),
       );
       break;
@@ -1354,6 +1367,14 @@ async function prepareHostlessDraftForArchive(input: AnyExerciseDraft) {
           items: await Promise.all(
             group.items.map((item) => prepareClassificationSide(item)),
           ),
+        })),
+      );
+      break;
+    case "number-line":
+      draft.data.items = await Promise.all(
+        draft.data.items.map(async (item) => ({
+          ...item,
+          content: await prepareClassificationSide(item.content),
         })),
       );
       break;

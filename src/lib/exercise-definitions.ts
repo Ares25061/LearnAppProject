@@ -62,6 +62,53 @@ export const exerciseDefinitions: ExerciseDefinition[] = [
     },
   },
   {
+    id: "number-line",
+    title: "Лента с цифрами",
+    shortDescription: "Размещение карточек на числовой оси.",
+    category: "Числа",
+    tags: ["числа", "ось", "оценка"],
+    defaultDraft: {
+      type: "number-line",
+      title: "Разместите события на числовой ленте",
+      description: "Карточки нужно поставить рядом с правильным числом.",
+      instructions:
+        "Для каждой карточки выберите положение на числовой оси и проверьте результат.",
+      successMessage: "Все карточки стоят на своих местах.",
+      themeColor: "#2f6f73",
+      data: {
+        min: 1000,
+        max: 2000,
+        showHints: true,
+        items: [
+          {
+            content: {
+              kind: "text",
+              text: "Первое печатное издание «Апостола» в Москве",
+              size: 232,
+            },
+            value: "1564",
+          },
+          {
+            content: {
+              kind: "text",
+              text: "Основание Санкт-Петербурга",
+              size: 232,
+            },
+            value: "1703",
+          },
+          {
+            content: {
+              kind: "text",
+              text: "Первый полёт человека в космос",
+              size: 232,
+            },
+            value: "1961",
+          },
+        ],
+      },
+    },
+  },
+  {
     id: "timeline",
     title: "Линия времени",
     shortDescription: "Хронологическая последовательность событий.",

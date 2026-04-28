@@ -140,6 +140,83 @@ export function createMatchingExtra(
   };
 }
 
+export function getMatchingTransferText(content: MatchingContent) {
+  switch (content.kind) {
+    case "text":
+    case "spoken-text":
+      return content.text;
+    case "image":
+      return content.alt || content.url;
+    case "audio":
+    case "video":
+      return content.label || content.url;
+    default:
+      return "";
+  }
+}
+
+export function convertMatchingContentKind(
+  input: MatchingPairSide,
+  nextKind: MatchingContentKind,
+) {
+  const current = normalizeMatchingSide(input);
+
+  if (current.kind === nextKind) {
+    return current;
+  }
+
+  const next = createMatchingContent(nextKind);
+  const currentText = getMatchingTransferText(current);
+
+  if (next.kind === "text" || next.kind === "spoken-text") {
+    next.text = currentText;
+    return next;
+  }
+
+  if (next.kind === "image") {
+    if (current.kind === "image") {
+      return { ...current };
+    }
+
+    next.alt = currentText;
+    return next;
+  }
+
+  if (next.kind === "audio") {
+    if (current.kind === "audio") {
+      return { ...current };
+    }
+
+    if (current.kind === "video") {
+      return {
+        ...next,
+        url: current.url,
+        label: current.label,
+        volume: current.volume,
+      };
+    }
+
+    next.label = currentText;
+    return next;
+  }
+
+  if (current.kind === "video") {
+    return { ...current };
+  }
+
+  if (current.kind === "audio") {
+    return {
+      ...next,
+      url: current.url,
+      label: current.label,
+      volume: current.volume,
+    };
+  }
+
+  next.label = currentText;
+  return next;
+}
+
 export function normalizeMatchingSide(input: MatchingPairSide): MatchingContent {
   if (typeof input === "string") {
     return {

@@ -1,6 +1,7 @@
 export type ExerciseTypeId =
   | "matching-pairs"
   | "group-assignment"
+  | "number-line"
   | "timeline"
   | "simple-order"
   | "free-text-input"
@@ -126,6 +127,18 @@ export interface GroupAssignmentData {
   useGroupColors?: boolean;
 }
 
+export interface NumberLineItem {
+  content: MatchingPairSide;
+  value: string;
+}
+
+export interface NumberLineData {
+  min: number;
+  max: number;
+  items: NumberLineItem[];
+  showHints: boolean;
+}
+
 export interface TimelineData {
   events: Array<{ label: string; date: string }>;
 }
@@ -246,6 +259,7 @@ export interface QuizTextInputData {
 export interface ExerciseDataMap {
   "matching-pairs": MatchingPairsData;
   "group-assignment": GroupAssignmentData;
+  "number-line": NumberLineData;
   timeline: TimelineData;
   "simple-order": SimpleOrderData;
   "free-text-input": FreeTextInputData;

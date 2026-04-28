@@ -10,6 +10,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import {
+  convertMatchingContentKind,
   createMatchingContent,
   createMatchingExtra,
   createMatchingPair,
@@ -828,7 +829,7 @@ function MatchingSideFieldsCompact({
       setIsMediaDropActive(false);
 
       if (content.kind !== nextKind) {
-        onChange(createMatchingContent(nextKind));
+        onChange(convertMatchingContentKind(content, nextKind));
       }
       return;
     }
@@ -836,7 +837,7 @@ function MatchingSideFieldsCompact({
     setIsMediaDropActive(false);
 
     if (content.kind !== nextKind) {
-      onChange(createMatchingContent(nextKind));
+      onChange(convertMatchingContentKind(content, nextKind));
     }
 
     setIsMediaDialogOpen(true);

@@ -48,6 +48,15 @@ import {
   percentage,
   shuffleArray,
 } from "@/lib/utils";
+import {
+  clampNumberLineValue,
+  formatNumberLineValue,
+  getNumberLineItemTitle,
+  getNumberLinePercent,
+  getNumberLineStep,
+  normalizeNumberLineData,
+  parseNumberLineTarget,
+} from "@/lib/number-line";
 import type {
   AnyExerciseDraft,
   ExerciseTypeId,
@@ -56,6 +65,7 @@ import type {
   MatchingImageContent,
   MatchingMatrixData,
   MatchingVideoContent,
+  NumberLineItem,
 } from "@/lib/types";
 
 declare const __SCORM_OFFLINE_BUNDLE__: boolean | undefined;
@@ -5446,6 +5456,314 @@ function GroupAssignmentActivityBoard({
   );
 }
 
+function getNumberLineInitialPlacement(
+  min: number,
+  max: number,
+  index: number,
+  total: number,
+) {
+  const span = max - min;
+
+  if (span <= 0) {
+    return min;
+  }
+
+  return min + ((index + 1) / (total + 1)) * span;
+}
+
+function getNumberLineTicks(min: number, max: number) {
+  return Array.from({ length: 5 }, (_, index) => {
+    const value = min + ((max - min) / 4) * index;
+    return Number.isInteger(value) ? value : Number.parseFloat(value.toFixed(2));
+  });
+}
+
+function isNumberLinePlacementCorrect(
+  item: NumberLineItem,
+  placement: number,
+  min: number,
+  max: number,
+  step: number,
+) {
+  const target = parseNumberLineTarget(item.value);
+
+  if (!target) {
+    return false;
+  }
+
+  if (target.start === target.end) {
+    const tolerance = Math.max(step / 2, Math.abs(max - min) / 400);
+    return Math.abs(placement - target.start) <= tolerance;
+  }
+
+  return placement >= target.start && placement <= target.end;
+}
+
+function NumberLineContentPreview({
+  item,
+  index,
+  onOpenMedia,
+}: Readonly<{
+  item: NumberLineItem;
+  index: number;
+  onOpenMedia: (nextMedia: MatchingOpenableContent) => void;
+}>) {
+  const content = normalizeMatchingSide(item.content);
+  const cardWidth = 228;
+  const cardHeight = clamp(
+    getMatchingCardHeight(content, cardWidth),
+    getMatchingCardMinimumHeight(content),
+    190,
+  );
+
+  return (
+    <div
+      aria-label={getNumberLineItemTitle(item, index)}
+      className="number-line-card-preview"
+      style={{
+        minHeight: `${cardHeight}px`,
+        width: `${cardWidth}px`,
+      }}
+    >
+      <MatchingCardContent
+        cardHeight={cardHeight}
+        cardWidth={cardWidth}
+        content={content}
+        onOpenMedia={onOpenMedia}
+      />
+    </div>
+  );
+}
+
+function NumberLineActivity({
+  draft,
+  revisionKey,
+  onReport,
+}: ActivityProps<"number-line">) {
+  const data = useMemo(() => normalizeNumberLineData(draft.data), [draft.data]);
+  const step = getNumberLineStep(data.min, data.max);
+  const [placements, setPlacements] = useState<number[]>([]);
+  const [activeMedia, setActiveMedia] = useState<MatchingOpenableContent | null>(
+    null,
+  );
+
+  useEffect(() => {
+    setPlacements(
+      data.items.map((_, index) =>
+        getNumberLineInitialPlacement(
+          data.min,
+          data.max,
+          index,
+          data.items.length,
+        ),
+      ),
+    );
+    setActiveMedia(null);
+  }, [revisionKey, data.min, data.max, data.items]);
+
+  const setPlacement = (index: number, nextValue: number) => {
+    setPlacements((current) =>
+      data.items.map((_, itemIndex) =>
+        itemIndex === index
+          ? clampNumberLineValue(nextValue, data.min, data.max)
+          : current[itemIndex] ??
+            getNumberLineInitialPlacement(
+              data.min,
+              data.max,
+              itemIndex,
+              data.items.length,
+            ),
+      ),
+    );
+  };
+
+  const targets = data.items.flatMap((item, index) => {
+    const target = parseNumberLineTarget(item.value);
+
+    if (!target) {
+      return [];
+    }
+
+    return [
+      {
+        index,
+        item,
+        target,
+      },
+    ];
+  });
+
+  const handleCheck = () => {
+    const correct = data.items.filter((item, index) =>
+      isNumberLinePlacementCorrect(
+        item,
+        placements[index] ??
+          getNumberLineInitialPlacement(
+            data.min,
+            data.max,
+            index,
+            data.items.length,
+          ),
+        data.min,
+        data.max,
+        step,
+      ),
+    ).length;
+    const invalidTargets = data.items.filter(
+      (item) => !parseNumberLineTarget(item.value),
+    ).length;
+    const score = percentage(correct, data.items.length);
+
+    onReport(
+      score,
+      correct === data.items.length && invalidTargets === 0,
+      invalidTargets > 0
+        ? "Проверьте правильные значения карточек в редакторе."
+        : undefined,
+    );
+  };
+
+  return (
+    <div
+      className="number-line-activity"
+      style={{ "--number-line-accent": draft.themeColor } as CSSProperties}
+    >
+      <div className="number-line-axis-panel">
+        <div className="number-line-axis" aria-hidden="true">
+          <div className="number-line-axis__track" />
+
+          {data.showHints
+            ? targets.map(({ index, item, target }) => {
+                const start = getNumberLinePercent(target.start, data.min, data.max);
+                const end = getNumberLinePercent(target.end, data.min, data.max);
+
+                if (target.start === target.end) {
+                  return (
+                    <span
+                      className="number-line-axis__hint"
+                      key={`hint-${index}`}
+                      style={{ left: `${start}%` }}
+                      title={getNumberLineItemTitle(item, index)}
+                    />
+                  );
+                }
+
+                return (
+                  <span
+                    className="number-line-axis__hint-range"
+                    key={`hint-${index}`}
+                    style={{
+                      left: `${start}%`,
+                      width: `${Math.max(end - start, 1)}%`,
+                    }}
+                    title={getNumberLineItemTitle(item, index)}
+                  />
+                );
+              })
+            : null}
+
+          {data.items.map((item, index) => {
+            const placement =
+              placements[index] ??
+              getNumberLineInitialPlacement(
+                data.min,
+                data.max,
+                index,
+                data.items.length,
+              );
+
+            return (
+              <span
+                className="number-line-axis__placement"
+                key={`placement-${index}`}
+                style={{
+                  left: `${getNumberLinePercent(placement, data.min, data.max)}%`,
+                }}
+                title={getNumberLineItemTitle(item, index)}
+              >
+                {index + 1}
+              </span>
+            );
+          })}
+        </div>
+
+        <div className="number-line-axis__ticks" aria-hidden="true">
+          {getNumberLineTicks(data.min, data.max).map((tick) => (
+            <span key={tick}>{formatNumberLineValue(tick)}</span>
+          ))}
+        </div>
+      </div>
+
+      <div className="number-line-items">
+        {data.items.map((item, index) => {
+          const placement =
+            placements[index] ??
+            getNumberLineInitialPlacement(
+              data.min,
+              data.max,
+              index,
+              data.items.length,
+            );
+
+          return (
+            <article className="number-line-item" key={`${item.value}-${index}`}>
+              <div className="number-line-item__index">{index + 1}</div>
+              <NumberLineContentPreview
+                item={item}
+                index={index}
+                onOpenMedia={setActiveMedia}
+              />
+              <div className="number-line-item__controls">
+                <div className="number-line-item__meta">
+                  <strong>{getNumberLineItemTitle(item, index)}</strong>
+                  <span>Выбрано: {formatNumberLineValue(placement)}</span>
+                </div>
+                <input
+                  aria-label={`Положение карточки ${index + 1}`}
+                  className="number-line-slider"
+                  max={data.max}
+                  min={data.min}
+                  step={step}
+                  type="range"
+                  value={placement}
+                  onChange={(event) => setPlacement(index, Number(event.target.value))}
+                />
+                <div className="number-line-item__nudge">
+                  <PlayerButton
+                    onClick={() => setPlacement(index, placement - step)}
+                  >
+                    -
+                  </PlayerButton>
+                  <input
+                    className="editor-input"
+                    inputMode="decimal"
+                    type="number"
+                    value={formatNumberLineValue(placement)}
+                    onChange={(event) =>
+                      setPlacement(index, Number(event.target.value))
+                    }
+                  />
+                  <PlayerButton
+                    onClick={() => setPlacement(index, placement + step)}
+                  >
+                    +
+                  </PlayerButton>
+                </div>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+
+      <ActionRow>
+        <PlayerButton onClick={handleCheck}>Проверить</PlayerButton>
+      </ActionRow>
+
+      <MatchingMediaDialog media={activeMedia} onClose={() => setActiveMedia(null)} />
+    </div>
+  );
+}
+
 function TimelineActivity({
   draft,
   revisionKey,
@@ -6700,6 +7018,14 @@ function renderActivity(
           boardOnly={boardOnly}
           draft={draft}
           introTrigger={groupAssignmentIntroTrigger}
+          onReport={onReport}
+          revisionKey={revisionKey}
+        />
+      );
+    case "number-line":
+      return (
+        <NumberLineActivity
+          draft={draft}
           onReport={onReport}
           revisionKey={revisionKey}
         />
